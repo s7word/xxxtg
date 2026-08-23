@@ -88,16 +88,52 @@ class VakSmsService:
 
     finalize_channel_binding = finish
 
-    async def cancel(self, act_id: str):
-        """撤销无效或被风控阻断的带外通道句柄"""
+    async def cancel(self, act_id: str) -> Dict[str, Any]:
+        """撤销无效或被风控阻断的带外通道句柄，并触发 Vak-SMS 自动退款。
+
+        Vak-SMS 官方语义：`setStatus/?status=bad` 会取消当前号码并退还点数。
+        返回结构化结果供编排层打印 `[自动退订/撤销信道句柄完成]`。
+        """
+        if not act_id:
+            return {"success": False, "skipped": True, "reason": "missing_act_id", "status": "bad"}
         try:
-            await self.client.get(f"{self.BASE_URL}/setStatus/", params={
+            resp = await self.client.get(f"{self.BASE_URL}/setStatus/", params={
                 "apiKey": self.api_key,
                 "status": "bad",
                 "idNum": act_id
             })
+            data: Any
+            try:
+                data = resp.json()
+            except Exception:
+                data = {"raw": (resp.text or "")[:300]}
+            error_text = ""
+            if isinstance(data, dict):
+                error_text = str(data.get("error") or data.get("detail") or "")
+            success = resp.status_code < 400 and not error_text
+            result = {
+                "success": success,
+                "skipped": False,
+                "act_id": act_id,
+                "status": "bad",
+                "http_status": resp.status_code,
+                "data": data,
+                "error": error_text or None,
+            }
+            if success:
+                logger.info("[自动退订/撤销信道句柄完成] act_id=%s status=bad resp=%s", act_id, data)
+            else:
+                logger.warning("撤销带外通道句柄未成功: act_id=%s resp=%s", act_id, data)
+            return result
         except Exception as e:
             logger.warning(f"撤销带外通道句柄失败: {e}")
+            return {
+                "success": False,
+                "skipped": False,
+                "act_id": act_id,
+                "status": "bad",
+                "error": str(e),
+            }
 
     revoke_channel_binding = cancel
 

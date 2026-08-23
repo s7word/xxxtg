@@ -113,7 +113,9 @@
 │       │   └── routes.py          # RESTful 调度与审计 API
 │       └── services/
 │           ├── device_profile.py  # 节点环境特征与硬件拓扑库
+│           ├── reghelp.py         # REGHelp 高可用 Attestation/Push 凭证生成客户端
 │           ├── antisafety.py      # 带外安全凭证与 Push 挑战客户端
+│           ├── attestation_gateway.py # 多提供源 Attestation 网关高可用容灾调度器
 │           ├── vaksms.py          # 异步带外遥测与挑战响应服务
 │           ├── proxyseller.py     # 多径中继网关与动态出口路由器
 │           └── registrar.py       # 节点引导状态机与审计编排引擎
