@@ -7,7 +7,7 @@ import logging
 import re
 import time
 from typing import Any, Dict, Iterable, List, Optional, Tuple
-from urllib.parse import quote, unquote, urlparse
+from urllib.parse import unquote, urlparse
 
 from backend.app.services.net_utils import format_httpx_proxy_url as _format_httpx_proxy_url
 
@@ -116,11 +116,6 @@ def format_outbound_proxy_url(proxy: Optional[Dict[str, Any]]) -> Optional[str]:
     username / password 经 quote(safe="") 彻底转义 @ : / # 等保留字符，
     IPv6 地址由共享实现加上 [host] 保护。
     """
-    if proxy:
-        if proxy.get("username"):
-            quote(str(proxy.get("username")), safe="")
-        if proxy.get("password"):
-            quote(str(proxy.get("password")), safe="")
     return _format_httpx_proxy_url(proxy)
 
 
