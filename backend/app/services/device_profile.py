@@ -160,7 +160,7 @@ class DeviceProfileManager:
             if config.api_credential_mode == "custom" and config.custom_api_id and config.custom_api_hash:
                 item["api_id"] = config.custom_api_id
                 item["api_hash"] = config.custom_api_hash
-                item["is_published_api_id"] = False
+                item["is_published_api_id"] = int(config.custom_api_id) in PUBLISHED_API_ID_BLOCKLIST
                 item["credential_source"] = "custom"
             result.append(item)
         return result
@@ -195,8 +195,11 @@ class DeviceProfileManager:
             if has_custom:
                 resolved["api_id"] = int(custom_id)
                 resolved["api_hash"] = custom_hash
-                resolved["is_published_api_id"] = False
+                custom_published = int(custom_id) in PUBLISHED_API_ID_BLOCKLIST
+                resolved["is_published_api_id"] = custom_published
                 resolved["credential_source"] = "custom"
+                if custom_published and not has_push_token:
+                    resolved["credential_risk"] = "published_id_without_push_token"
             else:
                 # 用户强制指定 custom 模式却未填写凭证，明确标注风险而不是静默回退
                 resolved["credential_risk"] = "custom_mode_missing_credentials"
@@ -209,11 +212,18 @@ class DeviceProfileManager:
 
         # mode == "auto" (默认): 有 Push Token 就用官方 ID；没有 Push Token 且 ID 已知泄露，则自动切换自建 ID
         if is_published and not has_push_token:
-            if has_custom:
+            if has_custom and int(custom_id) not in PUBLISHED_API_ID_BLOCKLIST:
                 resolved["api_id"] = int(custom_id)
                 resolved["api_hash"] = custom_hash
                 resolved["is_published_api_id"] = False
                 resolved["credential_source"] = "custom_auto_fallback"
+            elif has_custom and int(custom_id) in PUBLISHED_API_ID_BLOCKLIST:
+                # 自建栏位本身也填了公开泄露 ID（常见于误把 lod_user 的 app_id=4 写进 config）
+                resolved["api_id"] = int(custom_id)
+                resolved["api_hash"] = custom_hash
+                resolved["is_published_api_id"] = True
+                resolved["credential_source"] = "custom_auto_fallback"
+                resolved["credential_risk"] = "published_id_without_push_token"
             else:
                 resolved["credential_risk"] = "published_id_without_push_token"
 
