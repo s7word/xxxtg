@@ -273,7 +273,8 @@ IMPORTS_SUBDIR = "imports"
 
 def sanitize_upload_filename(filename: Optional[str]) -> str:
     """只保留文件名本身，剔除路径并折叠危险字符。"""
-    name = Path(str(filename or "upload.bin")).name.replace("\x00", "")
+    name = str(filename or "upload.bin").replace("\\", "/").replace("\x00", "")
+    name = Path(name).name
     cleaned = re.sub(r"[^A-Za-z0-9._-]+", "_", name).strip("._")
     return (cleaned or "upload.bin")[:180]
 
