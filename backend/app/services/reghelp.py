@@ -60,18 +60,31 @@ class RegHelpService:
         if not self.api_bases:
             self.api_bases = list(self.DEFAULT_API_BASES)
         self.client = create_httpx_client(proxy=proxy, connect_timeout=connect_timeout, total_timeout=total_timeout)
+        self._owns_client = True
         self._last_good_api_base: Optional[str] = None
+
+    async def __aenter__(self) -> "RegHelpService":
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        await self.close()
 
     async def close(self):
         try:
-            await self.client.aclose()
+            if self._owns_client and self.client:
+                await self.client.aclose()
         except Exception:
             pass
 
     def _normalize_device(self, app_device: str) -> str:
         return self._DEVICE_ALIASES.get(str(app_device or "Android").lower(), app_device or "Android")
 
-    async def _get_with_fallback(self, path: str, params: Dict[str, Any]) -> Tuple[str, Any]:
+    async def _get_with_fallback(
+        self,
+        path: str,
+        params: Dict[str, Any],
+        headers: Optional[Dict[str, str]] = None
+    ) -> Tuple[str, Any]:
         """按序尝试候选网关地址，任一成功即返回，全部失败则汇总错误抛出"""
         clean_params = {k: v for k, v in params.items() if v is not None and v != ""}
         errors = []
@@ -81,7 +94,7 @@ class RegHelpService:
 
         for base in ordered:
             try:
-                resp = await self.client.get(f"{base}{path}", params=clean_params)
+                resp = await self.client.get(f"{base}{path}", params=clean_params, headers=headers)
                 data = resp.json()
                 self._last_good_api_base = base
                 return base, data
@@ -103,7 +116,8 @@ class RegHelpService:
         profile: Dict[str, Any],
         log_callback=None,
         ref: Optional[str] = None,
-        webhook: Optional[str] = None
+        webhook: Optional[str] = None,
+        request_id: Optional[str] = None
     ) -> Optional[str]:
         """向 REGHelp Key API 请求平台推送握手凭证 (Push Token)"""
         app_device = self._normalize_device(profile.get("app_device", "Android"))
@@ -116,6 +130,7 @@ class RegHelpService:
             "ref": ref,
             "webHook": webhook
         }
+        headers = {"Idempotency-Key": request_id} if request_id else None
         if log_callback:
             await log_callback(
                 f"向 REGHelp 网关发起 Push Token 生成任务 (App: {params['appName']}/{app_device}, "
@@ -123,7 +138,7 @@ class RegHelpService:
             )
 
         try:
-            used_base, data = await self._get_with_fallback("/push/getToken", params)
+            used_base, data = await self._get_with_fallback("/push/getToken", params, headers=headers)
         except Exception as req_err:
             raise RuntimeError(f"连接 REGHelp 网关失败 (已尝试 {', '.join(self.api_bases)}): {req_err}")
 
@@ -183,7 +198,8 @@ class RegHelpService:
         token_type: str = "classic",
         log_callback=None,
         ref: Optional[str] = None,
-        webhook: Optional[str] = None
+        webhook: Optional[str] = None,
+        request_id: Optional[str] = None
     ) -> Optional[str]:
         """向 REGHelp Key API 请求 Google Play Integrity 凭证 (Classic / Standard 两种流程)"""
         app_device = self._normalize_device(profile.get("app_device", "Android"))
@@ -198,10 +214,11 @@ class RegHelpService:
             "ref": ref,
             "webHook": webhook
         }
+        headers = {"Idempotency-Key": request_id} if request_id else None
         if log_callback:
             await log_callback(f"向 REGHelp 网关发起 Play Integrity 凭证生成任务 (App: {params['appName']}/{app_device})...")
 
-        used_base, data = await self._get_with_fallback("/integrity/getToken", params)
+        used_base, data = await self._get_with_fallback("/integrity/getToken", params, headers=headers)
         if data.get("status") == "error":
             raise RuntimeError(f"REGHelp Integrity 任务创建失败: {data.get('detail') or data.get('message') or data}")
 
