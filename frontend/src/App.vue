@@ -9,7 +9,7 @@
         <div>
           <div class="flex items-center gap-2">
             <h1 class="font-bold text-base tracking-tight text-white">EdgeNode-Auditor Console</h1>
-            <span class="badge badge-info text-xs">v2.1 Enterprise</span>
+            <span class="badge badge-info text-xs">v2.2 Enterprise</span>
           </div>
           <p class="text-xs text-zinc-400">分布式边缘节点状态机仿真、动态出口路由与密码学上下文审计系统</p>
         </div>
@@ -520,6 +520,198 @@
 
       </div>
 
+      <!-- ================= 标签页: 已有账户凭证库 & 开发者凭证申请 ================= -->
+      <div v-if="activeTab === 'vault'" class="space-y-6">
+        <div class="flex items-center justify-between border-b border-zinc-800 pb-4">
+          <div>
+            <h2 class="text-lg font-bold text-white">🔐 已有账户凭证库 & 开发者 API 凭证管理</h2>
+            <p class="text-xs text-zinc-400">
+              扫描 <code class="text-zinc-200">lod_user/</code> 与 <code class="text-zinc-200">data/sessions/</code>，
+              一键应用账号内已有 api_id/api_hash，或通过官方
+              <a href="https://my.telegram.org/apps" target="_blank" class="underline text-blue-300">my.telegram.org/apps</a>
+              为指定 session 账号申请专属开发者凭证。
+            </p>
+          </div>
+          <button @click="fetchVaultAccounts" :disabled="vaultLoading" class="btn-secondary text-xs">
+            {{ vaultLoading ? '扫描中...' : '🔄 重新扫描凭证库' }}
+          </button>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <!-- 当前全局生效凭证 -->
+          <div class="glass-panel p-5 rounded-xl border border-zinc-800/80 space-y-3">
+            <div class="flex items-center justify-between border-b border-zinc-800 pb-2">
+              <h3 class="font-semibold text-sm text-zinc-200">当前全局自建凭证</h3>
+              <span class="badge badge-info text-[10px]">{{ config.api_credential_mode || 'auto' }}</span>
+            </div>
+            <div class="text-xs space-y-1.5">
+              <div class="flex justify-between text-zinc-400">
+                <span>custom_api_id</span>
+                <span class="font-mono text-zinc-200">{{ config.custom_api_id || '未配置' }}</span>
+              </div>
+              <div class="flex justify-between text-zinc-400">
+                <span>custom_api_hash</span>
+                <span class="font-mono text-zinc-200">{{ maskHash(config.custom_api_hash) }}</span>
+              </div>
+              <div class="flex justify-between text-zinc-400">
+                <span>凭证库账号数</span>
+                <span class="font-mono text-zinc-200">{{ vaultAccounts.length }}</span>
+              </div>
+            </div>
+            <div class="p-2.5 rounded-lg bg-zinc-900 border border-zinc-800 text-[11px] text-zinc-500 leading-relaxed">
+              公开泄露官方 ID（如 4 / 6 / 21724）缺少 Push Token 时容易触发 API_ID_PUBLISHED_FLOOD。
+              优先使用 my.telegram.org 申请的专属凭证，并将策略设为 custom / auto。
+            </div>
+          </div>
+
+          <!-- 开发者凭证申请与管理 -->
+          <div class="glass-panel p-5 rounded-xl border border-zinc-800/80 lg:col-span-2 space-y-4">
+            <div class="flex items-center justify-between border-b border-zinc-800 pb-2">
+              <div class="flex items-center gap-2">
+                <span class="text-base">🧾</span>
+                <h3 class="font-semibold text-sm text-zinc-200">开发者凭证申请与管理 (my.telegram.org)</h3>
+              </div>
+              <span v-if="appsJob" :class="getStatusBadgeClass(appsJob.status)">{{ appsJob.status }}</span>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <label class="block text-xs font-medium text-zinc-400 mb-1">选择已有 session 账号</label>
+                <select v-model="vaultSelectedId" class="input-field font-mono text-xs">
+                  <option value="">请选择账号...</option>
+                  <option v-for="acc in vaultAccounts" :key="acc.account_id" :value="acc.account_id">
+                    {{ acc.phone || acc.filename }} · {{ acc.source }}{{ acc.has_session ? ' · session' : '' }}
+                  </option>
+                </select>
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-zinc-400 mb-1">可选：新建应用短名</label>
+                <input v-model="appsShortname" type="text" class="input-field font-mono text-xs" placeholder="edgenode2026" />
+              </div>
+            </div>
+
+            <div class="flex flex-wrap items-center gap-2">
+              <button
+                @click="startAppsJob"
+                :disabled="!vaultSelectedId || appsStarting"
+                class="btn-primary text-xs py-2"
+              >
+                {{ appsStarting ? '正在发起登录...' : '从 my.telegram.org 申请专属 API ID/Hash' }}
+              </button>
+              <button
+                v-if="appsJob && appsJob.api_id && appsJob.api_hash"
+                @click="applyAppsJob"
+                class="btn-secondary text-xs py-2"
+              >
+                将本次申请结果写入 config.json
+              </button>
+            </div>
+
+            <div v-if="appsJob && appsJob.needs_manual_code" class="p-3 rounded-lg bg-amber-950/30 border border-amber-800/50 space-y-2">
+              <p class="text-xs text-amber-200">
+                未能通过 Telethon 自动读取验证码（通常是缺少 .session 快照）。
+                请在该账号的 Telegram 客户端查看 my.telegram.org 登录码后手动提交。
+              </p>
+              <div class="flex items-center gap-2">
+                <input v-model="appsManualCode" type="text" class="input-field font-mono text-xs" placeholder="登录验证码" />
+                <button @click="submitAppsCode" :disabled="!appsManualCode" class="btn-primary text-xs py-2">提交验证码</button>
+              </div>
+            </div>
+
+            <div v-if="appsJob && appsJob.api_id" class="p-3 rounded-lg bg-green-950/40 border border-green-800/60 text-xs text-green-300">
+              已获得专属凭证：api_id=<span class="font-mono">{{ appsJob.api_id }}</span>
+              api_hash=<span class="font-mono">{{ maskHash(appsJob.api_hash) }}</span>
+              <span v-if="appsJob.applied_to_config"> · 已写入全局配置</span>
+            </div>
+
+            <div class="bg-zinc-950 p-3 rounded-lg border border-zinc-900 font-mono text-[11px] h-36 overflow-y-auto space-y-1">
+              <div v-if="!appsJob || !appsJob.logs.length" class="text-zinc-600 italic">
+                选择账号后点击申请，将按官方流程：发送登录码 → 读取/提交验证码 → 查询或创建 /apps。
+              </div>
+              <div v-for="(log, idx) in (appsJob?.logs || [])" :key="idx" class="text-zinc-300 leading-relaxed">{{ log }}</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 已有账户凭证库 -->
+        <div class="glass-panel p-5 rounded-xl border border-zinc-800/80 space-y-3">
+          <div class="flex items-center justify-between border-b border-zinc-800 pb-2">
+            <div class="flex items-center gap-2">
+              <span class="text-base">🗃️</span>
+              <h3 class="font-semibold text-sm text-zinc-200">已有账户凭证库 (Account Vault)</h3>
+              <span class="badge badge-info text-[10px]">{{ vaultAccounts.length }} accounts</span>
+            </div>
+            <div class="text-[11px] text-zinc-500 font-mono">
+              {{ vaultMeta.lod_user_dir }} · {{ vaultMeta.sessions_dir }}
+            </div>
+          </div>
+
+          <div class="overflow-x-auto">
+            <table class="w-full text-left text-xs">
+              <thead>
+                <tr class="text-zinc-500 border-b border-zinc-800/60">
+                  <th class="py-2">手机号</th>
+                  <th>来源</th>
+                  <th>注册时间</th>
+                  <th>设备 / SDK</th>
+                  <th>app_id / hash</th>
+                  <th>Session</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-zinc-800/40">
+                <tr v-if="vaultAccounts.length === 0">
+                  <td colspan="7" class="py-6 text-center text-zinc-600">
+                    未扫描到账号。请将 JSON / .session 放入 lod_user/ 或 data/sessions/ 后刷新。
+                  </td>
+                </tr>
+                <tr
+                  v-for="acc in vaultAccounts"
+                  :key="acc.account_id"
+                  class="hover:bg-zinc-900/40 transition-colors"
+                  :class="vaultSelectedId === acc.account_id ? 'bg-blue-950/20' : ''"
+                  @click="vaultSelectedId = acc.account_id"
+                >
+                  <td class="py-2.5 font-mono text-zinc-200">{{ acc.phone || acc.phone_raw || '-' }}</td>
+                  <td><span class="badge badge-info text-[10px]">{{ acc.source }}</span></td>
+                  <td class="text-zinc-400">{{ acc.register_time || '-' }}</td>
+                  <td class="text-zinc-300">
+                    <div>{{ acc.device_model || '-' }}</div>
+                    <div class="text-[11px] text-zinc-500">{{ acc.system_version || '' }} {{ acc.app_version || '' }}</div>
+                  </td>
+                  <td class="font-mono text-zinc-300">
+                    <div>{{ acc.app_id || '-' }} / {{ maskHash(acc.app_hash) }}</div>
+                    <span v-if="acc.is_published_api_id" class="badge badge-warning text-[10px]">公开泄露 ID</span>
+                    <span v-else-if="acc.has_usable_custom_credentials" class="badge badge-success text-[10px]">可用专属凭证</span>
+                  </td>
+                  <td>
+                    <span v-if="acc.has_session" class="badge badge-success text-[10px]">.session</span>
+                    <span v-else class="badge badge-warning text-[10px]">仅 JSON</span>
+                  </td>
+                  <td class="space-x-2 whitespace-nowrap">
+                    <button
+                      @click.stop="applyVaultCredentials(acc)"
+                      :disabled="!acc.app_id || !acc.app_hash || vaultApplyingId === acc.account_id"
+                      class="text-blue-400 hover:text-blue-300"
+                    >
+                      {{ vaultApplyingId === acc.account_id ? '写入中...' : '一键应用内置凭证' }}
+                    </button>
+                    <button @click.stop="selectAndStartApps(acc)" class="text-cyan-400 hover:text-cyan-300">
+                      申请专属 API
+                    </button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div v-if="vaultApplyResult" :class="['p-3 rounded-lg text-xs', vaultApplyResult.success ? 'bg-green-950/40 border border-green-800/60 text-green-300' : 'bg-red-950/40 border border-red-800/60 text-red-300']">
+            <div>{{ vaultApplyResult.message }}</div>
+            <div v-if="vaultApplyResult.warning" class="mt-1 text-amber-300">{{ vaultApplyResult.warning }}</div>
+          </div>
+        </div>
+      </div>
+
       <!-- ================= 标签页 3: 硬件指纹与协议拓扑 ================= -->
       <div v-if="activeTab === 'devices'" class="space-y-6">
         
@@ -627,6 +819,7 @@ import { ref, reactive, onMounted, onUnmounted, nextTick } from 'vue'
 
 const tabs = [
   { id: 'console', name: '状态机编排与控制台', icon: '⚡' },
+  { id: 'vault', name: '凭证库 / 开发者 API', icon: '🔐' },
   { id: 'settings', name: '参数拓扑与接口审计', icon: '⚙️' },
   { id: 'devices', name: '硬件指纹与协议拓扑', icon: '📱' }
 ]
@@ -725,7 +918,26 @@ const sessions = ref([])
 const deviceProfiles = ref([])
 const dbStats = ref({ total_count: 0, is_loaded: false, sample_models: [] })
 
+const vaultLoading = ref(false)
+const vaultAccounts = ref([])
+const vaultMeta = reactive({ lod_user_dir: '', sessions_dir: '' })
+const vaultSelectedId = ref('')
+const vaultApplyingId = ref('')
+const vaultApplyResult = ref(null)
+const appsStarting = ref(false)
+const appsJob = ref(null)
+const appsShortname = ref('')
+const appsManualCode = ref('')
+let appsPollTimer = null
+
 let pollTimer = null
+
+const maskHash = (hash) => {
+  if (!hash) return '未配置'
+  const text = String(hash)
+  if (text.length <= 10) return text
+  return `${text.substring(0, 8)}...${text.substring(text.length - 4)}`
+}
 
 const fetchDbStats = async () => {
   try {
@@ -955,12 +1167,175 @@ const formatTime = (iso) => {
   return iso.split('T')[1]?.substring(0, 8) || iso
 }
 
+const fetchVaultAccounts = async () => {
+  vaultLoading.value = true
+  try {
+    const res = await fetch('/api/vault/accounts')
+    const data = await res.json()
+    vaultAccounts.value = data.accounts || []
+    vaultMeta.lod_user_dir = data.lod_user_dir || ''
+    vaultMeta.sessions_dir = data.sessions_dir || ''
+    if (data.applied_api_id) config.custom_api_id = data.applied_api_id
+    if (data.applied_api_hash) config.custom_api_hash = data.applied_api_hash
+    if (data.api_credential_mode) config.api_credential_mode = data.api_credential_mode
+    if (!vaultSelectedId.value && vaultAccounts.value.length) {
+      vaultSelectedId.value = vaultAccounts.value[0].account_id
+    }
+  } catch (e) {
+    console.error('Fetch vault accounts error:', e)
+  } finally {
+    vaultLoading.value = false
+  }
+}
+
+const applyVaultCredentials = async (acc) => {
+  vaultApplyingId.value = acc.account_id
+  vaultApplyResult.value = null
+  try {
+    const res = await fetch('/api/vault/accounts/apply', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ account_id: acc.account_id, set_mode_custom: true })
+    })
+    const data = await res.json()
+    if (!res.ok) {
+      vaultApplyResult.value = { success: false, message: data.detail || '应用失败' }
+      return
+    }
+    vaultApplyResult.value = data
+    if (data.custom_api_id) config.custom_api_id = data.custom_api_id
+    if (data.custom_api_hash) config.custom_api_hash = data.custom_api_hash
+    if (data.api_credential_mode) config.api_credential_mode = data.api_credential_mode
+  } catch (e) {
+    vaultApplyResult.value = { success: false, message: e.message }
+  } finally {
+    vaultApplyingId.value = ''
+  }
+}
+
+const pollAppsJob = async (jobId) => {
+  if (appsPollTimer) {
+    clearInterval(appsPollTimer)
+    appsPollTimer = null
+  }
+  const tick = async () => {
+    try {
+      const res = await fetch(`/api/vault/apps/jobs/${jobId}`)
+      if (!res.ok) return
+      const data = await res.json()
+      appsJob.value = data
+      if (['success', 'failed'].includes(data.status) || (data.needs_manual_code && data.status === 'waiting_code')) {
+        if (appsPollTimer) {
+          clearInterval(appsPollTimer)
+          appsPollTimer = null
+        }
+      }
+      if (data.applied_to_config && data.api_id) {
+        config.custom_api_id = data.api_id
+        config.custom_api_hash = data.api_hash
+        config.api_credential_mode = 'custom'
+      }
+    } catch (e) {
+      console.error('Poll apps job error:', e)
+    }
+  }
+  await tick()
+  appsPollTimer = setInterval(tick, 1500)
+}
+
+const startAppsJob = async () => {
+  if (!vaultSelectedId.value) return
+  appsStarting.value = true
+  appsManualCode.value = ''
+  try {
+    const res = await fetch('/api/vault/apps/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        account_id: vaultSelectedId.value,
+        auto_read_code: true,
+        app_shortname: appsShortname.value || undefined,
+        apply_to_config: false
+      })
+    })
+    const data = await res.json()
+    if (!res.ok) {
+      appsJob.value = {
+        job_id: '-',
+        status: 'failed',
+        logs: [data.detail || '发起申请失败'],
+        error: data.detail
+      }
+      return
+    }
+    appsJob.value = data
+    await pollAppsJob(data.job_id)
+  } catch (e) {
+    appsJob.value = { job_id: '-', status: 'failed', logs: [e.message], error: e.message }
+  } finally {
+    appsStarting.value = false
+  }
+}
+
+const selectAndStartApps = async (acc) => {
+  vaultSelectedId.value = acc.account_id
+  await startAppsJob()
+}
+
+const submitAppsCode = async () => {
+  if (!appsJob.value?.job_id || !appsManualCode.value) return
+  try {
+    const res = await fetch('/api/vault/apps/submit-code', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        job_id: appsJob.value.job_id,
+        code: appsManualCode.value,
+        apply_to_config: false
+      })
+    })
+    const data = await res.json()
+    if (!res.ok) {
+      alert(data.detail || '提交验证码失败')
+      return
+    }
+    appsJob.value = data
+    await pollAppsJob(data.job_id)
+  } catch (e) {
+    alert(e.message)
+  }
+}
+
+const applyAppsJob = async () => {
+  if (!appsJob.value?.job_id) return
+  try {
+    const res = await fetch('/api/vault/apps/apply', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ job_id: appsJob.value.job_id, set_mode_custom: true })
+    })
+    const data = await res.json()
+    if (!res.ok) {
+      vaultApplyResult.value = { success: false, message: data.detail || '写入失败' }
+      return
+    }
+    vaultApplyResult.value = data
+    if (data.custom_api_id) config.custom_api_id = data.custom_api_id
+    if (data.custom_api_hash) config.custom_api_hash = data.custom_api_hash
+    if (data.api_credential_mode) config.api_credential_mode = data.api_credential_mode
+    if (appsJob.value) appsJob.value.applied_to_config = true
+  } catch (e) {
+    vaultApplyResult.value = { success: false, message: e.message }
+  }
+}
+
 onMounted(() => {
   fetchConfig()
   fetchProfiles()
   fetchDbStats()
   fetchTasks()
   fetchSessions()
+  fetchVaultAccounts()
   pollTimer = setInterval(() => {
     fetchTasks()
   }, 2000)
@@ -968,5 +1343,6 @@ onMounted(() => {
 
 onUnmounted(() => {
   if (pollTimer) clearInterval(pollTimer)
+  if (appsPollTimer) clearInterval(appsPollTimer)
 })
 </script>

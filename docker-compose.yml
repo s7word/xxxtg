@@ -9,10 +9,12 @@ services:
       - "8000:8000"
     volumes:
       - ./data:/app/data
+      - ./lod_user:/app/lod_user:ro
       - ./2026-08-23_07-06-02_Base.db:/app/2026-08-23_07-06-02_Base.db:ro
       - ./2026-08-23_07-06-02_Base.db:/app/Base.db:ro
     environment:
       - DATA_DIR=/app/data
+      - LOD_USER_DIR=/app/lod_user
       - FRONTEND_DIST=/app/frontend/dist
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/api/health"]
