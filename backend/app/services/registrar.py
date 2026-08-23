@@ -367,6 +367,24 @@ class RegistrationOrchestrator:
             kwargs["current_password"] = current_password
         return kwargs
 
+    @staticmethod
+    def _build_code_settings(push_token: Optional[str] = None) -> types.CodeSettings:
+        """构造 auth.sendCode 的 CodeSettings。
+
+        Telethon CodeSettings._bytes 要求 token 与 app_sandbox 同真或同假：
+        有 Push Token 时必须显式传入 app_sandbox（非沙盒为 False）；
+        无 Token 时两者都必须保持 False-y（None）。
+        token 传 str 即可，Telethon 会走 serialize_bytes。
+        """
+        return types.CodeSettings(
+            allow_flashcall=False,
+            current_number=False,
+            allow_app_hash=True,
+            allow_missed_call=False,
+            token=push_token if push_token else None,
+            app_sandbox=False if push_token else None,
+        )
+
     @classmethod
     async def perform_handshake(cls, client: TelegramClient, profile: Dict[str, Any], task_id: str, manager: RegistrationTaskManager):
         """执行标准端点握手序列与协议状态对齐"""
@@ -625,13 +643,7 @@ class RegistrationOrchestrator:
             await cls.perform_handshake(client, profile, task_id, manager)
 
             # 6. 发起挑战分发请求 (SendCode)
-            code_settings = types.CodeSettings(
-                allow_flashcall=False,
-                current_number=False,
-                allow_app_hash=True,
-                allow_missed_call=False,
-                token=push_token.encode('utf-8') if push_token else None
-            )
+            code_settings = cls._build_code_settings(push_token)
 
             await manager.append_log(task_id, "调用 auth.sendCode 触发服务端瞬时握手挑战分发...")
             sent_code = await cls._send_code_with_recaptcha(

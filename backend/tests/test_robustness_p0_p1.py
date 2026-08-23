@@ -400,6 +400,48 @@ class TestTaskManagerCapacityAndIteration(unittest.TestCase):
         self.assertEqual(MAX_RETAINED_JOBS, 200)
 
 
+class TestCodeSettingsPushTokenPairing(unittest.TestCase):
+    """token / app_sandbox 必须同真或同假，否则 Telethon _bytes 会 AssertionError。"""
+
+    def test_with_push_token_serializes_without_assertion(self):
+        token = "reghelp-attestation-push-token"
+        settings = RegistrationOrchestrator._build_code_settings(token)
+        self.assertEqual(settings.token, token)
+        self.assertIsInstance(settings.token, str)
+        self.assertIs(settings.app_sandbox, False)
+        payload = settings._bytes()
+        self.assertIsInstance(payload, (bytes, bytearray))
+        self.assertGreater(len(payload), 0)
+
+    def test_without_push_token_serializes_without_assertion(self):
+        settings = RegistrationOrchestrator._build_code_settings(None)
+        self.assertIsNone(settings.token)
+        self.assertIsNone(settings.app_sandbox)
+        payload = settings._bytes()
+        self.assertIsInstance(payload, (bytes, bytearray))
+        self.assertGreater(len(payload), 0)
+
+    def test_empty_push_token_treated_as_absent(self):
+        settings = RegistrationOrchestrator._build_code_settings("")
+        self.assertIsNone(settings.token)
+        self.assertIsNone(settings.app_sandbox)
+        settings._bytes()
+
+    def test_token_without_app_sandbox_still_raises(self):
+        from telethon.tl import types
+
+        broken = types.CodeSettings(
+            allow_flashcall=False,
+            current_number=False,
+            allow_app_hash=True,
+            allow_missed_call=False,
+            token="only-token-no-sandbox",
+        )
+        with self.assertRaises(AssertionError) as ctx:
+            broken._bytes()
+        self.assertIn("token, app_sandbox", str(ctx.exception))
+
+
 class TestTwoFaOverrideHelpers(unittest.TestCase):
     def test_set_2fa_request_overrides_config(self):
         config = SimpleNamespace(auto_set_2fa=True)
