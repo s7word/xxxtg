@@ -15,6 +15,7 @@ import datetime
 import logging
 import random
 import re
+import time
 import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -63,6 +64,7 @@ API_ID_PATTERNS = [
     re.compile(r"App api_id[:\s]*</(?:label|strong)>\s*<[^>]+>(\d+)", re.I | re.S),
     re.compile(r"<strong>\s*App api_id\s*</strong>\s*<span[^>]*>\s*(\d+)\s*</span>", re.I),
     re.compile(r"api_id[^0-9]{0,40}(\d{4,10})", re.I),
+    re.compile(r"App api_id[:\s]+(\d{4,10})", re.I),
 ]
 
 API_HASH_PATTERNS = [
@@ -354,11 +356,15 @@ class TelegramAppsHelper:
 
         create_hash = parsed.get("create_hash")
         if not create_hash:
-            raise RuntimeError("未能在 /apps 页面解析到已有凭证或创建表单 hash")
+            snippet = re.sub(r"\s+", " ", html or "")[:240]
+            raise RuntimeError(
+                "未能在 /apps 页面解析到已有凭证或创建表单 hash。"
+                f" HTTP {resp.status_code} url={resp.url} snippet={snippet!r}"
+            )
 
         title = (app_title or "EdgeNode Auditor").strip()[:32] or "EdgeNode Auditor"
-        shortname = (app_shortname or f"edgenode{random.randint(1000, 9999)}").strip()
-        shortname = re.sub(r"[^a-zA-Z0-9_]", "", shortname)[:32] or f"edgenode{random.randint(1000, 9999)}"
+        shortname = (app_shortname or f"edgenode{random.randint(10000, 99999)}{int(time.time()) % 10000}").strip()
+        shortname = re.sub(r"[^a-zA-Z0-9_]", "", shortname)[:32] or f"edgenode{random.randint(10000, 99999)}"
 
         create_resp = await client.post(
             urljoin(MY_TELEGRAM_ORG, "/apps/create"),
@@ -366,7 +372,7 @@ class TelegramAppsHelper:
                 "hash": create_hash,
                 "app_title": title,
                 "app_shortname": shortname,
-                "app_url": "",
+                "app_url": "https://telegram.org",
                 "app_platform": "android",
                 "app_desc": "Personal MTProto development application",
             },
@@ -379,19 +385,41 @@ class TelegramAppsHelper:
             },
             follow_redirects=True,
         )
-
-        apps_again = await client.get(
-            urljoin(MY_TELEGRAM_ORG, "/apps"),
-            headers={**BROWSER_HEADERS, "Accept": "text/html"},
-            follow_redirects=True,
+        create_text = (create_resp.text or "").strip()
+        logger.info(
+            "my.telegram.org /apps/create HTTP %s body=%s",
+            create_resp.status_code,
+            create_text[:240],
         )
-        parsed = parse_apps_page(apps_again.text or create_resp.text or "")
+        if create_text.upper() == "ERROR" or create_text.lower().startswith("error"):
+            raise RuntimeError(
+                "my.telegram.org 拒绝创建应用（/apps/create 返回 ERROR）。"
+                "常见原因：该号码已创建过应用、shortname 冲突，或出口 IP 被门户风控。"
+                "请稍后换节点重试，或在浏览器打开 https://my.telegram.org/apps 查看。"
+            )
+
+        parsed = None
+        last_html = create_text
+        for attempt in range(3):
+            apps_again = await client.get(
+                urljoin(MY_TELEGRAM_ORG, "/apps"),
+                headers={**BROWSER_HEADERS, "Accept": "text/html"},
+                follow_redirects=True,
+            )
+            last_html = apps_again.text or ""
+            parsed = parse_apps_page(last_html)
+            if parsed.get("api_id") and parsed.get("api_hash"):
+                break
+            await asyncio.sleep(1.2 * (attempt + 1))
+
+        parsed = parsed or parse_apps_page(last_html)
         parsed["created_new_app"] = True
         parsed["app_title"] = parsed.get("app_title") or title
         if not (parsed.get("api_id") and parsed.get("api_hash")):
+            snippet = re.sub(r"\s+", " ", last_html or "")[:240]
             raise RuntimeError(
                 "已提交创建应用请求，但未能从 /apps 解析到 api_id / api_hash。"
-                "请稍后在 https://my.telegram.org/apps 手动确认。"
+                f" create_body={create_text[:160]!r} apps_snippet={snippet!r}"
             )
         return parsed
 
