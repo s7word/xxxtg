@@ -21,7 +21,9 @@ from backend.app.services.telegram_apps import (  # noqa: E402
 )
 
 
-DEFAULT_PHONES = ("+918302332054", "+918296691905", "+918310013712")
+# 优先使用 2026-08-23 11:34 新上传、尚未对 my.telegram.org 频控的 +91 账号。
+DEFAULT_PHONES = ("+918176905015", "+918367324489", "+918484878461")
+LEGACY_PHONES = ("+918302332054", "+918296691905", "+918310013712")
 
 
 async def _wait_job(job_id: str, timeout: float = 180.0) -> dict:

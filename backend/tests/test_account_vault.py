@@ -159,6 +159,37 @@ class TestLodUserVaultScan(unittest.TestCase):
             self.assertTrue(resolved.exists())
             self.assertEqual(resolved.resolve(), sess.resolve())
 
+    def test_new_india_batch_113451_pairs_and_has_session(self):
+        listing = AccountVaultService.list_accounts()
+        wanted = {"+918176905015", "+918367324489", "+918484878461"}
+        by_phone = {acc.phone: acc for acc in listing.accounts if acc.phone in wanted}
+        self.assertEqual(set(by_phone), wanted)
+        self.assertGreaterEqual(listing.total, 6)
+        root = Path(REPO_ROOT) / "lod_user" / "autoc_sessions_20260823_113451_3"
+        for phone, stem in (
+            ("+918176905015", "918176905015"),
+            ("+918367324489", "918367324489"),
+            ("+918484878461", "918484878461"),
+        ):
+            acc = by_phone[phone]
+            js = root / f"{stem}.json"
+            sess = root / f"{stem}.session"
+            self.assertTrue(js.exists(), f"missing sibling json for {stem}")
+            self.assertTrue(acc.has_json, phone)
+            self.assertTrue(acc.source == "lod_user")
+            self.assertTrue(acc.can_request_new_api_credentials)
+            self.assertTrue((acc.json_path or "").endswith(f"{stem}.json"))
+            if not sess.exists():
+                self.assertFalse(acc.has_session)
+                self.assertTrue(acc.session_missing_for_auto_code)
+                continue
+            self.assertTrue(acc.has_session, phone)
+            self.assertFalse(acc.session_missing_for_auto_code, phone)
+            self.assertTrue(acc.session_path.endswith(f"{stem}.session"))
+            resolved = AccountVaultService.resolve_session_file(acc)
+            self.assertIsNotNone(resolved)
+            self.assertEqual(resolved.resolve(), sess.resolve())
+
     def test_get_account_roundtrip(self):
         listing = AccountVaultService.list_accounts()
         first = listing.accounts[0]
