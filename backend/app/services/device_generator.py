@@ -21,6 +21,8 @@ from backend.app.services.device_db_manager import (
     assess_quality,
     compute_stats,
     country_display_name,
+    country_display_name_zh,
+    country_dial_code,
     normalize_country,
 )
 
@@ -298,14 +300,297 @@ COUNTRY_SYNTH: Dict[str, Dict[str, Any]] = {
             "vivo": 8, "huawei": 8, "motorola": 4, "other": 10,
         },
     },
+    "ca": {
+        "name": "Canada",
+        "locales": [
+            ("en", "en-ca", 70),
+            ("fr", "fr-ca", 22),
+            ("en", "en-us", 8),
+        ],
+        "tz_offsets": [(-18000, 50), (-28800, 17), (-21600, 15), (-25200, 10), (-14400, 8)],
+        "brands": {
+            "samsung": 30, "other": 16, "motorola": 14, "xiaomi": 10,
+            "google": 8, "oppo": 6, "vivo": 6, "realme": 5, "huawei": 5,
+        },
+    },
+    "de": {
+        "name": "Germany",
+        "locales": [
+            ("de", "de-de", 82),
+            ("en", "en-gb", 10),
+            ("en", "en-us", 8),
+        ],
+        "tz_offsets": [(3600, 92), (7200, 8)],
+        "brands": {
+            "samsung": 32, "xiaomi": 16, "other": 14, "oppo": 8,
+            "huawei": 8, "motorola": 6, "vivo": 8, "realme": 8,
+        },
+    },
+    "fr": {
+        "name": "France",
+        "locales": [
+            ("fr", "fr-fr", 84),
+            ("en", "en-gb", 10),
+            ("en", "en-us", 6),
+        ],
+        "tz_offsets": [(3600, 92), (7200, 8)],
+        "brands": {
+            "samsung": 30, "xiaomi": 16, "other": 14, "oppo": 10,
+            "huawei": 8, "vivo": 8, "realme": 8, "motorola": 6,
+        },
+    },
+    "au": {
+        "name": "Australia",
+        "locales": [
+            ("en", "en-au", 86),
+            ("en", "en-gb", 8),
+            ("en", "en-us", 6),
+        ],
+        "tz_offsets": [(36000, 70), (28800, 18), (34200, 12)],
+        "brands": {
+            "samsung": 32, "other": 18, "xiaomi": 12, "oppo": 10,
+            "google": 8, "vivo": 6, "realme": 6, "motorola": 4, "huawei": 4,
+        },
+    },
+    "jp": {
+        "name": "Japan",
+        "locales": [
+            ("ja", "ja-jp", 86),
+            ("en", "en-us", 8),
+            ("en", "en-gb", 6),
+        ],
+        "tz_offsets": [(32400, 100)],
+        "brands": {
+            "samsung": 26, "other": 22, "xiaomi": 14, "oppo": 10,
+            "google": 8, "vivo": 8, "realme": 6, "huawei": 6,
+        },
+    },
+    "kr": {
+        "name": "South Korea",
+        "locales": [
+            ("ko", "ko-kr", 88),
+            ("en", "en-us", 8),
+            ("en", "en-gb", 4),
+        ],
+        "tz_offsets": [(32400, 100)],
+        "brands": {
+            "samsung": 48, "other": 14, "xiaomi": 10, "oppo": 8,
+            "vivo": 6, "realme": 6, "huawei": 4, "motorola": 4,
+        },
+    },
+    "th": {
+        "name": "Thailand",
+        "locales": [
+            ("th", "th-th", 78),
+            ("en", "en-us", 12),
+            ("en", "en-gb", 10),
+        ],
+        "tz_offsets": [(25200, 100)],
+        "brands": {
+            "samsung": 24, "oppo": 16, "vivo": 14, "xiaomi": 14,
+            "realme": 12, "huawei": 6, "motorola": 4, "other": 10,
+        },
+    },
+    "vn": {
+        "name": "Vietnam",
+        "locales": [
+            ("vi", "vi-vn", 80),
+            ("en", "en-us", 12),
+            ("en", "en-gb", 8),
+        ],
+        "tz_offsets": [(25200, 100)],
+        "brands": {
+            "samsung": 24, "xiaomi": 16, "oppo": 16, "vivo": 14,
+            "realme": 12, "huawei": 6, "motorola": 4, "other": 8,
+        },
+    },
+    "ph": {
+        "name": "Philippines",
+        "locales": [
+            ("en", "en-ph", 62),
+            ("en", "en-us", 20),
+            ("en", "en-gb", 10),
+            ("tl", "tl-ph", 8),
+        ],
+        "tz_offsets": [(28800, 100)],
+        "brands": {
+            "samsung": 26, "xiaomi": 16, "oppo": 14, "vivo": 14,
+            "realme": 12, "huawei": 6, "motorola": 4, "other": 8,
+        },
+    },
+    "mx": {
+        "name": "Mexico",
+        "locales": [
+            ("es", "es-mx", 82),
+            ("es", "es", 10),
+            ("en", "en-us", 8),
+        ],
+        "tz_offsets": [(-21600, 70), (-18000, 18), (-25200, 12)],
+        "brands": {
+            "samsung": 32, "motorola": 20, "xiaomi": 14, "oppo": 8,
+            "huawei": 6, "vivo": 6, "realme": 6, "other": 8,
+        },
+    },
+    "co": {
+        "name": "Colombia",
+        "locales": [
+            ("es", "es-co", 84),
+            ("es", "es", 10),
+            ("en", "en-us", 6),
+        ],
+        "tz_offsets": [(-18000, 100)],
+        "brands": {
+            "samsung": 30, "motorola": 20, "xiaomi": 16, "huawei": 8,
+            "oppo": 6, "vivo": 6, "realme": 6, "other": 8,
+        },
+    },
+    "pe": {
+        "name": "Peru",
+        "locales": [
+            ("es", "es-pe", 84),
+            ("es", "es", 10),
+            ("en", "en-us", 6),
+        ],
+        "tz_offsets": [(-18000, 100)],
+        "brands": {
+            "samsung": 30, "xiaomi": 18, "motorola": 16, "huawei": 8,
+            "oppo": 8, "vivo": 6, "realme": 6, "other": 8,
+        },
+    },
+    "ar": {
+        "name": "Argentina",
+        "locales": [
+            ("es", "es-ar", 84),
+            ("es", "es", 10),
+            ("en", "en-us", 6),
+        ],
+        "tz_offsets": [(-10800, 100)],
+        "brands": {
+            "samsung": 32, "motorola": 22, "xiaomi": 14, "huawei": 8,
+            "oppo": 6, "vivo": 6, "realme": 4, "other": 8,
+        },
+    },
+    "eg": {
+        "name": "Egypt",
+        "locales": [
+            ("ar", "ar-eg", 72),
+            ("en", "en-us", 16),
+            ("en", "en-gb", 12),
+        ],
+        "tz_offsets": [(7200, 100)],
+        "brands": {
+            "samsung": 28, "xiaomi": 18, "oppo": 12, "realme": 10,
+            "huawei": 10, "vivo": 8, "motorola": 4, "other": 10,
+        },
+    },
+    "za": {
+        "name": "South Africa",
+        "locales": [
+            ("en", "en-za", 70),
+            ("en", "en-gb", 16),
+            ("en", "en-us", 14),
+        ],
+        "tz_offsets": [(7200, 100)],
+        "brands": {
+            "samsung": 32, "xiaomi": 16, "huawei": 12, "oppo": 8,
+            "vivo": 8, "realme": 8, "motorola": 6, "other": 10,
+        },
+    },
+    "ng": {
+        "name": "Nigeria",
+        "locales": [
+            ("en", "en-ng", 72),
+            ("en", "en-gb", 16),
+            ("en", "en-us", 12),
+        ],
+        "tz_offsets": [(3600, 100)],
+        "brands": {
+            "samsung": 26, "xiaomi": 14, "oppo": 10, "vivo": 8,
+            "realme": 8, "huawei": 8, "motorola": 8, "other": 18,
+        },
+    },
+    "ke": {
+        "name": "Kenya",
+        "locales": [
+            ("en", "en-ke", 70),
+            ("en", "en-gb", 18),
+            ("en", "en-us", 12),
+        ],
+        "tz_offsets": [(10800, 100)],
+        "brands": {
+            "samsung": 26, "xiaomi": 16, "oppo": 12, "huawei": 10,
+            "vivo": 8, "realme": 8, "motorola": 6, "other": 14,
+        },
+    },
+    "ua": {
+        "name": "Ukraine",
+        "locales": [
+            ("uk", "uk-ua", 62),
+            ("ru", "ru-ua", 20),
+            ("en", "en-us", 10),
+            ("en", "en-gb", 8),
+        ],
+        "tz_offsets": [(7200, 88), (10800, 12)],
+        "brands": {
+            "samsung": 28, "xiaomi": 22, "huawei": 12, "realme": 10,
+            "oppo": 8, "vivo": 6, "motorola": 4, "other": 10,
+        },
+    },
+    "uz": {
+        "name": "Uzbekistan",
+        "locales": [
+            ("uz", "uz-uz", 52),
+            ("ru", "ru-uz", 30),
+            ("en", "en-us", 18),
+        ],
+        "tz_offsets": [(18000, 100)],
+        "brands": {
+            "samsung": 28, "xiaomi": 22, "huawei": 14, "realme": 10,
+            "oppo": 8, "vivo": 6, "motorola": 4, "other": 8,
+        },
+    },
+    "ae": {
+        "name": "United Arab Emirates",
+        "locales": [
+            ("ar", "ar-ae", 48),
+            ("en", "en-us", 28),
+            ("en", "en-gb", 24),
+        ],
+        "tz_offsets": [(14400, 100)],
+        "brands": {
+            "samsung": 32, "other": 16, "xiaomi": 14, "huawei": 10,
+            "oppo": 8, "vivo": 6, "realme": 6, "google": 4, "motorola": 4,
+        },
+    },
+    "sa": {
+        "name": "Saudi Arabia",
+        "locales": [
+            ("ar", "ar-sa", 72),
+            ("en", "en-us", 16),
+            ("en", "en-gb", 12),
+        ],
+        "tz_offsets": [(10800, 100)],
+        "brands": {
+            "samsung": 32, "huawei": 14, "xiaomi": 14, "oppo": 10,
+            "vivo": 8, "realme": 8, "other": 10, "motorola": 4,
+        },
+    },
 }
 
 
 def list_supported_countries() -> List[Dict[str, str]]:
     return [
-        {"code": code, "name": spec["name"], "name_zh": country_display_name(code)}
+        {
+            "code": code,
+            "name": spec["name"],
+            "name_zh": country_display_name_zh(code) or country_display_name(code),
+            "dial": country_dial_code(code) or "",
+        }
         for code, spec in COUNTRY_SYNTH.items()
     ]
+
+# 设备指纹合成引擎已注册的国家全集
+SUPPORTED_COUNTRIES = tuple(COUNTRY_SYNTH.keys())
 
 
 def _weighted_choice(pairs: Sequence[Tuple[Any, int]], rng: random.Random) -> Any:

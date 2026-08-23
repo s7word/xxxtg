@@ -91,9 +91,11 @@
           <div>
             <label class="ce-label">目标国家</label>
             <select v-model="generateForm.country" class="ce-select">
-              <option v-for="item in countryOptions" :key="item.code" :value="item.code">
-                {{ countryFlag(item.code) }} {{ item.name }} ({{ item.code }})
-              </option>
+              <optgroup v-for="group in countryGroups" :key="group.id" :label="group.label">
+                <option v-for="item in group.options" :key="item.code" :value="item.code">
+                  {{ item.label }}
+                </option>
+              </optgroup>
             </select>
           </div>
           <div>
@@ -155,7 +157,7 @@
               v-model="countryDrafts[pack.id]"
               type="text"
               class="ce-input w-sm mono"
-              placeholder="cl / id"
+              placeholder="ca / cl / id"
               style="max-width:88px"
             />
             <button
@@ -246,6 +248,7 @@
 
 <script setup>
 import { computed } from 'vue'
+import { COUNTRY_CATALOG, COUNTRY_GROUP_META, formatCountryLabel } from '../../composables/useShared'
 import { useDevices } from '../../composables/useDevices'
 
 const {
@@ -276,20 +279,33 @@ const {
   countryFlag
 } = useDevices()
 
-const countryOptions = computed(() => {
+const countryGroups = computed(() => {
   const listed = deviceCatalogMeta.value.supported_countries || []
-  if (listed.length) return listed
-  return [
-    { code: 'cl', name: 'Chile' },
-    { code: 'id', name: 'Indonesia' },
-    { code: 'in', name: 'India' },
-    { code: 'ru', name: 'Russia' },
-    { code: 'kz', name: 'Kazakhstan' },
-    { code: 'br', name: 'Brazil' },
-    { code: 'tr', name: 'Turkey' },
-    { code: 'us', name: 'United States' },
-    { code: 'gb', name: 'United Kingdom' }
-  ]
+  const catalogByCode = Object.fromEntries(COUNTRY_CATALOG.map((item) => [item.value, item]))
+  const items = (listed.length ? listed : COUNTRY_CATALOG).map((item) => {
+    const code = item.code || item.value
+    const extra = catalogByCode[code] || {}
+    const merged = {
+      ...extra,
+      ...item,
+      value: code,
+      code,
+      name_zh: item.name_zh || extra.name_zh,
+      name_en: extra.name_en || item.name,
+      dial: item.dial ? (String(item.dial).startsWith('+') ? item.dial : `+${item.dial}`) : extra.dial
+    }
+    return { ...merged, label: formatCountryLabel(merged) }
+  })
+  const groups = COUNTRY_GROUP_META.map((group) => ({
+    ...group,
+    options: items.filter((item) => (catalogByCode[item.code]?.group || 'apac') === group.id)
+  })).filter((group) => group.options.length)
+  const groupedCodes = new Set(groups.flatMap((group) => group.options.map((item) => item.code)))
+  const leftover = items.filter((item) => !groupedCodes.has(item.code))
+  if (leftover.length) {
+    groups.push({ id: 'other', label: '其它 · Other', options: leftover })
+  }
+  return groups
 })
 
 const sourceLabel = (source) => ({

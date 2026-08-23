@@ -490,6 +490,18 @@ code, pre, .mono, .font-mono {
   line-height: 1.5;
 }
 
+.ce-select optgroup {
+  color: var(--mint-light, #6ee7b7);
+  font-weight: 600;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+
+.ce-select option {
+  color: var(--text);
+  background: #07140f;
+}
+
 .ce-input:focus,
 .ce-select:focus,
 .ce-textarea:focus {

@@ -6,18 +6,52 @@ from backend.app.config import ConfigManager, DATA_DIR
 logger = logging.getLogger("NodeTelemetryProfileManager")
 
 COUNTRY_LANG_MAP = {
-    "cl": {"lang_code": "es", "system_lang_code": "es-cl", "tz_offset": -14400},
-    "id": {"lang_code": "id", "system_lang_code": "id-id", "tz_offset": 25200},
-    "ru": {"lang_code": "ru", "system_lang_code": "ru-ru", "tz_offset": 10800},
-    "kz": {"lang_code": "ru", "system_lang_code": "ru-kz", "tz_offset": 18000},
-    "af": {"lang_code": "en", "system_lang_code": "en-af", "tz_offset": 16200},
-    "us": {"lang_code": "en", "system_lang_code": "en-us", "tz_offset": -18000},
-    "gb": {"lang_code": "en", "system_lang_code": "en-gb", "tz_offset": 0},
-    "br": {"lang_code": "pt", "system_lang_code": "pt-br", "tz_offset": -10800},
-    "tr": {"lang_code": "tr", "system_lang_code": "tr-tr", "tz_offset": 10800},
-    "in": {"lang_code": "en", "system_lang_code": "en-in", "tz_offset": 19800}
+    # 美洲
+    "ca": {"lang_code": "en", "system_lang_code": "en-ca", "tz_offset": -18000, "dial": "1",
+           "alt_system_lang_codes": ("fr-ca",), "tz_offset_range": (-28800, -14400)},
+    "us": {"lang_code": "en", "system_lang_code": "en-us", "tz_offset": -18000, "dial": "1",
+           "tz_offset_range": (-28800, -14400)},
+    "mx": {"lang_code": "es", "system_lang_code": "es-mx", "tz_offset": -21600, "dial": "52",
+           "tz_offset_range": (-25200, -18000)},
+    "cl": {"lang_code": "es", "system_lang_code": "es-cl", "tz_offset": -14400, "dial": "56"},
+    "br": {"lang_code": "pt", "system_lang_code": "pt-br", "tz_offset": -10800, "dial": "55"},
+    "co": {"lang_code": "es", "system_lang_code": "es-co", "tz_offset": -18000, "dial": "57"},
+    "pe": {"lang_code": "es", "system_lang_code": "es-pe", "tz_offset": -18000, "dial": "51"},
+    "ar": {"lang_code": "es", "system_lang_code": "es-ar", "tz_offset": -10800, "dial": "54"},
+    # 西欧
+    "gb": {"lang_code": "en", "system_lang_code": "en-gb", "tz_offset": 0, "dial": "44"},
+    "de": {"lang_code": "de", "system_lang_code": "de-de", "tz_offset": 3600, "dial": "49"},
+    "fr": {"lang_code": "fr", "system_lang_code": "fr-fr", "tz_offset": 3600, "dial": "33"},
+    # 东欧 / CIS
+    "ru": {"lang_code": "ru", "system_lang_code": "ru-ru", "tz_offset": 10800, "dial": "7"},
+    "ua": {"lang_code": "uk", "system_lang_code": "uk-ua", "tz_offset": 7200, "dial": "380"},
+    "kz": {"lang_code": "ru", "system_lang_code": "ru-kz", "tz_offset": 18000, "dial": "7"},
+    "uz": {"lang_code": "uz", "system_lang_code": "uz-uz", "tz_offset": 18000, "dial": "998"},
+    # 中东
+    "tr": {"lang_code": "tr", "system_lang_code": "tr-tr", "tz_offset": 10800, "dial": "90"},
+    "ae": {"lang_code": "ar", "system_lang_code": "ar-ae", "tz_offset": 14400, "dial": "971"},
+    "sa": {"lang_code": "ar", "system_lang_code": "ar-sa", "tz_offset": 10800, "dial": "966"},
+    "eg": {"lang_code": "ar", "system_lang_code": "ar-eg", "tz_offset": 7200, "dial": "20"},
+    "af": {"lang_code": "en", "system_lang_code": "en-af", "tz_offset": 16200, "dial": "93"},
+    # 非洲
+    "za": {"lang_code": "en", "system_lang_code": "en-za", "tz_offset": 7200, "dial": "27"},
+    "ng": {"lang_code": "en", "system_lang_code": "en-ng", "tz_offset": 3600, "dial": "234"},
+    "ke": {"lang_code": "en", "system_lang_code": "en-ke", "tz_offset": 10800, "dial": "254"},
+    # 亚太
+    "in": {"lang_code": "en", "system_lang_code": "en-in", "tz_offset": 19800, "dial": "91"},
+    "id": {"lang_code": "id", "system_lang_code": "id-id", "tz_offset": 25200, "dial": "62"},
+    "jp": {"lang_code": "ja", "system_lang_code": "ja-jp", "tz_offset": 32400, "dial": "81"},
+    "kr": {"lang_code": "ko", "system_lang_code": "ko-kr", "tz_offset": 32400, "dial": "82"},
+    "th": {"lang_code": "th", "system_lang_code": "th-th", "tz_offset": 25200, "dial": "66"},
+    "vn": {"lang_code": "vi", "system_lang_code": "vi-vn", "tz_offset": 25200, "dial": "84"},
+    "ph": {"lang_code": "en", "system_lang_code": "en-ph", "tz_offset": 28800, "dial": "63"},
+    "au": {"lang_code": "en", "system_lang_code": "en-au", "tz_offset": 36000, "dial": "61",
+           "tz_offset_range": (28800, 39600)},
 }
 TOPOLOGY_LANG_MAP = COUNTRY_LANG_MAP
+
+# 控制台 / 指纹合成共用的全球拓扑国家全集（ISO-2，小写）
+GLOBAL_TOPOLOGY_COUNTRIES = tuple(COUNTRY_LANG_MAP.keys())
 
 # 已知被公开泄露/广泛传播的官方 api_id 黑名单。
 # 这些 ID 早年随官方 APK/开源客户端反编译泄露，被大量第三方工具复用，

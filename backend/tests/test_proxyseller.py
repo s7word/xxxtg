@@ -146,6 +146,9 @@ class TestCountryMatching(unittest.TestCase):
         self.assertEqual(infer_country_from_phone("918310013712"), "in")
         self.assertEqual(infer_country_from_phone("+56 9 7194 8355"), "cl")
         self.assertEqual(infer_country_from_phone("56971948355"), "cl")
+        self.assertEqual(infer_country_from_phone("+14165550199"), "ca")
+        self.assertEqual(infer_country_from_phone("+12125550199"), "us")
+        self.assertEqual(infer_country_from_phone("+447911123456"), "gb")
         self.assertIsNone(infer_country_from_phone(""))
         self.assertIsNone(infer_country_from_phone(None))
 

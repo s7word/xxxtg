@@ -122,11 +122,15 @@
           <input v-model="config.vak_sms_api_key" type="password" class="ce-input mono" />
         </div>
         <div>
-          <label class="ce-label">默认地理拓扑区域代码</label>
-          <input v-model="config.target_country" type="text" class="ce-input mono" placeholder="例如: cl, in, id, ru" />
+          <label class="ce-label">默认地理拓扑区域</label>
+          <select v-model="config.target_country" class="ce-select">
+            <optgroup v-for="group in COUNTRY_GROUPS" :key="group.id" :label="group.label">
+              <option v-for="opt in group.options" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+            </optgroup>
+          </select>
         </div>
         <div class="ce-tiny">
-          · 智利 <code>cl</code> (+56) · 印度 <code>in</code> (+91) · 印尼 <code>id</code> (+62) · 哈萨克斯坦 <code>kz</code> (+7)
+          含 🇨🇦 加拿大 <code>ca</code> (+1) · 智利 <code>cl</code> (+56) · 印度 <code>in</code> (+91) · 印尼 <code>id</code> (+62) 等全球拓扑。
         </div>
         <div v-if="testResults.vaksms" class="ce-alert" :class="testResults.vaksms.success ? 'is-ok' : 'is-danger'">
           <div>{{ testResults.vaksms.message }}</div>
@@ -185,6 +189,7 @@
 </template>
 
 <script setup>
+import { COUNTRY_GROUPS } from '../../composables/useShared'
 import { useConfig } from '../../composables/useConfig'
 import { useProbes } from '../../composables/useProbes'
 

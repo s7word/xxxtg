@@ -59,6 +59,118 @@ SYNTHETIC_IDENTITY_POOLS = {
         "first": ["Alexandr", "Dmitry", "Maxim", "Sergey", "Andrey", "Elena", "Anna", "Olga", "Tatiana"],
         "last": ["Ivanov", "Smirnov", "Kuznetsov", "Popov", "Vasiliev", "Petrov", "Sokolov", "Mikhailov"]
     },
+    "ca": {
+        "first": ["Liam", "Noah", "Oliver", "Emma", "Olivia", "Charlotte", "Étienne", "Amélie", "Gabriel", "Léa", "William", "Sophia"],
+        "last": ["Tremblay", "Gagnon", "Roy", "Côté", "Bouchard", "Smith", "Brown", "Wilson", "MacDonald", "Martin"]
+    },
+    "us": {
+        "first": ["James", "Michael", "Emily", "Jessica", "Daniel", "Ashley", "Matthew", "Amanda", "Christopher", "Sarah"],
+        "last": ["Smith", "Johnson", "Williams", "Brown", "Jones", "Garcia", "Miller", "Davis", "Wilson", "Anderson"]
+    },
+    "gb": {
+        "first": ["Oliver", "George", "Harry", "Amelia", "Isla", "Ava", "Noah", "Lily", "Jack", "Sophie"],
+        "last": ["Smith", "Jones", "Taylor", "Brown", "Williams", "Wilson", "Johnson", "Davies", "Patel", "Wright"]
+    },
+    "au": {
+        "first": ["Jack", "Olivia", "William", "Charlotte", "Noah", "Mia", "Lucas", "Amelia", "Henry", "Isla"],
+        "last": ["Smith", "Jones", "Williams", "Brown", "Wilson", "Taylor", "Johnson", "White", "Martin", "Anderson"]
+    },
+    "de": {
+        "first": ["Lukas", "Maximilian", "Leon", "Hannah", "Emma", "Mia", "Felix", "Sophie", "Paul", "Lina"],
+        "last": ["Müller", "Schmidt", "Schneider", "Fischer", "Weber", "Meyer", "Wagner", "Becker", "Hoffmann", "Schulz"]
+    },
+    "fr": {
+        "first": ["Louis", "Gabriel", "Hugo", "Jade", "Louise", "Emma", "Arthur", "Chloé", "Raphaël", "Manon"],
+        "last": ["Martin", "Bernard", "Dubois", "Thomas", "Robert", "Richard", "Petit", "Durand", "Leroy", "Moreau"]
+    },
+    "jp": {
+        "first": ["Haruto", "Yuto", "Sota", "Yuki", "Hana", "Sakura", "Ren", "Mei", "Kaito", "Aoi"],
+        "last": ["Sato", "Suzuki", "Takahashi", "Tanaka", "Watanabe", "Ito", "Yamamoto", "Nakamura", "Kobayashi", "Kato"]
+    },
+    "kr": {
+        "first": ["Minjun", "Seojoon", "Jisoo", "Minseo", "Jiho", "Soyeon", "Hyunwoo", "Yuna", "Jimin", "Haeun"],
+        "last": ["Kim", "Lee", "Park", "Choi", "Jung", "Kang", "Cho", "Yoon", "Jang", "Lim"]
+    },
+    "th": {
+        "first": ["Nattapong", "Somsak", "Pichai", "Siriporn", "Nongnuch", "Arthit", "Kanokwan", "Wichai", "Malee", "Prasert"],
+        "last": ["Saetang", "Srisuk", "Chaiyaporn", "Wongchai", "Suwannapong", "Rattanakul", "Phanich", "Jirapong"]
+    },
+    "vn": {
+        "first": ["Minh", "Hung", "Duc", "Linh", "Trang", "Anh", "Tuan", "Huong", "Nam", "Thao"],
+        "last": ["Nguyen", "Tran", "Le", "Pham", "Hoang", "Phan", "Vu", "Vo", "Dang", "Bui"]
+    },
+    "ph": {
+        "first": ["Jose", "Maria", "Juan", "Ana", "Mark", "Angel", "Carlo", "Princess", "Miguel", "Nicole"],
+        "last": ["Santos", "Reyes", "Cruz", "Bautista", "Gonzales", "Ramos", "Aquino", "Garcia", "Mendoza", "Torres"]
+    },
+    "mx": {
+        "first": ["Santiago", "Mateo", "Valentina", "Ximena", "Diego", "Camila", "Sebastián", "Sofía", "Emiliano", "Regina"],
+        "last": ["Hernández", "García", "Martínez", "López", "González", "Pérez", "Sánchez", "Ramírez", "Torres", "Flores"]
+    },
+    "co": {
+        "first": ["Santiago", "Mariana", "Andrés", "Valentina", "Juan", "Isabella", "Camilo", "Laura", "Daniel", "Salomé"],
+        "last": ["Rodríguez", "García", "Martínez", "López", "Hernández", "González", "Pérez", "Sánchez", "Ramírez", "Díaz"]
+    },
+    "pe": {
+        "first": ["Luciana", "Mateo", "Valeria", "Sebastián", "Camila", "Diego", "Renata", "Joaquín", "Ana", "Luis"],
+        "last": ["Quispe", "Flores", "Rojas", "Sánchez", "García", "Torres", "Díaz", "Vargas", "Castillo", "Mendoza"]
+    },
+    "ar": {
+        "first": ["Juan", "Martina", "Benjamín", "Sofía", "Thiago", "Valentina", "Felipe", "Catalina", "Nicolás", "Emma"],
+        "last": ["González", "Rodríguez", "Fernández", "López", "Martínez", "Pérez", "García", "Sánchez", "Romero", "Álvarez"]
+    },
+    "br": {
+        "first": ["Miguel", "Alice", "Arthur", "Helena", "Heitor", "Laura", "Davi", "Valentina", "Theo", "Sophia"],
+        "last": ["Silva", "Santos", "Oliveira", "Souza", "Rodrigues", "Ferreira", "Alves", "Pereira", "Lima", "Gomes"]
+    },
+    "tr": {
+        "first": ["Mehmet", "Ayşe", "Mustafa", "Fatma", "Ahmet", "Elif", "Emre", "Zeynep", "Yusuf", "Hatice"],
+        "last": ["Yılmaz", "Kaya", "Demir", "Şahin", "Çelik", "Yıldız", "Yıldırım", "Öztürk", "Aydin", "Özdemir"]
+    },
+    "in": {
+        "first": ["Aarav", "Vivaan", "Aditya", "Ananya", "Diya", "Ishaan", "Kiara", "Rohan", "Priya", "Arjun"],
+        "last": ["Sharma", "Patel", "Singh", "Kumar", "Gupta", "Reddy", "Nair", "Mehta", "Joshi", "Iyer"]
+    },
+    "kz": {
+        "first": ["Alikhan", "Nurasyl", "Aisulu", "Amina", "Dias", "Tomiris", "Alina", "Bekzat", "Madina", "Nurlan"],
+        "last": ["Nurzhanov", "Suleimenov", "Omarov", "Abdullayev", "Kim", "Ivanov", "Serikova", "Tulegenov"]
+    },
+    "ua": {
+        "first": ["Oleksandr", "Andriy", "Dmytro", "Anna", "Olena", "Sofiia", "Maksym", "Kateryna", "Ivan", "Yulia"],
+        "last": ["Shevchenko", "Kovalenko", "Bondarenko", "Tkachenko", "Kravchenko", "Melnyk", "Shevchuk", "Boyko"]
+    },
+    "uz": {
+        "first": ["Jasur", "Dilshod", "Aziza", "Madina", "Bekzod", "Nilufar", "Sardor", "Gulnora", "Otabek", "Sevara"],
+        "last": ["Karimov", "Tursunov", "Rakhimov", "Usmanov", "Alimov", "Yusupov", "Ismoilov", "Nazarov"]
+    },
+    "ae": {
+        "first": ["Omar", "Fatima", "Khalid", "Aisha", "Mohammed", "Layla", "Sultan", "Noor", "Yousef", "Mariam"],
+        "last": ["Al Maktoum", "Al Nahyan", "Al Falasi", "Al Suwaidi", "Al Mazrouei", "Hassan", "Abdullah", "Ibrahim"]
+    },
+    "sa": {
+        "first": ["Abdullah", "Mohammed", "Sara", "Noura", "Fahad", "Lama", "Khalid", "Reem", "Saud", "Hessa"],
+        "last": ["Al Saud", "Al Qahtani", "Al Ghamdi", "Al Harbi", "Al Otaibi", "Al Zahrani", "Al Dossari", "Al Shehri"]
+    },
+    "eg": {
+        "first": ["Omar", "Youssef", "Fatma", "Nour", "Ahmed", "Mariam", "Hassan", "Salma", "Mahmoud", "Hana"],
+        "last": ["Mohamed", "Ahmed", "Ibrahim", "Hassan", "Ali", "Mahmoud", "Mostafa", "Hussein", "Said", "Farouk"]
+    },
+    "za": {
+        "first": ["Thabo", "Lerato", "Sipho", "Nomsa", "Johan", "Anika", "Kagiso", "Zanele", "Pieter", "Amara"],
+        "last": ["Dlamini", "Ndlovu", "Botha", "Van der Merwe", "Nkosi", "Mokoena", "Naidoo", "Pretorius"]
+    },
+    "ng": {
+        "first": ["Chinedu", "Amina", "Emeka", "Ngozi", "Tunde", "Fatima", "Ifeanyi", "Blessing", "Oluwaseun", "Aisha"],
+        "last": ["Okafor", "Adeyemi", "Ibrahim", "Okeke", "Balogun", "Musa", "Eze", "Abdullahi", "Okonkwo"]
+    },
+    "ke": {
+        "first": ["Brian", "Faith", "Kevin", "Mercy", "Daniel", "Aisha", "Samuel", "Wanjiku", "Collins", "Grace"],
+        "last": ["Otieno", "Mwangi", "Kamau", "Wanjala", "Omondi", "Njeri", "Kipchoge", "Achieng", "Mutua"]
+    },
+    "af": {
+        "first": ["Ahmad", "Omar", "Fatima", "Zahra", "Hassan", "Maryam", "Karim", "Laila", "Farid", "Soraya"],
+        "last": ["Ahmadi", "Rahimi", "Mohammadi", "Karimi", "Hosseini", "Nazari", "Sadat", "Stanikzai"]
+    },
     "default": {
         "first": ["James", "Alex", "David", "Elena", "Marcus", "Lucas", "Sophie", "Michael", "Daniel"],
         "last": ["Smith", "Brown", "Wilson", "Taylor", "Anderson", "White", "Miller", "Davis"]

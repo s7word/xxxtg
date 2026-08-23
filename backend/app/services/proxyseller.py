@@ -32,6 +32,7 @@ logger = logging.getLogger("MultipathRelayGatewayService")
 # ISO-2 -> (alpha3, 英文名, 其它别名...)
 # 用于精准 / 模糊匹配 Proxy-Seller 返回的 country / country_alpha3。
 COUNTRY_PROFILES: Dict[str, Tuple[str, ...]] = {
+    "ae": ("are", "united arab emirates", "uae", "dubai"),
     "af": ("afg", "afghanistan"),
     "ar": ("arg", "argentina"),
     "au": ("aus", "australia"),
@@ -43,6 +44,7 @@ COUNTRY_PROFILES: Dict[str, Tuple[str, ...]] = {
     "co": ("col", "colombia"),
     "cz": ("cze", "czechia", "czech republic"),
     "de": ("deu", "germany"),
+    "eg": ("egy", "egypt"),
     "es": ("esp", "spain"),
     "fr": ("fra", "france"),
     "gb": ("gbr", "united kingdom", "uk", "great britain", "england"),
@@ -50,16 +52,25 @@ COUNTRY_PROFILES: Dict[str, Tuple[str, ...]] = {
     "in": ("ind", "india"),
     "it": ("ita", "italy"),
     "jp": ("jpn", "japan"),
+    "ke": ("ken", "kenya"),
+    "kr": ("kor", "south korea", "korea", "republic of korea"),
     "kz": ("kaz", "kazakhstan"),
     "mx": ("mex", "mexico"),
+    "ng": ("nga", "nigeria"),
     "nl": ("nld", "netherlands", "holland"),
+    "pe": ("per", "peru"),
+    "ph": ("phl", "philippines"),
     "pl": ("pol", "poland"),
     "ru": ("rus", "russia", "russian federation"),
+    "sa": ("sau", "saudi arabia", "ksa"),
     "sg": ("sgp", "singapore"),
+    "th": ("tha", "thailand"),
     "tr": ("tur", "turkey", "turkiye"),
     "ua": ("ukr", "ukraine"),
     "us": ("usa", "united states", "united states of america", "america"),
+    "uz": ("uzb", "uzbekistan"),
     "vn": ("vnm", "vietnam", "viet nam"),
+    "za": ("zaf", "south africa"),
 }
 
 PROXY_TYPE_BUCKETS = ("ipv4", "ipv6", "mobile", "isp", "mix", "mix_isp", "resident")
@@ -101,32 +112,61 @@ IP_PROBE_ENDPOINTS = (
     "https://ipinfo.io/json",
 )
 
+# NANP (+1) 加拿大区号。未命中时 +1 回落美国。
+NANP_CA_AREA_CODES = frozenset({
+    "204", "226", "236", "249", "250", "257", "263", "289",
+    "306", "343", "354", "365", "367", "368", "382", "387",
+    "403", "416", "418", "428", "431", "437", "438", "450",
+    "468", "474", "506", "514", "519", "548", "579", "581",
+    "584", "587", "604", "613", "639", "647", "672", "683",
+    "705", "709", "742", "753", "778", "780", "782", "807",
+    "819", "825", "867", "873", "879", "902", "905",
+})
+
 # E.164 国际字冠 -> ISO-2。按最长前缀匹配，避免 1 / 7 这类共享字冠误伤。
+# +1 默认 us，加拿大区号由 infer_country_from_phone 二次判定；
+# +7 默认 ru，哈萨克 6x/7x 由 infer_country_from_phone 二次判定。
 PHONE_DIAL_TO_ISO2: Dict[str, str] = {
-    "56": "cl",
-    "91": "in",
-    "54": "ar",
-    "55": "br",
-    "57": "co",
-    "52": "mx",
-    "62": "id",
-    "84": "vn",
-    "86": "cn",
-    "81": "jp",
-    "82": "kr",
-    "90": "tr",
-    "44": "gb",
-    "49": "de",
-    "33": "fr",
-    "39": "it",
-    "34": "es",
+    "1": "us",
+    "7": "ru",
+    "20": "eg",
+    "27": "za",
     "31": "nl",
     "32": "be",
+    "33": "fr",
+    "34": "es",
+    "39": "it",
+    "44": "gb",
     "48": "pl",
-    "420": "cz",
+    "49": "de",
+    "51": "pe",
+    "52": "mx",
+    "54": "ar",
+    "55": "br",
+    "56": "cl",
+    "57": "co",
     "61": "au",
+    "62": "id",
+    "63": "ph",
     "65": "sg",
+    "66": "th",
+    "81": "jp",
+    "82": "kr",
+    "84": "vn",
+    "86": "cn",
+    "90": "tr",
+    "91": "in",
+    "92": "pk",
+    "93": "af",
+    "98": "ir",
+    "234": "ng",
+    "254": "ke",
     "380": "ua",
+    "420": "cz",
+    "880": "bd",
+    "966": "sa",
+    "971": "ae",
+    "998": "uz",
 }
 
 
@@ -135,10 +175,18 @@ def _norm(value: Any) -> str:
 
 
 def infer_country_from_phone(phone: Optional[str]) -> Optional[str]:
-    """从 +E.164 / 裸数字手机号推断 ISO-2。+91 → in，+56 → cl。"""
+    """从 +E.164 / 裸数字手机号推断 ISO-2。
+
+    +91 → in，+56 → cl；+1 按 NANP 区号智能区分 us/ca；
+    +7 按 6x/7x 字冠智能区分 ru/kz。
+    """
     digits = "".join(ch for ch in str(phone or "") if ch.isdigit())
     if not digits:
         return None
+    if digits.startswith("1") and len(digits) >= 4 and digits[1:4] in NANP_CA_AREA_CODES:
+        return "ca"
+    if digits.startswith("7") and len(digits) >= 2 and digits[1] in {"6", "7"}:
+        return "kz"
     best_iso: Optional[str] = None
     best_len = 0
     for prefix, iso2 in PHONE_DIAL_TO_ISO2.items():

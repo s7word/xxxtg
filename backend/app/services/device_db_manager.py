@@ -40,32 +40,85 @@ MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 CATALOG_VERSION = 1
 
 COUNTRY_NAME_MAP = {
+    "ae": "United Arab Emirates",
+    "af": "Afghanistan",
+    "ar": "Argentina",
+    "au": "Australia",
+    "bd": "Bangladesh",
+    "br": "Brazil",
+    "ca": "Canada",
     "cl": "Chile",
+    "cn": "China",
+    "co": "Colombia",
+    "de": "Germany",
+    "eg": "Egypt",
+    "es": "Spain",
+    "fr": "France",
+    "gb": "United Kingdom",
     "id": "Indonesia",
     "in": "India",
-    "ru": "Russia",
+    "ir": "Iran",
+    "jp": "Japan",
+    "ke": "Kenya",
+    "kr": "South Korea",
     "kz": "Kazakhstan",
-    "af": "Afghanistan",
-    "us": "United States",
-    "gb": "United Kingdom",
-    "br": "Brazil",
-    "tr": "Turkey",
     "mx": "Mexico",
-    "ar": "Argentina",
-    "pe": "Peru",
-    "co": "Colombia",
-    "ph": "Philippines",
-    "vn": "Vietnam",
-    "th": "Thailand",
     "my": "Malaysia",
-    "sg": "Singapore",
-    "ua": "Ukraine",
-    "de": "Germany",
-    "es": "Spain",
-    "pk": "Pakistan",
-    "bd": "Bangladesh",
     "ng": "Nigeria",
-    "eg": "Egypt",
+    "pe": "Peru",
+    "ph": "Philippines",
+    "pk": "Pakistan",
+    "ru": "Russia",
+    "sa": "Saudi Arabia",
+    "sg": "Singapore",
+    "th": "Thailand",
+    "tr": "Turkey",
+    "ua": "Ukraine",
+    "us": "United States",
+    "uz": "Uzbekistan",
+    "vn": "Vietnam",
+    "za": "South Africa",
+}
+
+COUNTRY_NAME_ZH_MAP = {
+    "ae": "阿联酋",
+    "af": "阿富汗",
+    "ar": "阿根廷",
+    "au": "澳大利亚",
+    "bd": "孟加拉",
+    "br": "巴西",
+    "ca": "加拿大",
+    "cl": "智利",
+    "cn": "中国",
+    "co": "哥伦比亚",
+    "de": "德国",
+    "eg": "埃及",
+    "es": "西班牙",
+    "fr": "法国",
+    "gb": "英国",
+    "id": "印尼",
+    "in": "印度",
+    "ir": "伊朗",
+    "jp": "日本",
+    "ke": "肯尼亚",
+    "kr": "韩国",
+    "kz": "哈萨克斯坦",
+    "mx": "墨西哥",
+    "my": "马来西亚",
+    "ng": "尼日利亚",
+    "pe": "秘鲁",
+    "ph": "菲律宾",
+    "pk": "巴基斯坦",
+    "ru": "俄罗斯",
+    "sa": "沙特",
+    "sg": "新加坡",
+    "th": "泰国",
+    "tr": "土耳其",
+    "ua": "乌克兰",
+    "us": "美国",
+    "uz": "乌兹别克斯坦",
+    "vn": "越南",
+    "za": "南非",
 }
 
 COUNTRY_ALIAS_TOKENS = {
@@ -87,6 +140,7 @@ COUNTRY_ALIAS_TOKENS = {
     "uk": "gb",
     "britain": "gb",
     "england": "gb",
+    "unitedkingdom": "gb",
     "brazil": "br",
     "brasil": "br",
     "turkey": "tr",
@@ -107,22 +161,52 @@ COUNTRY_ALIAS_TOKENS = {
     "bangladesh": "bd",
     "nigeria": "ng",
     "egypt": "eg",
+    "canada": "ca",
+    "canadian": "ca",
+    "france": "fr",
+    "french": "fr",
+    "australia": "au",
+    "australian": "au",
+    "japan": "jp",
+    "japanese": "jp",
+    "korea": "kr",
+    "southkorea": "kr",
+    "korean": "kr",
+    "kenya": "ke",
+    "uzbekistan": "uz",
+    "uzbek": "uz",
+    "uae": "ae",
+    "emirates": "ae",
+    "unitedarabemirates": "ae",
+    "dubai": "ae",
+    "saudi": "sa",
+    "saudiarabia": "sa",
+    "ksa": "sa",
+    "southafrica": "za",
 }
 
 # 时区秒偏置 → 候选国家（用于内容推断，再与语言交叉确认）
 TZ_COUNTRY_HINTS = {
-    -18000: ("us", "mx", "pe"),
-    -14400: ("cl", "us"),
+    -28800: ("ca", "us"),
+    -25200: ("ca", "us", "mx"),
+    -21600: ("mx", "ca", "us"),
+    -18000: ("us", "ca", "mx", "pe", "co"),
+    -14400: ("cl", "ca", "us"),
     -10800: ("br", "ar", "cl"),
     0: ("gb",),
-    10800: ("ru", "tr", "ua"),
+    3600: ("de", "fr", "ng"),
+    7200: ("eg", "za", "ua"),
+    10800: ("ru", "tr", "ke", "sa"),
+    14400: ("ae",),
     16200: ("af",),
-    18000: ("kz", "pk"),
+    18000: ("kz", "uz", "pk"),
     19800: ("in",),
     21600: ("bd", "kz"),
     25200: ("id", "th", "vn"),
-    28800: ("id", "sg", "my", "ph", "cn"),
-    32400: ("id",),
+    28800: ("id", "ph", "sg", "my", "cn"),
+    32400: ("jp", "kr"),
+    34200: ("au",),
+    36000: ("au",),
 }
 
 LOCALE_COUNTRY_HINTS = {
@@ -137,6 +221,8 @@ LOCALE_COUNTRY_HINTS = {
     "hi-in": "in",
     "en-gb": "gb",
     "en-us": "us",
+    "en-ca": "ca",
+    "fr-ca": "ca",
     "pt-br": "br",
     "ru-ru": "ru",
     "ru-kz": "kz",
@@ -144,10 +230,26 @@ LOCALE_COUNTRY_HINTS = {
     "en-af": "af",
     "tr-tr": "tr",
     "en-ph": "ph",
+    "tl-ph": "ph",
     "vi-vn": "vn",
     "th-th": "th",
     "ms-my": "my",
     "en-sg": "sg",
+    "de-de": "de",
+    "fr-fr": "fr",
+    "en-au": "au",
+    "ja-jp": "jp",
+    "ko-kr": "kr",
+    "ar-eg": "eg",
+    "en-za": "za",
+    "en-ng": "ng",
+    "en-ke": "ke",
+    "uk-ua": "ua",
+    "ru-ua": "ua",
+    "uz-uz": "uz",
+    "ru-uz": "uz",
+    "ar-ae": "ae",
+    "ar-sa": "sa",
 }
 
 BRAND_PREFIXES = (
@@ -199,6 +301,20 @@ def country_display_name(code: Optional[str]) -> str:
     if not code:
         return "Unknown"
     return COUNTRY_NAME_MAP.get(code, code.upper())
+
+
+def country_display_name_zh(code: Optional[str]) -> str:
+    if not code:
+        return ""
+    return COUNTRY_NAME_ZH_MAP.get(code, "")
+
+
+def country_dial_code(code: Optional[str]) -> str:
+    """返回不含 + 号的国际区号，如 ca → 1、gb → 44。"""
+    if not code:
+        return ""
+    spec = COUNTRY_LANG_MAP.get(str(code).lower()) or {}
+    return str(spec.get("dial") or "")
 
 
 def infer_country_from_filename(filename: str) -> Optional[str]:

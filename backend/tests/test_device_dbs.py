@@ -61,6 +61,7 @@ class TestCountryInference(unittest.TestCase):
         self.assertEqual(infer_country_from_filename("2026-08-23_07-06-02_Base.db"), "cl")
         self.assertEqual(infer_country_from_filename("chile_install_300.db"), "cl")
         self.assertEqual(infer_country_from_filename("India.db"), "in")
+        self.assertEqual(infer_country_from_filename("2026-08-23_09-00-00_Canada.db"), "ca")
 
     def test_sanitize_filename_strips_paths(self):
         self.assertEqual(sanitize_filename("../../evil.db"), "evil.db")

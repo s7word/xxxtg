@@ -1,6 +1,7 @@
 import { computed, ref } from 'vue'
 import { pushToast } from './useUi'
 import { dbStats, deviceProfiles, fetchDbStats, fetchProfiles } from './useTasks'
+import { countryFlag, COUNTRY_CATALOG, formatCountryLabel } from './useShared'
 
 const devicePacks = ref([])
 const deviceCatalogMeta = ref({
@@ -238,10 +239,7 @@ export const percentOf = (value, total) => {
   return Math.max(2, Math.round((Number(value) || 0) * 100 / total))
 }
 
-export const countryFlag = (code) => ({
-  cl: '🇨🇱', id: '🇮🇩', in: '🇮🇳', ru: '🇷🇺', kz: '🇰🇿',
-  af: '🇦🇫', us: '🇺🇸', gb: '🇬🇧', br: '🇧🇷', tr: '🇹🇷'
-}[String(code || '').toLowerCase()] || '🌐')
+export { countryFlag, COUNTRY_CATALOG, formatCountryLabel }
 
 export const useDevices = () => ({
   deviceProfiles,
