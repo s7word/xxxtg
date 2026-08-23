@@ -230,6 +230,12 @@ class RegisterTaskRequest(BaseModel):
 NodeProvisioningRequest = RegisterTaskRequest
 
 
+class BatchRegisterRequest(RegisterTaskRequest):
+    """并发批量节点引导请求"""
+    count: int = Field(default=3, ge=1, le=10, description="批量任务数 (1~10)")
+    concurrency: int = Field(default=3, ge=1, le=10, description="同时运行的最大任务数")
+
+
 class RegisterTaskResponse(BaseModel):
     """节点引导任务创建响应"""
     task_id: str
@@ -237,6 +243,35 @@ class RegisterTaskResponse(BaseModel):
     message: str
 
 NodeProvisioningResponse = RegisterTaskResponse
+
+
+class BatchRegisterResponse(BaseModel):
+    """并发批量节点引导创建响应"""
+    batch_id: str
+    task_ids: List[str]
+    count: int
+    concurrency: int
+    status: str
+    message: str
+    country: Optional[str] = None
+    app_type: Optional[str] = None
+
+
+class BatchStatusResponse(BaseModel):
+    """批次聚合状态"""
+    batch_id: str
+    task_ids: List[str] = Field(default_factory=list)
+    count: int = 0
+    concurrency: int = 0
+    country: Optional[str] = None
+    app_type: Optional[str] = None
+    status: str = "pending"
+    success: int = 0
+    failed: int = 0
+    running: int = 0
+    pending: int = 0
+    created_at: str
+    updated_at: str
 
 
 class TaskStatusResponse(BaseModel):
@@ -247,6 +282,9 @@ class TaskStatusResponse(BaseModel):
     user_id: Optional[int] = Field(default=None, description="协商确认的分布式节点 UID")
     error: Optional[str] = None
     logs: List[str] = []
+    batch_id: Optional[str] = Field(default=None, description="所属并发批次 ID")
+    account_kind: Optional[str] = None
+    needs_signup: Optional[bool] = None
     created_at: str
     updated_at: str
 

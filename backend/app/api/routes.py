@@ -10,6 +10,9 @@ from backend.app.models.schemas import (
     TestApiResponse,
     RegisterTaskRequest,
     RegisterTaskResponse,
+    BatchRegisterRequest,
+    BatchRegisterResponse,
+    BatchStatusResponse,
     TaskStatusResponse,
     EgressRelayConfig,
     VaultAccountListResponse,
@@ -461,10 +464,58 @@ async def start_registration(req: RegisterTaskRequest, background_tasks: Backgro
         message="虚拟节点引导与协议握手任务已提交后台编排流水线"
     )
 
+@router.post("/register/batch", response_model=BatchRegisterResponse, summary="并发批量触发边缘节点引导任务")
+@router.post("/provision/batch", response_model=BatchRegisterResponse, summary="并发批量触发边缘节点引导任务 (学术规范路径)")
+async def start_batch_registration(req: BatchRegisterRequest, background_tasks: BackgroundTasks):
+    manager = RegistrationTaskManager.get_instance()
+    batch_id, task_ids = manager.create_batch(
+        count=req.count,
+        concurrency=req.concurrency,
+        country=req.country,
+        app_type=req.app_type,
+    )
+    proxy_dict = req.proxy.model_dump() if req.proxy else None
+    background_tasks.add_task(
+        RegistrationOrchestrator.run_batch,
+        batch_id=batch_id,
+        task_ids=task_ids,
+        country=req.country,
+        app_type=req.app_type,
+        proxy_override=proxy_dict,
+        set_2fa=req.set_2fa,
+        concurrency=req.concurrency,
+    )
+    return BatchRegisterResponse(
+        batch_id=batch_id,
+        task_ids=task_ids,
+        count=len(task_ids),
+        concurrency=req.concurrency,
+        status="pending",
+        country=req.country,
+        app_type=req.app_type,
+        message=(
+            f"已提交并发批量引导: {len(task_ids)} 个任务 / 并发度 {req.concurrency}"
+            f"（batch_id={batch_id}）"
+        ),
+    )
+
+@router.get("/register/batches", summary="获取并发批次列表")
+@router.get("/provision/batches", summary="获取并发批次列表 (学术规范路径)")
+async def list_batches():
+    return RegistrationTaskManager.get_instance().list_batches()
+
+@router.get("/register/batches/{batch_id}", response_model=BatchStatusResponse, summary="获取指定批次聚合状态")
+@router.get("/provision/batches/{batch_id}", response_model=BatchStatusResponse, summary="获取指定批次聚合状态 (学术规范路径)")
+async def get_batch_status(batch_id: str):
+    batch = RegistrationTaskManager.get_instance().get_batch(batch_id)
+    if not batch:
+        raise HTTPException(status_code=404, detail="Batch not found")
+    return batch
+
 @router.get("/register/tasks", summary="获取节点任务队列列表")
 @router.get("/provision/tasks", summary="获取节点任务队列列表 (学术规范路径)")
-async def list_tasks():
-    return RegistrationTaskManager.get_instance().list_tasks()
+async def list_tasks(batch_id: Optional[str] = None):
+    return RegistrationTaskManager.get_instance().list_tasks(batch_id=batch_id)
 
 @router.get("/register/tasks/{task_id}", response_model=TaskStatusResponse, summary="获取指定节点状态机审计详情")
 @router.get("/provision/tasks/{task_id}", response_model=TaskStatusResponse, summary="获取指定节点状态机审计详情 (学术规范路径)")

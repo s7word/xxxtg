@@ -161,6 +161,53 @@
               </div>
             </div>
 
+            <!-- 并发批量引导模式 -->
+            <div class="p-2.5 rounded-lg bg-zinc-900/80 border border-zinc-800 space-y-2.5">
+              <div class="flex items-center justify-between">
+                <label class="flex items-center gap-2 text-xs text-zinc-200 cursor-pointer">
+                  <input type="checkbox" v-model="batchMode" class="rounded bg-zinc-900 border-zinc-700" />
+                  并发批量引导模式
+                </label>
+                <span class="badge badge-info text-[10px]">asyncio.Semaphore</span>
+              </div>
+              <div v-if="batchMode" class="space-y-2">
+                <div>
+                  <div class="text-[11px] text-zinc-400 mb-1">并行任务数</div>
+                  <div class="flex items-center gap-1.5">
+                    <button
+                      v-for="n in [1, 3, 5, 10]"
+                      :key="n"
+                      @click="batchCount = n"
+                      :class="[
+                        'px-2.5 py-1 rounded-md text-[11px] border',
+                        batchCount === n
+                          ? 'bg-blue-600 text-white border-blue-500'
+                          : 'bg-zinc-950 text-zinc-300 border-zinc-800 hover:border-zinc-600'
+                      ]"
+                    >{{ n }} 个</button>
+                  </div>
+                </div>
+                <div>
+                  <label class="text-[11px] text-zinc-400 mb-1 block">并发度 concurrency (1~{{ batchCount }})</label>
+                  <input
+                    type="range"
+                    min="1"
+                    :max="Math.max(1, batchCount)"
+                    v-model.number="batchConcurrency"
+                    class="w-full accent-blue-500"
+                  />
+                  <div class="flex justify-between text-[10px] text-zinc-500">
+                    <span>串行 1</span>
+                    <span class="text-blue-300 font-mono">{{ effectiveConcurrency }} 并行槽</span>
+                    <span>{{ batchCount }}</span>
+                  </div>
+                </div>
+                <p class="text-[11px] text-zinc-500 leading-relaxed">
+                  等待 OTP 期间可并行验证多个号码。若服务端返回 <code class="font-mono">SentCodeTypeApp</code> 会自动探测 <code class="font-mono">ResendCode</code> 并快速换号，避免空等 120 秒。
+                </p>
+              </div>
+            </div>
+
             <!-- 启动按钮 -->
             <button
               @click="startRegistrationTask"
@@ -168,6 +215,7 @@
               class="w-full btn-primary py-2.5 font-semibold text-sm shadow-lg shadow-blue-600/20"
             >
               <span v-if="isStartingTask">正在调度状态机编排流水线...</span>
+              <span v-else-if="batchMode">🚀 并发启动 {{ batchCount }} 个引导任务</span>
               <span v-else>🚀 启动虚拟节点引导仿真</span>
             </button>
 
@@ -185,10 +233,18 @@
               <div class="flex items-center gap-2">
                 <span class="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
                 <h3 class="font-semibold text-sm text-zinc-200">实时状态机审计日志终端 (State Machine Audit)</h3>
-                <span v-if="activeTask" class="text-xs font-mono text-zinc-400">(任务: {{ activeTask.task_id }})</span>
+                <span v-if="activeTask && !mergedLogView" class="text-xs font-mono text-zinc-400">(任务: {{ activeTask.task_id }})</span>
+                <span v-else-if="mergedLogView && currentBatch" class="text-xs font-mono text-zinc-400">(批次: {{ currentBatch.batch_id }})</span>
               </div>
               <div class="flex items-center gap-2">
-                <span v-if="activeTask" :class="getStatusBadgeClass(activeTask.status)">
+                <button
+                  v-if="currentBatch"
+                  @click="mergedLogView = !mergedLogView"
+                  class="text-[11px] px-2 py-1 rounded border border-zinc-800 text-zinc-400 hover:text-zinc-200"
+                >
+                  {{ mergedLogView ? '单任务日志' : '合并批次日志' }}
+                </button>
+                <span v-if="activeTask && !mergedLogView" :class="getStatusBadgeClass(activeTask.status)">
                   {{ activeTask.status.toUpperCase() }}
                 </span>
                 <button @click="clearActiveLogs" class="text-xs text-zinc-400 hover:text-zinc-200 px-2 py-1 bg-zinc-900 rounded border border-zinc-800">
@@ -197,13 +253,33 @@
               </div>
             </div>
 
+            <div v-if="currentBatch" class="mb-2 flex flex-wrap items-center gap-1.5">
+              <span class="text-[11px] text-zinc-500">批次 {{ currentBatch.batch_id }}</span>
+              <span class="badge badge-info text-[10px]">{{ currentBatch.count }} 任务 / 并发 {{ currentBatch.concurrency }}</span>
+              <span class="text-[11px] text-emerald-400">成功 {{ batchStats.success }}</span>
+              <span class="text-[11px] text-cyan-400">运行 {{ batchStats.running }}</span>
+              <span class="text-[11px] text-red-400">失败 {{ batchStats.failed }}</span>
+              <span class="text-[11px] text-zinc-500">等待 {{ batchStats.pending }}</span>
+              <button
+                v-for="tid in currentBatch.task_ids"
+                :key="tid"
+                @click="focusBatchTask(tid)"
+                :class="[
+                  'font-mono text-[10px] px-1.5 py-0.5 rounded border',
+                  activeTask?.task_id === tid
+                    ? 'border-blue-500 text-blue-300 bg-blue-950/40'
+                    : 'border-zinc-800 text-zinc-400 hover:border-zinc-600'
+                ]"
+              >{{ tid }}</button>
+            </div>
+
             <!-- 日志窗口 -->
             <div ref="terminalRef" class="flex-1 bg-zinc-950 p-3 rounded-lg border border-zinc-900 overflow-y-auto font-mono text-xs space-y-1">
-              <div v-if="!activeTask || activeTask.logs.length === 0" class="text-zinc-600 italic py-10 text-center">
+              <div v-if="displayLogs.length === 0" class="text-zinc-600 italic py-10 text-center">
                 暂无活跃的状态机运行日志，点击左侧「启动虚拟节点引导仿真」调度流水线...
               </div>
               <div
-                v-for="(log, idx) in (activeTask?.logs || [])"
+                v-for="(log, idx) in displayLogs"
                 :key="idx"
                 :class="[
                   'leading-relaxed break-all',
@@ -227,14 +303,34 @@
           <div class="glass-panel p-5 rounded-xl border border-zinc-800/80 lg:col-span-2 space-y-3">
             <div class="flex items-center justify-between border-b border-zinc-800 pb-2">
               <h3 class="font-semibold text-sm text-zinc-200">📜 节点引导任务队列 (Node Provisioning Queue)</h3>
-              <button @click="fetchTasks" class="text-xs text-blue-400 hover:underline">刷新列表</button>
+              <div class="flex items-center gap-2">
+                <button
+                  @click="taskFilter = taskFilter === 'batch' ? 'all' : 'batch'"
+                  :disabled="!currentBatch"
+                  class="text-[11px] px-2 py-1 rounded border border-zinc-800 text-zinc-400 hover:text-zinc-200 disabled:opacity-40"
+                >
+                  {{ taskFilter === 'batch' ? '显示全部' : '仅看本批次' }}
+                </button>
+                <button
+                  @click="toggleSelectVisibleTasks"
+                  class="text-[11px] px-2 py-1 rounded border border-zinc-800 text-zinc-400 hover:text-zinc-200"
+                >{{ allVisibleSelected ? '取消全选' : '全选可见' }}</button>
+                <button
+                  @click="viewSelectedLogs"
+                  :disabled="selectedTaskIds.length === 0"
+                  class="text-[11px] px-2 py-1 rounded border border-zinc-800 text-zinc-400 hover:text-zinc-200 disabled:opacity-40"
+                >查看选中日志</button>
+                <button @click="fetchTasks" class="text-xs text-blue-400 hover:underline">刷新列表</button>
+              </div>
             </div>
 
             <div class="overflow-x-auto">
               <table class="w-full text-left text-xs">
                 <thead>
                   <tr class="text-zinc-500 border-b border-zinc-800/60 pb-2">
-                    <th class="py-2">任务 ID</th>
+                    <th class="py-2 w-8"></th>
+                    <th>任务 ID</th>
+                    <th>批次</th>
                     <th>状态机阶段</th>
                     <th>通信句柄 (Handle)</th>
                     <th>节点 UID</th>
@@ -243,11 +339,27 @@
                   </tr>
                 </thead>
                 <tbody class="divide-y divide-zinc-800/40">
-                  <tr v-if="taskList.length === 0">
-                    <td colspan="6" class="py-4 text-center text-zinc-600">队列为空，暂无历史任务</td>
+                  <tr v-if="visibleTaskList.length === 0">
+                    <td colspan="8" class="py-4 text-center text-zinc-600">队列为空，暂无历史任务</td>
                   </tr>
-                  <tr v-for="t in taskList" :key="t.task_id" class="hover:bg-zinc-900/40 transition-colors">
-                    <td class="py-2.5 font-mono text-blue-400 font-medium">{{ t.task_id }}</td>
+                  <tr
+                    v-for="t in visibleTaskList"
+                    :key="t.task_id"
+                    :class="[
+                      'hover:bg-zinc-900/40 transition-colors',
+                      currentBatch?.task_ids?.includes(t.task_id) ? 'bg-blue-950/10' : ''
+                    ]"
+                  >
+                    <td class="py-2.5">
+                      <input
+                        type="checkbox"
+                        :checked="selectedTaskIds.includes(t.task_id)"
+                        @change="toggleTaskSelection(t.task_id)"
+                        class="rounded bg-zinc-900 border-zinc-700"
+                      />
+                    </td>
+                    <td class="font-mono text-blue-400 font-medium">{{ t.task_id }}</td>
+                    <td class="font-mono text-zinc-500">{{ t.batch_id || '-' }}</td>
                     <td>
                       <span :class="getStatusBadgeClass(t.status)">{{ t.status }}</span>
                     </td>
@@ -1194,6 +1306,14 @@ const form = reactive({
   app_type: 'telegram_android'
 })
 
+const batchMode = ref(false)
+const batchCount = ref(3)
+const batchConcurrency = ref(3)
+const currentBatch = ref(null)
+const taskFilter = ref('all')
+const selectedTaskIds = ref([])
+const mergedLogView = ref(false)
+
 const testing = reactive({
   vaksms: false,
   antisafety: false,
@@ -1263,6 +1383,44 @@ const isStartingTask = ref(false)
 const isSavingConfig = ref(false)
 const activeTask = ref(null)
 const taskList = ref([])
+const effectiveConcurrency = computed(() => Math.max(1, Math.min(Number(batchConcurrency.value) || 1, Number(batchCount.value) || 1)))
+const visibleTaskList = computed(() => {
+  if (taskFilter.value === 'batch' && currentBatch.value?.batch_id) {
+    const ids = new Set(currentBatch.value.task_ids || [])
+    return taskList.value.filter((t) => ids.has(t.task_id) || t.batch_id === currentBatch.value.batch_id)
+  }
+  return taskList.value
+})
+const allVisibleSelected = computed(() => {
+  const ids = visibleTaskList.value.map((t) => t.task_id)
+  return ids.length > 0 && ids.every((id) => selectedTaskIds.value.includes(id))
+})
+const batchStats = computed(() => {
+  const ids = new Set(currentBatch.value?.task_ids || [])
+  const items = taskList.value.filter((t) => ids.has(t.task_id) || (currentBatch.value && t.batch_id === currentBatch.value.batch_id))
+  return {
+    success: items.filter((t) => t.status === 'success').length,
+    failed: items.filter((t) => t.status === 'failed').length,
+    running: items.filter((t) => t.status === 'running').length,
+    pending: items.filter((t) => t.status === 'pending' || !t.status).length
+  }
+})
+const displayLogs = computed(() => {
+  if (mergedLogView.value) {
+    const ids = selectedTaskIds.value.length
+      ? selectedTaskIds.value
+      : (currentBatch.value?.task_ids || [])
+    const rows = []
+    for (const tid of ids) {
+      const task = taskList.value.find((t) => t.task_id === tid)
+      for (const line of (task?.logs || [])) {
+        rows.push(`[${tid}] ${line}`)
+      }
+    }
+    return rows
+  }
+  return activeTask.value?.logs || []
+})
 const sessions = ref([])
 const deviceProfiles = ref([])
 const dbStats = ref({ total_count: 0, is_loaded: false, sample_models: [] })
@@ -1351,19 +1509,32 @@ const fetchProfiles = async () => {
 
 const fetchTasks = async () => {
   try {
-    const res = await fetch('/api/register/tasks')
+    const qs = (taskFilter.value === 'batch' && currentBatch.value?.batch_id)
+      ? `?batch_id=${encodeURIComponent(currentBatch.value.batch_id)}`
+      : ''
+    const res = await fetch(`/api/register/tasks${qs}`)
     taskList.value = await res.json()
+    if (currentBatch.value?.batch_id) {
+      try {
+        const bres = await fetch(`/api/register/batches/${currentBatch.value.batch_id}`)
+        if (bres.ok) {
+          currentBatch.value = await bres.json()
+        }
+      } catch (e) {
+        console.error('Fetch batch error:', e)
+      }
+    }
     if (activeTask.value) {
       const found = taskList.value.find(t => t.task_id === activeTask.value.task_id)
       if (found) {
         activeTask.value = found
-        nextTick(() => {
-          if (terminalRef.value) {
-            terminalRef.value.scrollTop = terminalRef.value.scrollHeight
-          }
-        })
       }
     }
+    nextTick(() => {
+      if (terminalRef.value) {
+        terminalRef.value.scrollTop = terminalRef.value.scrollHeight
+      }
+    })
   } catch (e) {
     console.error('Fetch tasks error:', e)
   }
@@ -1393,22 +1564,51 @@ const startRegistrationTask = async () => {
         bootLogs.push(`[${new Date().toLocaleTimeString()}] [多径中继网关] ${preview.message}`)
       }
     }
-    const res = await fetch('/api/register/start', {
+    const useBatch = batchMode.value && Number(batchCount.value) > 1
+    const endpoint = useBatch ? '/api/register/batch' : '/api/register/start'
+    const payload = {
+      country: form.country,
+      app_type: form.app_type
+    }
+    if (useBatch) {
+      payload.count = Number(batchCount.value)
+      payload.concurrency = effectiveConcurrency.value
+    }
+    const res = await fetch(endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        country: form.country,
-        app_type: form.app_type
-      })
+      body: JSON.stringify(payload)
     })
     const data = await res.json()
-    activeTask.value = {
-      task_id: data.task_id,
-      status: 'pending',
-      logs: [
-        ...bootLogs,
-        `[${new Date().toLocaleTimeString()}] 虚拟节点任务 ${data.task_id} 已提交至状态机编排引擎...`
-      ]
+    if (!res.ok) {
+      throw new Error(data.detail || data.message || '任务提交失败')
+    }
+    if (useBatch) {
+      currentBatch.value = data
+      taskFilter.value = 'batch'
+      selectedTaskIds.value = [...(data.task_ids || [])]
+      mergedLogView.value = true
+      const firstId = (data.task_ids || [])[0]
+      activeTask.value = {
+        task_id: firstId,
+        status: 'pending',
+        batch_id: data.batch_id,
+        logs: [
+          ...bootLogs,
+          `[${new Date().toLocaleTimeString()}] 并发批次 ${data.batch_id} 已提交：${(data.task_ids || []).join(', ')} (concurrency=${data.concurrency})`
+        ]
+      }
+    } else {
+      currentBatch.value = null
+      mergedLogView.value = false
+      activeTask.value = {
+        task_id: data.task_id,
+        status: 'pending',
+        logs: [
+          ...bootLogs,
+          `[${new Date().toLocaleTimeString()}] 虚拟节点任务 ${data.task_id} 已提交至状态机编排引擎...`
+        ]
+      }
     }
     await fetchTasks()
   } catch (e) {
@@ -1419,12 +1619,46 @@ const startRegistrationTask = async () => {
 }
 
 const viewTaskLogs = (t) => {
+  mergedLogView.value = false
   activeTask.value = t
   nextTick(() => {
     if (terminalRef.value) {
       terminalRef.value.scrollTop = terminalRef.value.scrollHeight
     }
   })
+}
+
+const toggleTaskSelection = (taskId) => {
+  const set = new Set(selectedTaskIds.value)
+  if (set.has(taskId)) set.delete(taskId)
+  else set.add(taskId)
+  selectedTaskIds.value = [...set]
+}
+
+const toggleSelectVisibleTasks = () => {
+  const ids = visibleTaskList.value.map((t) => t.task_id)
+  if (allVisibleSelected.value) {
+    selectedTaskIds.value = selectedTaskIds.value.filter((id) => !ids.includes(id))
+    return
+  }
+  selectedTaskIds.value = [...new Set([...selectedTaskIds.value, ...ids])]
+}
+
+const viewSelectedLogs = () => {
+  if (!selectedTaskIds.value.length) return
+  mergedLogView.value = true
+  const first = taskList.value.find((t) => t.task_id === selectedTaskIds.value[0])
+  if (first) activeTask.value = first
+}
+
+const focusBatchTask = (taskId) => {
+  const found = taskList.value.find((t) => t.task_id === taskId)
+  mergedLogView.value = false
+  if (found) {
+    activeTask.value = found
+    return
+  }
+  activeTask.value = { task_id: taskId, status: 'pending', logs: [] }
 }
 
 const clearActiveLogs = () => {

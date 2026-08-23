@@ -56,6 +56,35 @@ GEO_NAME_POOLS = SYNTHETIC_IDENTITY_POOLS
 CONNECT_TIMEOUT_SECONDS = 25.0
 MAX_RETAINED_TASKS = 200
 TERMINAL_TASK_STATUSES = frozenset({"success", "failed"})
+MAX_RESEND_WAIT_SECONDS = 90.0
+DEFAULT_SMS_POLL_ATTEMPTS = 30
+FAST_FAIL_SMS_POLL_ATTEMPTS = 3
+BATCH_COUNT_MIN = 1
+BATCH_COUNT_MAX = 10
+BATCH_CONCURRENCY_MIN = 1
+BATCH_CONCURRENCY_MAX = 10
+
+# Telegram auth.sendCode 分发通道：站内信无法被 Vak-SMS 蜂窝网关接收
+APP_DELIVERY_TYPE_NAMES = frozenset({
+    "SentCodeTypeApp",
+})
+SMS_DELIVERY_TYPE_NAMES = frozenset({
+    "SentCodeTypeSms",
+    "SentCodeTypeFragmentSms",
+    "SentCodeTypeFirebaseSms",
+})
+SMS_NEXT_TYPE_NAMES = frozenset({
+    "CodeTypeSms",
+    "SentCodeTypeSms",
+})
+
+
+class SentCodeAppDeliveryError(Exception):
+    """服务端将验证码下发到已登录官方客户端，带外短信网关无法接收。"""
+
+    def __init__(self, message: str, reason: str = "SENT_CODE_TYPE_APP"):
+        super().__init__(message)
+        self.reason = reason
 
 
 class RegistrationTaskManager:
@@ -63,6 +92,7 @@ class RegistrationTaskManager:
     _instance = None
     _lock = threading.RLock()
     tasks: Dict[str, Dict[str, Any]] = {}
+    batches: Dict[str, Dict[str, Any]] = {}
     max_retained_tasks = MAX_RETAINED_TASKS
 
     @classmethod
@@ -86,7 +116,7 @@ class RegistrationTaskManager:
         for tid, _ in completed[:overflow]:
             self.tasks.pop(tid, None)
 
-    def create_task(self) -> str:
+    def create_task(self, batch_id: Optional[str] = None) -> str:
         task_id = str(uuid.uuid4())[:8]
         now = datetime.datetime.now().isoformat()
         with self._lock:
@@ -98,18 +128,107 @@ class RegistrationTaskManager:
                 "user_id": None,
                 "error": None,
                 "logs": [],
+                "batch_id": batch_id,
                 "created_at": now,
                 "updated_at": now
             }
         return task_id
 
+    def create_batch(
+        self,
+        count: int,
+        concurrency: int,
+        country: Optional[str] = None,
+        app_type: Optional[str] = None,
+    ) -> Tuple[str, List[str]]:
+        """创建一批并行引导任务，返回 (batch_id, task_ids)。"""
+        batch_id = str(uuid.uuid4())[:8]
+        now = datetime.datetime.now().isoformat()
+        task_ids: List[str] = []
+        with self._lock:
+            for _ in range(count):
+                self._evict_overflow_unlocked()
+                task_id = str(uuid.uuid4())[:8]
+                self.tasks[task_id] = {
+                    "task_id": task_id,
+                    "status": "pending",
+                    "phone": None,
+                    "user_id": None,
+                    "error": None,
+                    "logs": [],
+                    "batch_id": batch_id,
+                    "created_at": now,
+                    "updated_at": now,
+                }
+                task_ids.append(task_id)
+            self.batches[batch_id] = {
+                "batch_id": batch_id,
+                "task_ids": list(task_ids),
+                "count": count,
+                "concurrency": concurrency,
+                "country": country,
+                "app_type": app_type,
+                "status": "pending",
+                "created_at": now,
+                "updated_at": now,
+            }
+        return batch_id, task_ids
+
     def get_task(self, task_id: str) -> Optional[Dict[str, Any]]:
         with self._lock:
             return self.tasks.get(task_id)
 
-    def list_tasks(self) -> List[Dict[str, Any]]:
+    def _enrich_batch_unlocked(self, batch: Dict[str, Any]) -> Dict[str, Any]:
+        task_ids = list(batch.get("task_ids") or [])
+        statuses: List[str] = []
+        success = running = failed = pending = 0
+        for tid in task_ids:
+            task = self.tasks.get(tid) or {}
+            status = task.get("status") or "pending"
+            statuses.append(status)
+            if status == "success":
+                success += 1
+            elif status == "failed":
+                failed += 1
+            elif status == "running":
+                running += 1
+            else:
+                pending += 1
+        if task_ids and all(s == "success" for s in statuses):
+            agg = "success"
+        elif task_ids and all(s in TERMINAL_TASK_STATUSES for s in statuses):
+            agg = "failed" if failed == len(statuses) else "partial"
+        elif running:
+            agg = "running"
+        else:
+            agg = "pending"
+        enriched = dict(batch)
+        enriched.update({
+            "status": agg,
+            "success": success,
+            "failed": failed,
+            "running": running,
+            "pending": pending,
+        })
+        return enriched
+
+    def get_batch(self, batch_id: str) -> Optional[Dict[str, Any]]:
+        with self._lock:
+            batch = self.batches.get(batch_id)
+            if not batch:
+                return None
+            return self._enrich_batch_unlocked(batch)
+
+    def list_batches(self) -> List[Dict[str, Any]]:
+        with self._lock:
+            snapshot = [self._enrich_batch_unlocked(b) for b in self.batches.values()]
+        return sorted(snapshot, key=lambda x: x.get("created_at") or "", reverse=True)
+
+    def list_tasks(self, batch_id: Optional[str] = None) -> List[Dict[str, Any]]:
         with self._lock:
             snapshot = list(self.tasks.values())
+        if batch_id:
+            snapshot = [item for item in snapshot if item.get("batch_id") == batch_id]
         return sorted(snapshot, key=lambda x: x["created_at"], reverse=True)
 
     async def append_log(self, task_id: str, message: str):
@@ -385,6 +504,178 @@ class RegistrationOrchestrator:
             app_sandbox=False if push_token else None,
         )
 
+    @staticmethod
+    def _tl_type_name(obj: Any) -> str:
+        if obj is None:
+            return ""
+        return type(obj).__name__
+
+    @classmethod
+    def _is_app_delivery(cls, sent_code: Any) -> bool:
+        return cls._tl_type_name(getattr(sent_code, "type", None)) in APP_DELIVERY_TYPE_NAMES
+
+    @classmethod
+    def _is_sms_delivery(cls, sent_code: Any) -> bool:
+        name = cls._tl_type_name(getattr(sent_code, "type", None))
+        if name in SMS_DELIVERY_TYPE_NAMES:
+            return True
+        return bool(name) and "Sms" in name and "App" not in name
+
+    @classmethod
+    def _next_type_is_sms(cls, sent_code: Any) -> bool:
+        name = cls._tl_type_name(getattr(sent_code, "next_type", None))
+        if not name:
+            return False
+        return name in SMS_NEXT_TYPE_NAMES or "Sms" in name
+
+    @classmethod
+    def _describe_sent_code(cls, sent_code: Any) -> str:
+        type_name = cls._tl_type_name(getattr(sent_code, "type", None)) or "Unknown"
+        next_name = cls._tl_type_name(getattr(sent_code, "next_type", None)) or "None"
+        timeout = getattr(sent_code, "timeout", None)
+        timeout_text = str(timeout) if timeout is not None else "None"
+        return f"type={type_name} next_type={next_name} timeout={timeout_text}"
+
+    @classmethod
+    async def _maybe_resend_to_sms(
+        cls,
+        client,
+        phone: str,
+        sent_code: Any,
+        task_id: str,
+        manager: RegistrationTaskManager,
+        wait_timeout: Optional[float] = None,
+    ) -> Tuple[Optional[Any], Optional[Exception]]:
+        """等待 next_type 冷却窗口后调用 auth.resendCode，尝试强制切换到短信通道。"""
+        timeout = wait_timeout if wait_timeout is not None else getattr(sent_code, "timeout", None)
+        wait_secs = 0.0
+        if timeout is not None:
+            try:
+                wait_secs = min(max(float(timeout), 0.0), MAX_RESEND_WAIT_SECONDS)
+            except (TypeError, ValueError):
+                wait_secs = 0.0
+
+        next_name = cls._tl_type_name(getattr(sent_code, "next_type", None)) or "None"
+        if wait_secs > 0:
+            await manager.append_log(
+                task_id,
+                f"检测到 next_type={next_name}，将等待服务端冷却窗口 {wait_secs:.0f}s "
+                "后调用 auth.resendCode 强制切换短信通道..."
+            )
+            await asyncio.sleep(wait_secs)
+        else:
+            await manager.append_log(
+                task_id,
+                f"next_type={next_name} 且无有效 timeout，立即尝试 auth.resendCode 探测短信通道..."
+            )
+
+        phone_code_hash = getattr(sent_code, "phone_code_hash", None)
+        try:
+            resent = await client(functions.auth.ResendCodeRequest(
+                phone_number=phone,
+                phone_code_hash=phone_code_hash,
+            ))
+        except Exception as exc:
+            await manager.append_log(
+                task_id,
+                f"⚠️ auth.resendCode 探测失败: {exc}。"
+                "站内信通道无法被带外短信网关接收，将快速退订换号。"
+            )
+            return None, exc
+
+        new_type = cls._tl_type_name(getattr(resent, "type", None)) or "Unknown"
+        await manager.append_log(
+            task_id,
+            f"auth.resendCode 已返回，新分发通道类型: {new_type} ({cls._describe_sent_code(resent)})"
+        )
+        return resent, None
+
+    @classmethod
+    async def resolve_sent_code_channel(
+        cls,
+        client,
+        phone: str,
+        sent_code: Any,
+        task_id: str,
+        manager: RegistrationTaskManager,
+        wait_timeout: Optional[float] = None,
+    ) -> Tuple[Any, int]:
+        """解析 sendCode 分发通道；SentCodeTypeApp 时尝试 ResendCode 降级到短信。
+
+        返回 (effective_sent_code, sms_poll_attempts)。
+        若无法降级到可被带外短信网关接收的通道，抛出 SentCodeAppDeliveryError 以快速退订。
+        """
+        delivery_name = cls._tl_type_name(getattr(sent_code, "type", None)) or "Unknown"
+        await manager.append_log(
+            task_id,
+            f"挑战已由服务端下发! 分发通道类型: {delivery_name} ({cls._describe_sent_code(sent_code)})"
+        )
+
+        if not cls._is_app_delivery(sent_code):
+            if cls._is_sms_delivery(sent_code):
+                await manager.append_log(task_id, "分发通道为运营商短信，带外遥测网关可正常接收")
+            return sent_code, DEFAULT_SMS_POLL_ATTEMPTS
+
+        await manager.append_log(
+            task_id,
+            "⚠️ 服务端将验证码下发到了已有设备客户端 (SentCodeTypeApp)，带外短信通道大概率无法接收"
+        )
+
+        next_name = cls._tl_type_name(getattr(sent_code, "next_type", None))
+        has_timeout = getattr(sent_code, "timeout", None) is not None
+        can_probe_resend = bool(next_name) or has_timeout or wait_timeout is not None
+        if not can_probe_resend:
+            raise SentCodeAppDeliveryError(
+                "服务端仅通过站内信下发验证码且未提供 next_type/SMS 降级窗口，"
+                "带外短信网关无法接收，已快速退订换号以免空等 120 秒",
+                reason="SENT_CODE_TYPE_APP",
+            )
+
+        if next_name and not cls._next_type_is_sms(sent_code):
+            await manager.append_log(
+                task_id,
+                f"⚠️ next_type={next_name} 不是短信通道，重发后带外网关仍可能收不到码"
+            )
+
+        resent, resend_err = await cls._maybe_resend_to_sms(
+            client=client,
+            phone=phone,
+            sent_code=sent_code,
+            task_id=task_id,
+            manager=manager,
+            wait_timeout=wait_timeout,
+        )
+        if resent is None:
+            raise SentCodeAppDeliveryError(
+                f"SentCodeTypeApp 且 auth.resendCode 不可用: {resend_err}",
+                reason="SENT_CODE_TYPE_APP",
+            )
+
+        if cls._is_sms_delivery(resent):
+            await manager.append_log(
+                task_id,
+                "已成功将挑战通道降级/切换为短信分发，继续轮询带外网关"
+            )
+            return resent, DEFAULT_SMS_POLL_ATTEMPTS
+
+        if cls._is_app_delivery(resent):
+            await manager.append_log(
+                task_id,
+                "重发后服务端仍将验证码下发到已有设备客户端 (SentCodeTypeApp)，将快速退订换号"
+            )
+            raise SentCodeAppDeliveryError(
+                "重发后服务端仍将验证码下发到已有设备客户端 (SentCodeTypeApp)，"
+                "带外短信网关无法接收，已快速中止以免空等 120 秒",
+                reason="SENT_CODE_TYPE_APP",
+            )
+
+        await manager.append_log(
+            task_id,
+            f"⚠️ 重发后通道仍非短信 ({cls._tl_type_name(getattr(resent, 'type', None))})，"
+            f"仅做 {FAST_FAIL_SMS_POLL_ATTEMPTS} 次短轮询后若无码则退订"
+        )
+        return resent, FAST_FAIL_SMS_POLL_ATTEMPTS
+
     @classmethod
     async def perform_handshake(cls, client: TelegramClient, profile: Dict[str, Any], task_id: str, manager: RegistrationTaskManager):
         """执行标准端点握手序列与协议状态对齐"""
@@ -656,13 +947,20 @@ class RegistrationOrchestrator:
                 task_id=task_id,
                 manager=manager,
             )
+            sent_code, sms_poll_attempts = await cls.resolve_sent_code_channel(
+                client=client,
+                phone=phone,
+                sent_code=sent_code,
+                task_id=task_id,
+                manager=manager,
+            )
             phone_code_hash = sent_code.phone_code_hash
-            await manager.append_log(task_id, f"挑战已由服务端下发! 分发通道类型: {type(sent_code.type).__name__}")
 
             # 7. 异步等待带外挑战证明
             await manager.append_log(task_id, "正在等待带外遥测通道下发瞬时挑战证明 (OTP)...")
             sms_code = await sms_svc.wait_for_code(
                 act_id,
+                max_attempts=sms_poll_attempts,
                 log_callback=lambda msg: manager.append_log(task_id, msg)
             )
             await manager.append_log(task_id, f"带外挑战证明获取成功: {sms_code}")
@@ -828,6 +1126,13 @@ class RegistrationOrchestrator:
             await cls._refund_and_revoke_channel(sms_svc, act_id, task_id, manager, "WRONG_CODE")
             if check_id: await bypass_svc.report_result(check_id, aid, "WRONG_CODE")
             manager.update_task_status(task_id, "failed", error=err)
+        except SentCodeAppDeliveryError as ex:
+            reason = getattr(ex, "reason", None) or "SENT_CODE_TYPE_APP"
+            err = f"站内信验证码无法被带外通道接收 ({reason}): {str(ex) or repr(ex)}"
+            await manager.append_log(task_id, f"❌ {err}")
+            await cls._refund_and_revoke_channel(sms_svc, act_id, task_id, manager, reason)
+            if check_id: await bypass_svc.report_result(check_id, aid, reason)
+            manager.update_task_status(task_id, "failed", error=err)
         except TimeoutError as ex:
             err = f"等待带外挑战证明超时 (NO_CODE): {str(ex) or repr(ex)}"
             await manager.append_log(task_id, f"❌ {err}")
@@ -850,6 +1155,45 @@ class RegistrationOrchestrator:
             manager.update_task_status(task_id, "failed", error=err)
         finally:
             await cls._release_registration_resources(client, sms_svc, bypass_svc)
+
+    @classmethod
+    async def run_batch(
+        cls,
+        batch_id: str,
+        task_ids: List[str],
+        country: Optional[str] = None,
+        app_type: Optional[str] = None,
+        proxy_override: Optional[Dict[str, Any]] = None,
+        set_2fa: Optional[bool] = None,
+        concurrency: int = 3,
+    ) -> None:
+        """使用 Semaphore 异步并行调度一批虚拟节点引导任务。"""
+        manager = RegistrationTaskManager.get_instance()
+        limit = max(BATCH_CONCURRENCY_MIN, min(int(concurrency or 1), BATCH_CONCURRENCY_MAX))
+        sem = asyncio.Semaphore(limit)
+        with manager._lock:
+            if batch_id in manager.batches:
+                manager.batches[batch_id]["status"] = "running"
+                manager.batches[batch_id]["updated_at"] = datetime.datetime.now().isoformat()
+
+        async def _run_one(tid: str) -> None:
+            async with sem:
+                await manager.append_log(
+                    tid,
+                    f"[批量编排] batch_id={batch_id} 取得并发槽位 (concurrency={limit})，开始引导"
+                )
+                await cls.run_registration(
+                    task_id=tid,
+                    country=country,
+                    app_type=app_type,
+                    proxy_override=proxy_override,
+                    set_2fa=set_2fa,
+                )
+
+        await asyncio.gather(*[_run_one(tid) for tid in task_ids], return_exceptions=True)
+        with manager._lock:
+            if batch_id in manager.batches:
+                manager.batches[batch_id]["updated_at"] = datetime.datetime.now().isoformat()
 
 
 NodeProvisioningOrchestrator = RegistrationOrchestrator
