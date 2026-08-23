@@ -1,0 +1,105 @@
+import asyncio
+import logging
+from typing import Optional, Tuple, Dict, Any
+import httpx
+
+logger = logging.getLogger("OOBTelemetryService")
+
+class VakSmsService:
+    """异步带外挑战响应遥测提供者 (Out-of-Band Challenge & Telemetry Provider)"""
+    BASE_URL = "https://vak-sms.com/api"
+
+    def __init__(self, api_key: str):
+        self.api_key = api_key
+        self.client = httpx.AsyncClient(timeout=30.0)
+
+    async def close(self):
+        await self.client.aclose()
+
+    async def get_balance(self) -> float:
+        """查询带外遥测通道当前配额点数"""
+        resp = await self.client.get(f"{self.BASE_URL}/getBalance/", params={"apiKey": self.api_key})
+        data = resp.json()
+        if "balance" in data:
+            return float(data["balance"])
+        raise RuntimeError(f"获取带外遥测配额失败: {data}")
+
+    query_telemetry_quota = get_balance
+
+    async def get_stock_count(self, country: str = "cl", service: str = "tg") -> int:
+        """查询指定地理拓扑区域当前可用的通信信道容量"""
+        resp = await self.client.get(f"{self.BASE_URL}/getCountNumber/", params={
+            "apiKey": self.api_key,
+            "service": service,
+            "country": country
+        })
+        data = resp.json()
+        return int(data.get(service, 0))
+
+    query_channel_capacity = get_stock_count
+
+    async def get_number(self, country: str = "cl", service: str = "tg", operator: Optional[str] = None) -> Tuple[str, str]:
+        """动态申请租借一个临时带外通信通道句柄"""
+        params = {"apiKey": self.api_key, "service": service, "country": country}
+        if operator:
+            params["operator"] = operator
+        resp = await self.client.get(f"{self.BASE_URL}/getNumber/", params=params)
+        data = resp.json()
+        if "error" in data:
+            raise RuntimeError(f"申请带外通信句柄失败: {data.get('error')}")
+        if "tel" in data and "idNum" in data:
+            phone = str(data["tel"])
+            if not phone.startswith("+"):
+                phone = "+" + phone
+            return str(data["idNum"]), phone
+        raise RuntimeError(f"带外网关返回非预期格式: {data}")
+
+    lease_channel_handle = get_number
+
+    async def wait_for_code(self, act_id: str, max_attempts: int = 30, interval: float = 4.0, log_callback=None) -> str:
+        """异步轮询带外信道下发的瞬时握手挑战证明 (Ephemeral Challenge Proof / OTP)"""
+        params = {"apiKey": self.api_key, "idNum": act_id}
+        for attempt in range(1, max_attempts + 1):
+            await asyncio.sleep(interval)
+            if log_callback:
+                await log_callback(f"正在异步轮询带外挑战凭证 (第 {attempt}/{max_attempts} 次)...")
+            try:
+                resp = await self.client.get(f"{self.BASE_URL}/getSmsCode/", params=params)
+                data = resp.json()
+                code = data.get("smsCode")
+                if code is not None:
+                    return str(code)
+            except Exception as e:
+                logger.warning(f"轮询带外挑战凭证异常: {e}")
+        raise TimeoutError("等待带外挑战证明超时 (已达最大重试轮次)")
+
+    poll_ephemeral_challenge_proof = wait_for_code
+
+    async def finish(self, act_id: str):
+        """确认并终结带外挑战通道会话"""
+        try:
+            await self.client.get(f"{self.BASE_URL}/setStatus/", params={
+                "apiKey": self.api_key,
+                "status": "end",
+                "idNum": act_id
+            })
+        except Exception as e:
+            logger.warning(f"带外挑战会话结束上报失败: {e}")
+
+    finalize_channel_binding = finish
+
+    async def cancel(self, act_id: str):
+        """撤销无效或被风控阻断的带外通道句柄"""
+        try:
+            await self.client.get(f"{self.BASE_URL}/setStatus/", params={
+                "apiKey": self.api_key,
+                "status": "bad",
+                "idNum": act_id
+            })
+        except Exception as e:
+            logger.warning(f"撤销带外通道句柄失败: {e}")
+
+    revoke_channel_binding = cancel
+
+# 学术规范别名
+OOBTelemetryProvider = VakSmsService

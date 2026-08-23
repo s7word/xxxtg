@@ -1,0 +1,37 @@
+{
+  "active_app_type": "telegram_android",
+  "antisafety_api_key": "as2b21dc7b71b5ce8166a42c22b54566",
+  "antisafety_aids": {
+    "telegram_android": "308aba4e-5680-466b-81a5-477ac6befa95",
+    "telegram_x": "47f7d612-fe1a-4167-a450-db8a52048e9c",
+    "telegram_9": "59e59906-5177-4f6f-8f7e-ced3fe370997"
+  },
+  "vak_sms_api_key": "16aa4499a3954317aaf002a55e354eed",
+  "target_country": "cl",
+  "proxy_seller_key": "q8WKCvB4QNUF",
+  "use_proxy_seller_auto": false,
+  "fallback_proxy": {
+    "proxy_type": "socks5",
+    "addr": "127.0.0.1",
+    "port": 7897,
+    "username": null,
+    "password": null
+  },
+  "default_2fa_password": "Password@2026!Sec",
+  "auto_set_2fa": true,
+  "custom_device_profiles": [],
+  "api_credential_mode": "auto",
+  "custom_api_id": null,
+  "custom_api_hash": null,
+  "antisafety_base_urls": ["https://api.antisafety.net"],
+  "antisafety_reporting_base_urls": ["https://reporting.antisafety.net"],
+  "antisafety_connect_timeout": 6.0,
+  "antisafety_total_timeout": 20.0,
+  "antisafety_enabled": true,
+  "reghelp_api_key": "w9vcrhw7pOK0WKBtQLhdjH62eYtRSFbR",
+  "reghelp_base_urls": ["https://api.reghelp.net"],
+  "reghelp_enabled": true,
+  "reghelp_connect_timeout": 6.0,
+  "reghelp_total_timeout": 20.0,
+  "attestation_provider_mode": "reghelp_primary"
+}

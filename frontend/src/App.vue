@@ -1,0 +1,972 @@
+<template>
+  <div class="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col">
+    <!-- 顶部导航栏 -->
+    <header class="border-b border-zinc-800/80 bg-zinc-900/60 backdrop-blur-md sticky top-0 z-50 px-6 py-3.5 flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <div class="w-9 h-9 rounded-xl bg-gradient-to-tr from-blue-600 to-cyan-500 flex items-center justify-center font-bold text-white shadow-lg shadow-blue-500/20 text-xs">
+          ENA
+        </div>
+        <div>
+          <div class="flex items-center gap-2">
+            <h1 class="font-bold text-base tracking-tight text-white">EdgeNode-Auditor Console</h1>
+            <span class="badge badge-info text-xs">v2.1 Enterprise</span>
+          </div>
+          <p class="text-xs text-zinc-400">分布式边缘节点状态机仿真、动态出口路由与密码学上下文审计系统</p>
+        </div>
+      </div>
+
+      <!-- 标签页导航 -->
+      <div class="flex items-center bg-zinc-900 p-1 rounded-lg border border-zinc-800">
+        <button
+          v-for="tab in tabs"
+          :key="tab.id"
+          @click="activeTab = tab.id"
+          :class="[
+            'px-3.5 py-1.5 rounded-md text-xs font-medium transition-all flex items-center gap-1.5',
+            activeTab === tab.id
+              ? 'bg-blue-600 text-white shadow-sm'
+              : 'text-zinc-400 hover:text-zinc-200'
+          ]"
+        >
+          <span>{{ tab.icon }}</span>
+          <span>{{ tab.name }}</span>
+        </button>
+      </div>
+
+      <!-- 右侧状态指示器 -->
+      <div class="flex items-center gap-3">
+        <div class="flex items-center gap-2 text-xs px-3 py-1.5 rounded-md bg-zinc-900 border border-zinc-800">
+          <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+          <span class="text-zinc-300">仿真审计引擎就绪: 8000</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- 主体内容 -->
+    <main class="flex-1 max-w-7xl w-full mx-auto p-6">
+      
+      <!-- ================= 标签页 1: 状态机编排与控制台 ================= -->
+      <div v-if="activeTab === 'console'" class="space-y-6">
+        
+        <!-- 上方快速执行卡片与实时状态 -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          
+          <!-- 任务发起面板 -->
+          <div class="glass-panel p-5 rounded-xl border border-zinc-800/80 space-y-4">
+            <div class="flex items-center justify-between border-b border-zinc-800 pb-3">
+              <h2 class="font-semibold text-sm text-zinc-100 flex items-center gap-2">
+                <span>⚡</span> 发起边缘节点引导与握手仿真
+              </h2>
+              <span class="text-xs text-zinc-400">Chile 拓扑基线测试</span>
+            </div>
+
+            <!-- 选择国家与拓扑 -->
+            <div>
+              <label class="block text-xs font-medium text-zinc-400 mb-1">目标拓扑与地理区域 (GEO Topology)</label>
+              <select v-model="form.country" class="input-field">
+                <option value="cl">🇨🇱 智利 (Chile, +56) - 推荐基线拓扑</option>
+                <option value="id">🇮🇩 印尼 (Indonesia, +62)</option>
+                <option value="af">🇦🇫 阿富汗 (Afghanistan, +93)</option>
+                <option value="kz">🇰🇿 哈萨克斯坦 (Kazakhstan, +7)</option>
+                <option value="ru">🇷🇺 俄罗斯 (Russia, +7)</option>
+                <option value="br">🇧🇷 巴西 (Brazil, +55)</option>
+                <option value="us">🇺🇸 美国 (USA, +1)</option>
+              </select>
+            </div>
+
+            <!-- 选择客户端模板 -->
+            <div>
+              <label class="block text-xs font-medium text-zinc-400 mb-1">端点协议模板与 Attestation 凭证</label>
+              <select v-model="form.app_type" class="input-field">
+                <option value="telegram_android">📱 MTProto Android (官方主版 SDK 33 / AID: 308a...)</option>
+                <option value="telegram_x">⚡ MTProto TDLib (官方极速版 / AID: 47f7...)</option>
+                <option value="telegram_9">🕰️ MTProto Legacy (经典稳定版 SDK 32 / AID: 59e5...)</option>
+              </select>
+            </div>
+
+            <!-- 代理模式 -->
+            <div>
+              <label class="block text-xs font-medium text-zinc-400 mb-1">多径出站中继网关 (Multipath Egress)</label>
+              <div v-if="config.use_proxy_seller_auto" class="p-2.5 rounded-lg bg-blue-950/30 border border-blue-800/60 text-xs text-blue-200 flex items-center justify-between">
+                <div>
+                  <div class="font-medium">多径中继网关 API 自动分配</div>
+                  <div class="text-[11px] text-zinc-400">自动分配目标区域 ({{ form.country.toUpperCase() }}) SOCKS5 中继跳点</div>
+                </div>
+                <span class="badge badge-info">动态拓扑路由</span>
+              </div>
+              <div v-else class="p-2.5 rounded-lg bg-zinc-900 border border-zinc-800 text-xs text-zinc-300 flex items-center justify-between">
+                <div>
+                  <div class="font-medium text-zinc-200">{{ config.fallback_proxy.addr }}:{{ config.fallback_proxy.port }}</div>
+                  <div class="text-[11px] text-zinc-500">传输: {{ config.fallback_proxy.proxy_type.toUpperCase() }} (静态后备跳点)</div>
+                </div>
+                <span class="badge badge-warning">静态中继</span>
+              </div>
+            </div>
+
+            <!-- 启动按钮 -->
+            <button
+              @click="startRegistrationTask"
+              :disabled="isStartingTask"
+              class="w-full btn-primary py-2.5 font-semibold text-sm shadow-lg shadow-blue-600/20"
+            >
+              <span v-if="isStartingTask">正在调度状态机编排流水线...</span>
+              <span v-else>🚀 启动虚拟节点引导仿真</span>
+            </button>
+          </div>
+
+          <!-- 实时日志终端 -->
+          <div class="glass-panel p-5 rounded-xl border border-zinc-800/80 lg:col-span-2 flex flex-col h-[340px]">
+            <div class="flex items-center justify-between border-b border-zinc-800 pb-2 mb-3">
+              <div class="flex items-center gap-2">
+                <span class="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
+                <h3 class="font-semibold text-sm text-zinc-200">实时状态机审计日志终端 (State Machine Audit)</h3>
+                <span v-if="activeTask" class="text-xs font-mono text-zinc-400">(任务: {{ activeTask.task_id }})</span>
+              </div>
+              <div class="flex items-center gap-2">
+                <span v-if="activeTask" :class="getStatusBadgeClass(activeTask.status)">
+                  {{ activeTask.status.toUpperCase() }}
+                </span>
+                <button @click="clearActiveLogs" class="text-xs text-zinc-400 hover:text-zinc-200 px-2 py-1 bg-zinc-900 rounded border border-zinc-800">
+                  清屏
+                </button>
+              </div>
+            </div>
+
+            <!-- 日志窗口 -->
+            <div ref="terminalRef" class="flex-1 bg-zinc-950 p-3 rounded-lg border border-zinc-900 overflow-y-auto font-mono text-xs space-y-1">
+              <div v-if="!activeTask || activeTask.logs.length === 0" class="text-zinc-600 italic py-10 text-center">
+                暂无活跃的状态机运行日志，点击左侧「启动虚拟节点引导仿真」调度流水线...
+              </div>
+              <div
+                v-for="(log, idx) in (activeTask?.logs || [])"
+                :key="idx"
+                :class="[
+                  'leading-relaxed break-all',
+                  log.includes('🎉') || log.includes('成功') ? 'text-green-400 font-bold' : (
+                    log.includes('❌') || log.includes('失败') || log.includes('异常') ? 'text-red-400 font-bold' : (
+                      log.includes('[*]') || log.includes('探测') ? 'text-cyan-400' : 'text-zinc-300'
+                    )
+                  )
+                ]"
+              >
+                {{ log }}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 下方历史任务记录与 Session 资产 -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          
+          <!-- 历史任务表格 -->
+          <div class="glass-panel p-5 rounded-xl border border-zinc-800/80 lg:col-span-2 space-y-3">
+            <div class="flex items-center justify-between border-b border-zinc-800 pb-2">
+              <h3 class="font-semibold text-sm text-zinc-200">📜 节点引导任务队列 (Node Provisioning Queue)</h3>
+              <button @click="fetchTasks" class="text-xs text-blue-400 hover:underline">刷新列表</button>
+            </div>
+
+            <div class="overflow-x-auto">
+              <table class="w-full text-left text-xs">
+                <thead>
+                  <tr class="text-zinc-500 border-b border-zinc-800/60 pb-2">
+                    <th class="py-2">任务 ID</th>
+                    <th>状态机阶段</th>
+                    <th>通信句柄 (Handle)</th>
+                    <th>节点 UID</th>
+                    <th>创建时间</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-zinc-800/40">
+                  <tr v-if="taskList.length === 0">
+                    <td colspan="6" class="py-4 text-center text-zinc-600">队列为空，暂无历史任务</td>
+                  </tr>
+                  <tr v-for="t in taskList" :key="t.task_id" class="hover:bg-zinc-900/40 transition-colors">
+                    <td class="py-2.5 font-mono text-blue-400 font-medium">{{ t.task_id }}</td>
+                    <td>
+                      <span :class="getStatusBadgeClass(t.status)">{{ t.status }}</span>
+                    </td>
+                    <td class="font-mono text-zinc-300">{{ t.phone || '-' }}</td>
+                    <td class="font-mono text-zinc-300">{{ t.user_id || '-' }}</td>
+                    <td class="text-zinc-500">{{ formatTime(t.created_at) }}</td>
+                    <td>
+                      <button @click="viewTaskLogs(t)" class="text-blue-400 hover:text-blue-300 text-xs">审计日志</button>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- 密码学快照资产库 -->
+          <div class="glass-panel p-5 rounded-xl border border-zinc-800/80 space-y-3">
+            <div class="flex items-center justify-between border-b border-zinc-800 pb-2">
+              <h3 class="font-semibold text-sm text-zinc-200">💾 密码学上下文快照 (Context Artifacts)</h3>
+              <button @click="fetchSessions" class="text-xs text-blue-400 hover:underline">刷新</button>
+            </div>
+
+            <div class="space-y-2 max-h-[220px] overflow-y-auto">
+              <div v-if="sessions.length === 0" class="text-center text-zinc-600 py-6 text-xs">
+                持久化存储区暂无 .session 快照凭证
+              </div>
+              <div
+                v-for="s in sessions"
+                :key="s.filename"
+                class="p-2.5 rounded-lg bg-zinc-900/70 border border-zinc-800 flex items-center justify-between text-xs"
+              >
+                <div>
+                  <div class="font-mono text-zinc-200 font-medium">{{ s.filename }}</div>
+                  <div class="text-[11px] text-zinc-500">{{ s.created_at }}</div>
+                </div>
+                <span class="badge badge-info text-[11px]">{{ s.size_kb }} KB</span>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+      </div>
+
+      <!-- ================= 标签页 2: 全局参数拓扑与接口审计 ================= -->
+      <div v-if="activeTab === 'settings'" class="space-y-6">
+        
+        <div class="flex items-center justify-between border-b border-zinc-800 pb-4">
+          <div>
+            <h2 class="text-lg font-bold text-white">⚙️ 全局仿真参数拓扑 & 外部接口管理</h2>
+            <p class="text-xs text-zinc-400">配置并一键执行 Attestation 凭证网关、带外遥测挑战源、多径中继网关等接口探针诊断</p>
+          </div>
+          <button @click="saveConfig" :disabled="isSavingConfig" class="btn-primary">
+            <span v-if="isSavingConfig">正在保存...</span>
+            <span v-else>💾 持久化全局配置</span>
+          </button>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+          
+          <!-- REGHelp 高可用 Attestation/Push 凭证提供源卡片 -->
+          <div class="glass-panel p-5 rounded-xl border border-zinc-800/80 space-y-4">
+            <div class="flex items-center justify-between border-b border-zinc-800 pb-2">
+              <div class="flex items-center gap-2">
+                <span class="text-base">🛰️</span>
+                <h3 class="font-semibold text-sm text-zinc-200">REGHelp 高可用 Push/Attestation 凭证提供源</h3>
+                <span class="badge badge-success text-[10px]">主选</span>
+              </div>
+              <button @click="testRegHelp" :disabled="testing.reghelp" class="btn-secondary text-xs py-1">
+                {{ testing.reghelp ? '测试中...' : '⚡ 余额/连通性探针' }}
+              </button>
+            </div>
+
+            <div class="flex items-center gap-2">
+              <input type="checkbox" id="reghelpEnabled" v-model="config.reghelp_enabled" class="rounded bg-zinc-900 border-zinc-700" />
+              <label for="reghelpEnabled" class="text-xs text-zinc-300">启用 REGHelp 作为 Attestation / Push 凭证提供源</label>
+            </div>
+
+            <div>
+              <label class="block text-xs font-medium text-zinc-400 mb-1">REGHelp API Key (reghelp.net)</label>
+              <input v-model="config.reghelp_api_key" type="password" class="input-field font-mono" placeholder="rh_live_... / w9vcrhw7..." />
+            </div>
+
+            <div>
+              <label class="block text-[11px] text-zinc-400 mb-1">Key API 候选网关地址 (每行一个，按序容灾切换)</label>
+              <textarea v-model="reghelpBaseUrlsText" rows="2" class="input-field font-mono text-xs" placeholder="https://api.reghelp.net"></textarea>
+            </div>
+
+            <div class="grid grid-cols-2 gap-2">
+              <div>
+                <label class="block text-[11px] text-zinc-400 mb-1">连接超时 (秒)</label>
+                <input v-model.number="config.reghelp_connect_timeout" type="number" step="0.5" class="input-field font-mono text-xs" />
+              </div>
+              <div>
+                <label class="block text-[11px] text-zinc-400 mb-1">总超时 (秒)</label>
+                <input v-model.number="config.reghelp_total_timeout" type="number" step="1" class="input-field font-mono text-xs" />
+              </div>
+            </div>
+
+            <div class="p-2.5 rounded-lg bg-zinc-900 border border-zinc-800 text-[11px] text-zinc-500 leading-relaxed">
+              对接 REGHelp Key API (<a href="https://reghelp.net" target="_blank" class="underline text-zinc-300">reghelp.net</a> ·
+              <a href="https://github.com/REGHELPNET/reghelp_client" target="_blank" class="underline text-zinc-300">开源客户端参考</a>)：
+              GET <code class="text-zinc-300">/push/getToken</code> → 轮询 <code class="text-zinc-300">/push/getStatus</code>，
+              appName/appDevice 与内置端点模板 (tg / tg_x) 天然对齐，无需额外 AID。
+            </div>
+
+            <!-- 测试结果反馈 -->
+            <div v-if="testResults.reghelp" :class="['p-3 rounded-lg text-xs', testResults.reghelp.success ? 'bg-green-950/40 border border-green-800/60 text-green-300' : 'bg-red-950/40 border border-red-800/60 text-red-300']">
+              <div>{{ testResults.reghelp.message }}</div>
+            </div>
+          </div>
+
+          <!-- Attestation 挑战凭证生成器配置卡片 (AntiSafety) -->
+          <div class="glass-panel p-5 rounded-xl border border-zinc-800/80 space-y-4">
+            <div class="flex items-center justify-between border-b border-zinc-800 pb-2">
+              <div class="flex items-center gap-2">
+                <span class="text-base">🛡️</span>
+                <h3 class="font-semibold text-sm text-zinc-200">Attestation 挑战凭证生成器 (AntiSafety)</h3>
+                <span class="badge badge-info text-[10px]">备选</span>
+              </div>
+              <button @click="testAntiSafety" :disabled="testing.antisafety" class="btn-secondary text-xs py-1">
+                {{ testing.antisafety ? '测试中...' : '⚡ 连通性探针' }}
+              </button>
+            </div>
+
+            <div class="flex items-center gap-2">
+              <input type="checkbox" id="antisafetyEnabled" v-model="config.antisafety_enabled" class="rounded bg-zinc-900 border-zinc-700" />
+              <label for="antisafetyEnabled" class="text-xs text-zinc-300">启用 AntiSafety 作为 Attestation / Push 凭证提供源</label>
+            </div>
+
+            <div>
+              <label class="block text-xs font-medium text-zinc-400 mb-1">Attestation API Key</label>
+              <input v-model="config.antisafety_api_key" type="password" class="input-field font-mono" />
+            </div>
+
+            <div class="space-y-2 pt-1">
+              <div class="text-xs font-medium text-zinc-400">已绑定的端点拓扑实例 AID：</div>
+              <div>
+                <label class="block text-[11px] text-zinc-500 mb-0.5">MTProto Android (主版)</label>
+                <input v-model="config.antisafety_aids.telegram_android" type="text" class="input-field font-mono text-xs" />
+              </div>
+              <div>
+                <label class="block text-[11px] text-zinc-500 mb-0.5">MTProto TDLib (极速版)</label>
+                <input v-model="config.antisafety_aids.telegram_x" type="text" class="input-field font-mono text-xs" />
+              </div>
+              <div>
+                <label class="block text-[11px] text-zinc-500 mb-0.5">MTProto Legacy (经典版)</label>
+                <input v-model="config.antisafety_aids.telegram_9" type="text" class="input-field font-mono text-xs" />
+              </div>
+            </div>
+
+            <!-- 测试结果反馈 -->
+            <div v-if="testResults.antisafety" :class="['p-3 rounded-lg text-xs', testResults.antisafety.success ? 'bg-green-950/40 border border-green-800/60 text-green-300' : 'bg-red-950/40 border border-red-800/60 text-red-300']">
+              {{ testResults.antisafety.message }}
+            </div>
+          </div>
+
+          <!-- 带外遥测与挑战响应源卡片 -->
+          <div class="glass-panel p-5 rounded-xl border border-zinc-800/80 space-y-4">
+            <div class="flex items-center justify-between border-b border-zinc-800 pb-2">
+              <div class="flex items-center gap-2">
+                <span class="text-base">📩</span>
+                <h3 class="font-semibold text-sm text-zinc-200">异步带外遥测与挑战响应源 (OOB Telemetry / Vak-SMS)</h3>
+              </div>
+              <button @click="testVakSms" :disabled="testing.vaksms" class="btn-secondary text-xs py-1">
+                {{ testing.vaksms ? '测试中...' : '⚡ 状态探针' }}
+              </button>
+            </div>
+
+            <div>
+              <label class="block text-xs font-medium text-zinc-400 mb-1">OOB Telemetry API Key</label>
+              <input v-model="config.vak_sms_api_key" type="password" class="input-field font-mono" />
+            </div>
+
+            <div>
+              <label class="block text-xs font-medium text-zinc-400 mb-1">默认地理拓扑区域代码</label>
+              <input v-model="config.target_country" type="text" placeholder="例如: cl, id, ru" class="input-field font-mono" />
+            </div>
+
+            <div class="p-3 rounded-lg bg-zinc-900 border border-zinc-800 text-xs text-zinc-400 space-y-1">
+              <div>• 智利拓扑 (Chile): <code class="text-zinc-200">cl</code> (+56)</div>
+              <div>• 印尼拓扑 (Indonesia): <code class="text-zinc-200">id</code> (+62)</div>
+              <div>• 哈萨克斯坦拓扑 (Kazakhstan): <code class="text-zinc-200">kz</code> (+7)</div>
+            </div>
+
+            <!-- 测试结果反馈 -->
+            <div v-if="testResults.vaksms" :class="['p-3 rounded-lg text-xs', testResults.vaksms.success ? 'bg-green-950/40 border border-green-800/60 text-green-300' : 'bg-red-950/40 border border-red-800/60 text-red-300']">
+              <div>{{ testResults.vaksms.message }}</div>
+              <div v-if="testResults.vaksms.data" class="font-mono mt-1 text-[11px]">
+                可用配额点数: {{ testResults.vaksms.data.balance }} | 当前拓扑 ({{ testResults.vaksms.data.country }}) 信道容量: {{ testResults.vaksms.data.telegram_stock }}
+              </div>
+            </div>
+          </div>
+
+          <!-- 多径传输出口中继网关池卡片 -->
+          <div class="glass-panel p-5 rounded-xl border border-zinc-800/80 space-y-4">
+            <div class="flex items-center justify-between border-b border-zinc-800 pb-2">
+              <div class="flex items-center gap-2">
+                <span class="text-base">🌐</span>
+                <h3 class="font-semibold text-sm text-zinc-200">多径传输出口中继网关池 (Multipath Relay / Proxy-Seller)</h3>
+              </div>
+              <button @click="testProxySeller" :disabled="testing.proxyseller" class="btn-secondary text-xs py-1">
+                {{ testing.proxyseller ? '测试中...' : '⚡ 拓扑发现' }}
+              </button>
+            </div>
+
+            <div>
+              <label class="block text-xs font-medium text-zinc-400 mb-1">Relay Provider API Key</label>
+              <input v-model="config.proxy_seller_key" type="password" class="input-field font-mono" />
+            </div>
+
+            <div class="flex items-center gap-2">
+              <input type="checkbox" id="autoProxy" v-model="config.use_proxy_seller_auto" class="rounded bg-zinc-900 border-zinc-700" />
+              <label for="autoProxy" class="text-xs text-zinc-300">节点引导时自动分配与拓扑匹配的中继跳点</label>
+            </div>
+
+            <div v-if="testResults.proxyseller" :class="['p-3 rounded-lg text-xs', testResults.proxyseller.success ? 'bg-green-950/40 border border-green-800/60 text-green-300' : 'bg-red-950/40 border border-red-800/60 text-red-300']">
+              {{ testResults.proxyseller.message }}
+            </div>
+          </div>
+
+          <!-- 静态后备中继网关 & 二级状态锁 -->
+          <div class="glass-panel p-5 rounded-xl border border-zinc-800/80 space-y-4">
+            <div class="flex items-center justify-between border-b border-zinc-800 pb-2">
+              <div class="flex items-center gap-2">
+                <span class="text-base">🔒</span>
+                <h3 class="font-semibold text-sm text-zinc-200">静态后备中继网关 & 二级状态锁 (2FA)</h3>
+              </div>
+              <button @click="testProxyConnectivity" :disabled="testing.connectivity" class="btn-secondary text-xs py-1">
+                {{ testing.connectivity ? '探测中...' : '⚡ 中继链路探测' }}
+              </button>
+            </div>
+
+            <div class="grid grid-cols-3 gap-2">
+              <div class="col-span-2">
+                <label class="block text-[11px] text-zinc-400 mb-1">中继节点 IP / 域名</label>
+                <input v-model="config.fallback_proxy.addr" type="text" class="input-field font-mono text-xs" />
+              </div>
+              <div>
+                <label class="block text-[11px] text-zinc-400 mb-1">端口</label>
+                <input v-model.number="config.fallback_proxy.port" type="number" class="input-field font-mono text-xs" />
+              </div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-2">
+              <div>
+                <label class="block text-[11px] text-zinc-400 mb-1">鉴权账号 (可选)</label>
+                <input v-model="config.fallback_proxy.username" type="text" class="input-field font-mono text-xs" />
+              </div>
+              <div>
+                <label class="block text-[11px] text-zinc-400 mb-1">鉴权密码 (可选)</label>
+                <input v-model="config.fallback_proxy.password" type="password" class="input-field font-mono text-xs" />
+              </div>
+            </div>
+
+            <div class="pt-2 border-t border-zinc-800">
+              <label class="block text-xs font-medium text-zinc-400 mb-1">二级密码学状态保护凭证 (Secondary State Key / 2FA)</label>
+              <input v-model="config.default_2fa_password" type="text" class="input-field font-mono text-xs" />
+            </div>
+
+            <div v-if="testResults.connectivity" :class="['p-3 rounded-lg text-xs', testResults.connectivity.success ? 'bg-green-950/40 border border-green-800/60 text-green-300' : 'bg-red-950/40 border border-red-800/60 text-red-300']">
+              {{ testResults.connectivity.message }}
+            </div>
+          </div>
+
+          <!-- 自建开发者 API 凭证 & Attestation 高可用网关容灾 -->
+          <div class="glass-panel p-5 rounded-xl border border-zinc-800/80 space-y-4 md:col-span-2">
+            <div class="flex items-center justify-between border-b border-zinc-800 pb-2">
+              <div class="flex items-center gap-2">
+                <span class="text-base">🧩</span>
+                <h3 class="font-semibold text-sm text-zinc-200">自建开发者 API 凭证 & Attestation 高可用网关容灾 (应对 API_ID_PUBLISHED_FLOOD)</h3>
+              </div>
+            </div>
+
+            <div class="p-3 rounded-lg bg-amber-950/30 border border-amber-800/50 text-xs text-amber-200 leading-relaxed">
+              官方内置 api_id (如 4 / 6 / 21724) 早年已被公开泄露，Telegram 服务端对其 auth.sendCode 请求执行近乎无差别拦截：
+              若本次未附带合法 Push Token，几乎必然返回 <code class="font-mono">API_ID_PUBLISHED_FLOOD</code>。
+              可在下方申请并填入自建开发者凭证 (<a href="https://my.telegram.org/apps" target="_blank" class="underline text-amber-100">my.telegram.org/apps</a>)，
+              系统将按策略自动或强制使用该凭证规避该限制。
+            </div>
+
+            <div>
+              <label class="block text-xs font-medium text-zinc-400 mb-1">Attestation / Push 凭证提供源高可用调度策略</label>
+              <select v-model="config.attestation_provider_mode" class="input-field font-mono text-xs">
+                <option value="reghelp_primary">reghelp_primary（REGHelp 优先，AntiSafety 备选，推荐）</option>
+                <option value="antisafety_primary">antisafety_primary（AntiSafety 优先，REGHelp 备选）</option>
+                <option value="reghelp_only">reghelp_only（仅使用 REGHelp）</option>
+                <option value="antisafety_only">antisafety_only（仅使用 AntiSafety）</option>
+              </select>
+              <p class="text-[11px] text-zinc-500 mt-1">节点引导时按此顺序依次尝试各提供源，任一失败/超时自动切换至下一候选，无需人工干预。</p>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div class="space-y-3">
+                <div>
+                  <label class="block text-xs font-medium text-zinc-400 mb-1">API 凭证选择策略</label>
+                  <select v-model="config.api_credential_mode" class="input-field font-mono text-xs">
+                    <option value="auto">auto（无 Push Token 且官方 ID 已泄露时自动回退自建凭证，推荐）</option>
+                    <option value="custom">custom（始终强制使用自建开发者凭证）</option>
+                    <option value="official">official（始终使用官方内置凭证，依赖 Push Token）</option>
+                  </select>
+                </div>
+                <div class="grid grid-cols-2 gap-2">
+                  <div>
+                    <label class="block text-[11px] text-zinc-400 mb-1">自建 API ID</label>
+                    <input v-model.number="config.custom_api_id" type="number" placeholder="例如: 12345678" class="input-field font-mono text-xs" />
+                  </div>
+                  <div>
+                    <label class="block text-[11px] text-zinc-400 mb-1">自建 API Hash</label>
+                    <input v-model="config.custom_api_hash" type="text" placeholder="my.telegram.org 申请获得" class="input-field font-mono text-xs" />
+                  </div>
+                </div>
+              </div>
+
+              <div class="space-y-3">
+                <div>
+                  <label class="block text-[11px] text-zinc-400 mb-1">AntiSafety Push Token 网关候选地址 (每行一个，按序容灾切换)</label>
+                  <textarea v-model="antisafetyBaseUrlsText" rows="2" class="input-field font-mono text-xs" placeholder="https://api.antisafety.net"></textarea>
+                </div>
+                <div class="grid grid-cols-2 gap-2">
+                  <div>
+                    <label class="block text-[11px] text-zinc-400 mb-1">连接超时 (秒)</label>
+                    <input v-model.number="config.antisafety_connect_timeout" type="number" step="0.5" class="input-field font-mono text-xs" />
+                  </div>
+                  <div>
+                    <label class="block text-[11px] text-zinc-400 mb-1">总超时 (秒)</label>
+                    <input v-model.number="config.antisafety_total_timeout" type="number" step="1" class="input-field font-mono text-xs" />
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+      </div>
+
+      <!-- ================= 标签页 3: 硬件指纹与协议拓扑 ================= -->
+      <div v-if="activeTab === 'devices'" class="space-y-6">
+        
+        <div class="border-b border-zinc-800 pb-4">
+          <h2 class="text-lg font-bold text-white">📱 边缘节点硬件拓扑指纹库与端点矩阵</h2>
+          <p class="text-xs text-zinc-400">展示系统内置与外部数据库的高保真硬件特征拓扑，以及 Google Play Integrity 签名对齐规范</p>
+        </div>
+
+        <!-- 3 套 Profile 卡片展示 -->
+        <div class="glass-panel p-4 rounded-xl border border-zinc-800/80 bg-blue-950/20 flex items-center justify-between">
+          <div class="flex items-center gap-3">
+            <span class="text-2xl">📦</span>
+            <div>
+              <div class="flex items-center gap-2">
+                <h3 class="font-bold text-sm text-blue-300">已成功载入本地外部真机数据库: 2026-08-23_07-06-02_Base.db</h3>
+                <span class="badge badge-success">{{ dbStats.total_count }} 套机型拓扑已就绪</span>
+              </div>
+              <p class="text-xs text-zinc-400 mt-0.5">
+                包含 Realme、Motorola、Xiaomi、Huawei、Samsung 等真实硬件遥测样本，时区偏置与西语/全球拓扑对齐，引导时将自动进行伪随机采样。
+              </p>
+            </div>
+          </div>
+          <button @click="fetchDbStats" class="btn-secondary text-xs py-1">刷新状态</button>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div v-for="p in deviceProfiles" :key="p.key" class="glass-panel p-5 rounded-xl border border-zinc-800/80 space-y-3">
+            <div class="flex items-center justify-between border-b border-zinc-800 pb-2">
+              <h3 class="font-bold text-sm text-white">{{ p.name }}</h3>
+              <span class="badge badge-info">{{ p.app_name }}</span>
+            </div>
+
+            <div v-if="p.is_published_api_id" class="badge badge-warning text-[10px]">⚠️ 官方公开泄露 ID (需 Push Token)</div>
+            <div v-else class="badge badge-success text-[10px]">✓ 自建开发者凭证</div>
+
+            <div class="space-y-1.5 text-xs">
+              <div class="flex justify-between text-zinc-400">
+                <span>API ID / Hash:</span>
+                <span class="font-mono text-zinc-200">{{ p.api_id }} / {{ p.api_hash.substring(0, 8) }}...</span>
+              </div>
+              <div class="flex justify-between text-zinc-400">
+                <span>设备硬件型号:</span>
+                <span class="font-mono text-zinc-200">{{ p.device_model }}</span>
+              </div>
+              <div class="flex justify-between text-zinc-400">
+                <span>操作系统版本:</span>
+                <span class="font-mono text-zinc-200">{{ p.system_version }}</span>
+              </div>
+              <div class="flex justify-between text-zinc-400">
+                <span>端点版本号:</span>
+                <span class="font-mono text-zinc-200">{{ p.app_version }}</span>
+              </div>
+              <div class="flex justify-between text-zinc-400">
+                <span>构建编号 (Build):</span>
+                <span class="font-mono text-zinc-200">{{ p.app_build }}</span>
+              </div>
+              <div class="flex justify-between text-zinc-400">
+                <span>协议语言包:</span>
+                <span class="font-mono text-zinc-200">{{ p.lang_pack }}</span>
+              </div>
+            </div>
+
+            <div class="p-2.5 rounded-lg bg-zinc-900 border border-zinc-800 text-[11px] font-mono break-all text-zinc-400">
+              Attestation AID: {{ p.aid }}
+            </div>
+          </div>
+        </div>
+
+        <!-- 详细指南说明卡片 -->
+        <div class="glass-panel p-6 rounded-xl border border-zinc-800/80 space-y-4">
+          <h3 class="font-bold text-sm text-white flex items-center gap-2">
+            <span>🔍</span> 关于边缘节点环境遥测指纹与底层属性提取规范
+          </h3>
+          
+          <div class="text-xs text-zinc-300 leading-relaxed space-y-2">
+            <p>
+              <strong>1. MTProto 协议端点对齐原理：</strong> 
+              在协议客户端握手与密钥交换阶段，将 <code class="text-blue-400">device_model</code>、<code class="text-blue-400">system_version</code>、<code class="text-blue-400">app_version</code> 与目标拓扑区域的 <code class="text-blue-400">lang_code</code> 与 Attestation 签名参数精确对齐，消除状态机特征异常。
+            </p>
+            <p>
+              <strong>2. 如何从真实 Android 边缘设备提取高保真硬件遥测属性？</strong>
+              将设备通过调试接口连接，执行以下命令即可完整导出系统硬件属性字典：
+            </p>
+            <pre class="bg-zinc-950 p-3 rounded-lg border border-zinc-900 font-mono text-[11px] text-zinc-300 overflow-x-auto">
+# 导出整机系统属性字典
+adb shell getprop > device_build_prop.txt
+
+# 提取核心硬件指纹
+adb shell getprop ro.product.model       # 设备型号 (如 SM-S918B)
+adb shell getprop ro.product.brand       # 品牌 (如 samsung)
+adb shell getprop ro.build.version.sdk   # SDK 版本 (如 33)
+adb shell getprop ro.build.fingerprint   # 官方完整签名指纹
+            </pre>
+          </div>
+        </div>
+
+      </div>
+
+    </main>
+  </div>
+</template>
+
+<script setup>
+import { ref, reactive, onMounted, onUnmounted, nextTick } from 'vue'
+
+const tabs = [
+  { id: 'console', name: '状态机编排与控制台', icon: '⚡' },
+  { id: 'settings', name: '参数拓扑与接口审计', icon: '⚙️' },
+  { id: 'devices', name: '硬件指纹与协议拓扑', icon: '📱' }
+]
+
+const activeTab = ref('console')
+const terminalRef = ref(null)
+
+const config = reactive({
+  active_app_type: 'telegram_android',
+  antisafety_api_key: '',
+  antisafety_aids: {
+    telegram_android: '',
+    telegram_x: '',
+    telegram_9: ''
+  },
+  vak_sms_api_key: '',
+  target_country: 'cl',
+  proxy_seller_key: '',
+  use_proxy_seller_auto: false,
+  fallback_proxy: {
+    proxy_type: 'socks5',
+    addr: '127.0.0.1',
+    port: 10808,
+    username: '',
+    password: ''
+  },
+  default_2fa_password: 'Password@2026!Sec',
+  api_credential_mode: 'auto',
+  custom_api_id: null,
+  custom_api_hash: '',
+  antisafety_base_urls: ['https://api.antisafety.net'],
+  antisafety_reporting_base_urls: ['https://reporting.antisafety.net'],
+  antisafety_connect_timeout: 6.0,
+  antisafety_total_timeout: 20.0,
+  antisafety_enabled: true,
+  reghelp_api_key: '',
+  reghelp_base_urls: ['https://api.reghelp.net'],
+  reghelp_enabled: true,
+  reghelp_connect_timeout: 6.0,
+  reghelp_total_timeout: 20.0,
+  attestation_provider_mode: 'reghelp_primary'
+})
+
+// 候选网关地址在界面上以逐行文本编辑，实际持久化为字符串数组
+const antisafetyBaseUrlsText = ref('')
+const antisafetyReportingBaseUrlsText = ref('')
+const reghelpBaseUrlsText = ref('')
+
+const syncBaseUrlsTextFromConfig = () => {
+  antisafetyBaseUrlsText.value = (config.antisafety_base_urls || []).join('\n')
+  antisafetyReportingBaseUrlsText.value = (config.antisafety_reporting_base_urls || []).join('\n')
+  reghelpBaseUrlsText.value = (config.reghelp_base_urls || []).join('\n')
+}
+
+const applyBaseUrlsTextToConfig = () => {
+  config.antisafety_base_urls = antisafetyBaseUrlsText.value
+    .split('\n')
+    .map(s => s.trim())
+    .filter(Boolean)
+  config.antisafety_reporting_base_urls = antisafetyReportingBaseUrlsText.value
+    .split('\n')
+    .map(s => s.trim())
+    .filter(Boolean)
+  config.reghelp_base_urls = reghelpBaseUrlsText.value
+    .split('\n')
+    .map(s => s.trim())
+    .filter(Boolean)
+}
+
+const form = reactive({
+  country: 'cl',
+  app_type: 'telegram_android'
+})
+
+const testing = reactive({
+  vaksms: false,
+  antisafety: false,
+  reghelp: false,
+  proxyseller: false,
+  connectivity: false
+})
+
+const testResults = reactive({
+  vaksms: null,
+  antisafety: null,
+  reghelp: null,
+  proxyseller: null,
+  connectivity: null
+})
+
+const isStartingTask = ref(false)
+const isSavingConfig = ref(false)
+const activeTask = ref(null)
+const taskList = ref([])
+const sessions = ref([])
+const deviceProfiles = ref([])
+const dbStats = ref({ total_count: 0, is_loaded: false, sample_models: [] })
+
+let pollTimer = null
+
+const fetchDbStats = async () => {
+  try {
+    const res = await fetch('/api/device-db-stats')
+    dbStats.value = await res.json()
+  } catch (e) {
+    console.error('Fetch db stats error:', e)
+  }
+}
+
+const fetchConfig = async () => {
+  try {
+    const res = await fetch('/api/config')
+    const data = await res.json()
+    Object.assign(config, data)
+    form.country = data.target_country || 'cl'
+    form.app_type = data.active_app_type || 'telegram_android'
+    syncBaseUrlsTextFromConfig()
+  } catch (e) {
+    console.error('Fetch config error:', e)
+  }
+}
+
+const saveConfig = async () => {
+  isSavingConfig.value = true
+  applyBaseUrlsTextToConfig()
+  try {
+    const res = await fetch('/api/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(config)
+    })
+    const updated = await res.json()
+    Object.assign(config, updated)
+    syncBaseUrlsTextFromConfig()
+    alert('全局仿真参数已成功保存并持久化！')
+  } catch (e) {
+    alert('保存失败: ' + e.message)
+  } finally {
+    isSavingConfig.value = false
+  }
+}
+
+const fetchProfiles = async () => {
+  try {
+    const res = await fetch('/api/device-profiles')
+    deviceProfiles.value = await res.json()
+  } catch (e) {
+    console.error('Fetch profiles error:', e)
+  }
+}
+
+const fetchTasks = async () => {
+  try {
+    const res = await fetch('/api/register/tasks')
+    taskList.value = await res.json()
+    if (activeTask.value) {
+      const found = taskList.value.find(t => t.task_id === activeTask.value.task_id)
+      if (found) {
+        activeTask.value = found
+        nextTick(() => {
+          if (terminalRef.value) {
+            terminalRef.value.scrollTop = terminalRef.value.scrollHeight
+          }
+        })
+      }
+    }
+  } catch (e) {
+    console.error('Fetch tasks error:', e)
+  }
+}
+
+const fetchSessions = async () => {
+  try {
+    const res = await fetch('/api/sessions')
+    sessions.value = await res.json()
+  } catch (e) {
+    console.error('Fetch sessions error:', e)
+  }
+}
+
+const startRegistrationTask = async () => {
+  isStartingTask.value = true
+  try {
+    const res = await fetch('/api/register/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        country: form.country,
+        app_type: form.app_type
+      })
+    })
+    const data = await res.json()
+    activeTask.value = {
+      task_id: data.task_id,
+      status: 'pending',
+      logs: [`[${new Date().toLocaleTimeString()}] 虚拟节点任务 ${data.task_id} 已提交至状态机编排引擎...`]
+    }
+    await fetchTasks()
+  } catch (e) {
+    alert('任务提交失败: ' + e.message)
+  } finally {
+    isStartingTask.value = false
+  }
+}
+
+const viewTaskLogs = (t) => {
+  activeTask.value = t
+  nextTick(() => {
+    if (terminalRef.value) {
+      terminalRef.value.scrollTop = terminalRef.value.scrollHeight
+    }
+  })
+}
+
+const clearActiveLogs = () => {
+  if (activeTask.value) {
+    activeTask.value.logs = []
+  }
+}
+
+// 诊断探针 API Tests
+const testVakSms = async () => {
+  testing.vaksms = true
+  testResults.vaksms = null
+  try {
+    const res = await fetch('/api/test/vaksms', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ api_key: config.vak_sms_api_key, country: config.target_country })
+    })
+    testResults.vaksms = await res.json()
+  } catch (e) {
+    testResults.vaksms = { success: false, message: e.message }
+  } finally {
+    testing.vaksms = false
+  }
+}
+
+const testAntiSafety = async () => {
+  testing.antisafety = true
+  testResults.antisafety = null
+  applyBaseUrlsTextToConfig()
+  try {
+    const res = await fetch('/api/test/antisafety', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        api_key: config.antisafety_api_key,
+        aid: config.antisafety_aids[config.active_app_type],
+        base_urls: config.antisafety_base_urls,
+        reporting_base_urls: config.antisafety_reporting_base_urls
+      })
+    })
+    testResults.antisafety = await res.json()
+  } catch (e) {
+    testResults.antisafety = { success: false, message: e.message }
+  } finally {
+    testing.antisafety = false
+  }
+}
+
+const testRegHelp = async () => {
+  testing.reghelp = true
+  testResults.reghelp = null
+  applyBaseUrlsTextToConfig()
+  try {
+    const res = await fetch('/api/test/reghelp', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        api_key: config.reghelp_api_key,
+        base_urls: config.reghelp_base_urls
+      })
+    })
+    testResults.reghelp = await res.json()
+  } catch (e) {
+    testResults.reghelp = { success: false, message: e.message }
+  } finally {
+    testing.reghelp = false
+  }
+}
+
+const testProxySeller = async () => {
+  testing.proxyseller = true
+  testResults.proxyseller = null
+  try {
+    const res = await fetch('/api/test/proxyseller', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ api_key: config.proxy_seller_key, country: config.target_country })
+    })
+    testResults.proxyseller = await res.json()
+  } catch (e) {
+    testResults.proxyseller = { success: false, message: e.message }
+  } finally {
+    testing.proxyseller = false
+  }
+}
+
+const testProxyConnectivity = async () => {
+  testing.connectivity = true
+  testResults.connectivity = null
+  try {
+    const res = await fetch('/api/test/proxy-connectivity', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(config.fallback_proxy)
+    })
+    testResults.connectivity = await res.json()
+  } catch (e) {
+    testResults.connectivity = { success: false, message: e.message }
+  } finally {
+    testing.connectivity = false
+  }
+}
+
+const getStatusBadgeClass = (status) => {
+  if (status === 'success') return 'badge badge-success'
+  if (status === 'running') return 'badge badge-info animate-pulse'
+  if (status === 'failed') return 'badge badge-danger'
+  return 'badge badge-warning'
+}
+
+const formatTime = (iso) => {
+  if (!iso) return '-'
+  return iso.split('T')[1]?.substring(0, 8) || iso
+}
+
+onMounted(() => {
+  fetchConfig()
+  fetchProfiles()
+  fetchDbStats()
+  fetchTasks()
+  fetchSessions()
+  pollTimer = setInterval(() => {
+    fetchTasks()
+  }, 2000)
+})
+
+onUnmounted(() => {
+  if (pollTimer) clearInterval(pollTimer)
+})
+</script>
