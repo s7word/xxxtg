@@ -25,6 +25,7 @@ from telethon.errors import (
 from backend.app.config import ConfigManager, SESSIONS_DIR
 from backend.app.services.device_profile import DeviceProfileManager
 from backend.app.services.vaksms import NoNumberAvailableError, VakSmsService, format_no_number_message
+from backend.app.services.grizzlysms import GrizzlySmsService, PROVIDER_LABEL as GRIZZLY_PROVIDER_LABEL
 from backend.app.services.attestation_gateway import AttestationGatewayService
 from backend.app.services.banned_phones import (
     LOCAL_BANNED_REASON,
@@ -188,6 +189,21 @@ BATCH_COUNT_MIN = 1
 BATCH_COUNT_MAX = 10
 BATCH_CONCURRENCY_MIN = 1
 BATCH_CONCURRENCY_MAX = 10
+
+SMS_PROVIDER_ALIASES = {
+    "grizzly": "grizzlysms",
+    "grizzlysms": "grizzlysms",
+    "grizzly_sms": "grizzlysms",
+    "grizzly-sms": "grizzlysms",
+    "vak": "vaksms",
+    "vaksms": "vaksms",
+    "vak_sms": "vaksms",
+    "vak-sms": "vaksms",
+}
+SMS_PROVIDER_LABELS = {
+    "grizzlysms": GRIZZLY_PROVIDER_LABEL,
+    "vaksms": "Vak-SMS (vak-sms.com)",
+}
 
 # Telegram auth.sendCode 分发通道：站内信无法被 Vak-SMS 蜂窝网关接收
 APP_DELIVERY_TYPE_NAMES = frozenset({
@@ -407,25 +423,58 @@ class RegistrationOrchestrator:
         pool = SYNTHETIC_IDENTITY_POOLS.get(country.lower(), SYNTHETIC_IDENTITY_POOLS["default"])
         return random.choice(pool["first"]), random.choice(pool["last"])
 
+    @staticmethod
+    def normalize_sms_provider(value: Optional[str] = None) -> str:
+        token = str(value or "").strip().lower()
+        if not token:
+            return "grizzlysms"
+        compact = token.replace("-", "").replace("_", "")
+        return SMS_PROVIDER_ALIASES.get(token) or SMS_PROVIDER_ALIASES.get(compact) or "grizzlysms"
+
+    @classmethod
+    def resolve_sms_provider(cls, config=None, sms_provider: Optional[str] = None) -> str:
+        if sms_provider:
+            return cls.normalize_sms_provider(sms_provider)
+        configured = getattr(config, "sms_provider", None) if config is not None else None
+        return cls.normalize_sms_provider(configured)
+
+    @classmethod
+    def _create_sms_service(cls, config, sms_provider: Optional[str] = None):
+        """按全局配置或单次任务覆盖动态实例化接码客户端。"""
+        provider = cls.resolve_sms_provider(config, sms_provider)
+        if provider == "vaksms":
+            return VakSmsService(getattr(config, "vak_sms_api_key", "") or "")
+        return GrizzlySmsService(getattr(config, "grizzly_sms_api_key", "") or "")
+
+    @classmethod
+    def _sms_provider_label(cls, sms_svc, provider: Optional[str] = None) -> str:
+        label = getattr(sms_svc, "PROVIDER_LABEL", None)
+        if label:
+            return str(label)
+        name = getattr(sms_svc, "PROVIDER_NAME", None) or provider
+        return SMS_PROVIDER_LABELS.get(cls.normalize_sms_provider(name), SMS_PROVIDER_LABELS["grizzlysms"])
+
     @classmethod
     async def _refund_and_revoke_channel(
         cls,
-        sms_svc: VakSmsService,
+        sms_svc,
         act_id: Optional[str],
         task_id: str,
         manager: RegistrationTaskManager,
         reason: str,
     ) -> None:
-        """失败路径统一走 Vak-SMS setStatus=bad，触发取消与自动退款。"""
+        """失败路径统一走对应接码源 cancel()，触发取消与自动退款。"""
         if not act_id:
             return
         result = await sms_svc.cancel(act_id)
         if result.get("skipped"):
             return
+        status = result.get("status")
+        provider_label = cls._sms_provider_label(sms_svc)
         if result.get("success"):
             await manager.append_log(
                 task_id,
-                f"[自动退订/撤销信道句柄完成] act_id={act_id} (Vak-SMS status=bad, 原因: {reason})"
+                f"[自动退订/撤销信道句柄完成] act_id={act_id} ({provider_label} status={status}, 原因: {reason})"
             )
             return
         detail = result.get("error") or result.get("data") or "unknown"
@@ -439,7 +488,7 @@ class RegistrationOrchestrator:
         cls,
         phone: str,
         act_id: Optional[str],
-        sms_svc: VakSmsService,
+        sms_svc,
         task_id: str,
         manager: RegistrationTaskManager,
         cache=None,
@@ -473,7 +522,7 @@ class RegistrationOrchestrator:
         cls,
         phone: str,
         act_id: Optional[str],
-        sms_svc: VakSmsService,
+        sms_svc,
         task_id: str,
         manager: RegistrationTaskManager,
         proxy: Optional[Dict[str, Any]] = None,
@@ -660,7 +709,7 @@ class RegistrationOrchestrator:
         client: TelegramClient,
         task_id: str,
         manager: RegistrationTaskManager,
-        sms_svc: VakSmsService,
+        sms_svc,
         act_id: Optional[str],
         timeout: float = CONNECT_TIMEOUT_SECONDS,
     ) -> bool:
@@ -684,7 +733,7 @@ class RegistrationOrchestrator:
     async def _release_registration_resources(
         cls,
         client: Optional[TelegramClient],
-        sms_svc: Optional[VakSmsService],
+        sms_svc,
         bypass_svc: Optional[AttestationGatewayService],
     ) -> None:
         """三个独立 try/except，disconnect 失败也绝不阻断 httpx close。"""
@@ -698,7 +747,7 @@ class RegistrationOrchestrator:
             try:
                 await sms_svc.close()
             except Exception as exc:
-                logger.warning("释放 Vak-SMS 客户端失败: %s", exc)
+                logger.warning("释放接码客户端失败: %s", exc)
         if bypass_svc is not None:
             try:
                 await bypass_svc.close()
@@ -1015,6 +1064,7 @@ class RegistrationOrchestrator:
         set_2fa: Optional[bool] = None,
         proxy_id: Optional[str] = None,
         proxy_mode: str = "custom_pool",
+        sms_provider: Optional[str] = None,
     ):
         """执行单次边缘虚拟节点引导全流程"""
         manager = RegistrationTaskManager.get_instance()
@@ -1024,7 +1074,8 @@ class RegistrationOrchestrator:
         target_country = (country or config.target_country).lower()
         active_app = app_type or config.active_app_type
 
-        sms_svc = VakSmsService(config.vak_sms_api_key)
+        resolved_sms_provider = cls.resolve_sms_provider(config, sms_provider)
+        sms_svc = cls._create_sms_service(config, resolved_sms_provider)
 
         from backend.app.models.schemas import normalize_proxy_mode
         from backend.app.services.proxy_manager import find_custom_proxy
@@ -1104,6 +1155,10 @@ class RegistrationOrchestrator:
         phone = None
 
         try:
+            await manager.append_log(
+                task_id,
+                f"[接码平台] 当前使用接码通道: {cls._sms_provider_label(sms_svc, resolved_sms_provider)}"
+            )
             await manager.append_log(task_id, f"选定端点模板: {profile['name']} (AID: {aid})")
             pack_alias = profile.get("device_pack_alias")
             pack_country = (profile.get("device_pack_country") or "").upper()
@@ -1494,6 +1549,7 @@ class RegistrationOrchestrator:
         concurrency: int = 3,
         proxy_id: Optional[str] = None,
         proxy_mode: str = "custom_pool",
+        sms_provider: Optional[str] = None,
     ) -> None:
         """使用 Semaphore 异步并行调度一批虚拟节点引导任务。"""
         manager = RegistrationTaskManager.get_instance()
@@ -1518,6 +1574,7 @@ class RegistrationOrchestrator:
                     set_2fa=set_2fa,
                     proxy_id=proxy_id,
                     proxy_mode=proxy_mode,
+                    sms_provider=sms_provider,
                 )
 
         await asyncio.gather(*[_run_one(tid) for tid in task_ids], return_exceptions=True)

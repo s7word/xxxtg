@@ -98,6 +98,14 @@ class AppConfigModel(BaseModel):
         default="16aa4499a3954317aaf002a55e354eed",
         description="异步带外挑战响应 (OOB Challenge) 遥测源 API Key"
     )
+    sms_provider: str = Field(
+        default="grizzlysms",
+        description="当前接码提供源: grizzlysms (推荐, Grizzly SMS) / vaksms (Vak-SMS)"
+    )
+    grizzly_sms_api_key: str = Field(
+        default="66bd4d8e5f54db073d15c2856c9a1366",
+        description="Grizzly SMS (grizzlysms.com) API Key"
+    )
     target_country: str = Field(
         default="cl",
         description="目标地理拓扑与语言区域代码 (如 cl, id, ru, af)"
@@ -235,6 +243,19 @@ class AppConfigModel(BaseModel):
     def _isolate_reghelp_base_urls(cls, value):
         return sanitize_provider_urls(value, "reghelp", DEFAULT_REGHELP_BASES)
 
+    @field_validator("sms_provider", mode="before")
+    @classmethod
+    def _normalize_sms_provider(cls, value):
+        token = str(value or "grizzlysms").strip().lower().replace("-", "").replace("_", "")
+        aliases = {
+            "grizzly": "grizzlysms",
+            "grizzlysms": "grizzlysms",
+            "grizzlysmscom": "grizzlysms",
+            "vak": "vaksms",
+            "vaksms": "vaksms",
+        }
+        return aliases.get(token, "grizzlysms")
+
 
 class DeviceProfileSchema(BaseModel):
     """边缘节点硬件拓扑与环境指纹模型"""
@@ -317,11 +338,29 @@ class RegisterTaskRequest(BaseModel):
             "auto API 动态分配 / fallback 全局后备"
         ),
     )
+    sms_provider: Optional[str] = Field(
+        default=None,
+        description="单次任务覆盖接码提供源: grizzlysms / vaksms；为空则使用全局配置",
+    )
 
     @field_validator("proxy_mode", mode="before")
     @classmethod
     def _normalize_proxy_mode(cls, value):
         return normalize_proxy_mode(value)
+
+    @field_validator("sms_provider", mode="before")
+    @classmethod
+    def _normalize_task_sms_provider(cls, value):
+        if value is None or str(value).strip() == "":
+            return None
+        token = str(value).strip().lower().replace("-", "").replace("_", "")
+        aliases = {
+            "grizzly": "grizzlysms",
+            "grizzlysms": "grizzlysms",
+            "vak": "vaksms",
+            "vaksms": "vaksms",
+        }
+        return aliases.get(token, token)
 
 # 学术化别名
 NodeProvisioningRequest = RegisterTaskRequest

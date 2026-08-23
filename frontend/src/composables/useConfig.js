@@ -11,6 +11,8 @@ const config = reactive({
     telegram_9: ''
   },
   vak_sms_api_key: '',
+  sms_provider: 'grizzlysms',
+  grizzly_sms_api_key: '',
   target_country: 'cl',
   proxy_seller_key: '',
   use_proxy_seller_auto: false,
@@ -44,7 +46,8 @@ const form = reactive({
   country: 'cl',
   app_type: 'telegram_android',
   proxy_mode: 'custom_pool',
-  proxy_id: ''
+  proxy_id: '',
+  sms_provider: 'grizzlysms'
 })
 
 const antisafetyBaseUrlsText = ref('')
@@ -79,6 +82,7 @@ export const fetchConfig = async () => {
     Object.assign(config, data)
     form.country = data.target_country || 'cl'
     form.app_type = data.active_app_type || 'telegram_android'
+    form.sms_provider = data.sms_provider || 'grizzlysms'
     syncBaseUrlsTextFromConfig()
   } catch (e) {
     console.error('Fetch config error:', e)

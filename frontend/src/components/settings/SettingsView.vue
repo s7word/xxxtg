@@ -3,7 +3,7 @@
     <div class="ce-page-head">
       <div>
         <h2>⚙️ 参数拓扑 & 探针审计</h2>
-        <p>REGHelp / AntiSafety / Vak-SMS / RecaptchaMobile / 2FA 一键探针，实时返回可见。</p>
+        <p>Grizzly SMS / Vak-SMS / REGHelp / AntiSafety / RecaptchaMobile / 2FA 一键探针，实时返回可见。</p>
       </div>
       <button class="ce-btn" :disabled="isSavingConfig" @click="saveConfig">
         {{ isSavingConfig ? '正在保存...' : '持久化全局配置' }}
@@ -112,14 +112,24 @@
 
       <div class="ce-panel stack">
         <div class="ce-panel-head">
-          <h3>📩 Vak-SMS 带外挑战源</h3>
-          <button class="ce-btn-ghost" :disabled="probeTesting.vaksms" @click="testVakSms">
-            {{ probeTesting.vaksms ? '测试中...' : '状态探针' }}
+          <div class="row">
+            <h3>📩 Grizzly SMS 接码平台 (grizzlysms.com)</h3>
+            <span class="ce-badge is-success">推荐</span>
+          </div>
+          <button class="ce-btn-ghost" :disabled="probeTesting.grizzlysms" @click="testGrizzlySms">
+            {{ probeTesting.grizzlysms ? '测试中...' : '余额/连通性探针' }}
           </button>
         </div>
         <div>
-          <label class="ce-label">OOB Telemetry API Key</label>
-          <input v-model="config.vak_sms_api_key" type="password" class="ce-input mono" />
+          <label class="ce-label">当前接码提供源选择</label>
+          <select v-model="config.sms_provider" class="ce-select">
+            <option value="grizzlysms">Grizzly SMS (推荐)</option>
+            <option value="vaksms">Vak-SMS</option>
+          </select>
+        </div>
+        <div>
+          <label class="ce-label">Grizzly SMS API Key</label>
+          <input v-model="config.grizzly_sms_api_key" type="password" class="ce-input mono" placeholder="66bd4d8e5f54db073d15c2856c9a1366" />
         </div>
         <div>
           <label class="ce-label">默认地理拓扑区域</label>
@@ -130,7 +140,36 @@
           </select>
         </div>
         <div class="ce-tiny">
+          标准 SMS-Activate 协议 · 印度 <code>22</code> · 印尼 <code>6</code> · 智利 <code>151</code> · 加拿大 <code>36</code> · 美国 <code>187</code>。
+          失败路径自动 <code>setStatus=8</code> 退款。
+        </div>
+        <div v-if="testResults.grizzlysms" class="ce-alert" :class="testResults.grizzlysms.success ? 'is-ok' : 'is-danger'">
+          <div>{{ testResults.grizzlysms.message }}</div>
+          <div v-if="testResults.grizzlysms.data" class="mono ce-tiny">
+            余额: {{ testResults.grizzlysms.data.balance }} {{ testResults.grizzlysms.data.currency || 'RUB' }}
+            | 拓扑 {{ testResults.grizzlysms.data.country }} (id={{ testResults.grizzlysms.data.country_id }})
+            | 库存: {{ testResults.grizzlysms.data.telegram_stock }}
+          </div>
+        </div>
+      </div>
+
+      <div class="ce-panel stack">
+        <div class="ce-panel-head">
+          <div class="row">
+            <h3>📩 Vak-SMS 带外挑战源</h3>
+            <span class="ce-badge is-info">备选</span>
+          </div>
+          <button class="ce-btn-ghost" :disabled="probeTesting.vaksms" @click="testVakSms">
+            {{ probeTesting.vaksms ? '测试中...' : '状态探针' }}
+          </button>
+        </div>
+        <div>
+          <label class="ce-label">OOB Telemetry API Key</label>
+          <input v-model="config.vak_sms_api_key" type="password" class="ce-input mono" />
+        </div>
+        <div class="ce-tiny">
           含 🇨🇦 加拿大 <code>ca</code> (+1) · 智利 <code>cl</code> (+56) · 印度 <code>in</code> (+91) · 印尼 <code>id</code> (+62) 等全球拓扑。
+          将上方「当前接码提供源」切到 Vak-SMS 后生效。
         </div>
         <div v-if="testResults.vaksms" class="ce-alert" :class="testResults.vaksms.success ? 'is-ok' : 'is-danger'">
           <div>{{ testResults.vaksms.message }}</div>
@@ -197,5 +236,5 @@ const {
   config, isSavingConfig, saveConfig, reghelpBaseUrlsText,
   antisafetyBaseUrlsText, antisafetyReportingBaseUrlsText
 } = useConfig()
-const { probeTesting, testResults, testRegHelp, testAntiSafety, testVakSms } = useProbes()
+const { probeTesting, testResults, testRegHelp, testAntiSafety, testGrizzlySms, testVakSms } = useProbes()
 </script>

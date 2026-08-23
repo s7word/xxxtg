@@ -173,7 +173,8 @@ export const startRegistrationTask = async () => {
     const payload = {
       country: form.country,
       app_type: form.app_type,
-      proxy_mode: form.proxy_mode || 'custom_pool'
+      proxy_mode: form.proxy_mode || 'custom_pool',
+      sms_provider: form.sms_provider || config.sms_provider || 'grizzlysms'
     }
     if (form.proxy_mode === 'explicit' && form.proxy_id) {
       payload.proxy_id = form.proxy_id

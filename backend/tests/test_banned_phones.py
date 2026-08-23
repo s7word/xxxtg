@@ -191,6 +191,8 @@ class TestRunRegistrationBannedCacheTiming(unittest.IsolatedAsyncioTestCase):
             target_country="id",
             active_app_type="telegram_android",
             vak_sms_api_key="vak",
+            sms_provider="vaksms",
+            grizzly_sms_api_key="",
             use_proxy_seller_auto=False,
             fallback_proxy=SimpleNamespace(model_dump=lambda: {
                 "proxy_type": "socks5", "addr": "127.0.0.1", "port": 10808,
@@ -319,6 +321,8 @@ class TestAntiSafetyBannedIsRemembered(unittest.IsolatedAsyncioTestCase):
             target_country="id",
             active_app_type="telegram_android",
             vak_sms_api_key="vak",
+            sms_provider="vaksms",
+            grizzly_sms_api_key="",
             use_proxy_seller_auto=False,
             fallback_proxy=SimpleNamespace(model_dump=lambda: {
                 "proxy_type": "socks5", "addr": "127.0.0.1", "port": 10808,

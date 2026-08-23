@@ -54,6 +54,11 @@ from backend.app.services.device_profile import DeviceProfileManager
 from backend.app.services.device_db_manager import DeviceDbManager
 from backend.app.services.device_generator import generate_country_db, list_supported_countries
 from backend.app.services.vaksms import VakSmsService
+from backend.app.services.grizzlysms import (
+    GrizzlySmsService,
+    PROVIDER_LABEL as GRIZZLY_PROVIDER_LABEL,
+    resolve_grizzly_country_id,
+)
 from backend.app.services.antisafety import AntiSafetyService
 from backend.app.services.reghelp import RegHelpService
 from backend.app.services.attestation_urls import sanitize_provider_urls
@@ -245,6 +250,55 @@ async def test_vaksms(payload: Dict[str, Any] = None):
             success=False,
             service="OOB-Telemetry",
             message=f"带外遥测通道探针异常: {str(e)}"
+        )
+    finally:
+        await svc.close()
+
+
+@router.post("/test/grizzlysms", response_model=TestApiResponse, summary="Grizzly SMS 接码平台余额与连通性探针")
+async def test_grizzlysms(payload: Dict[str, Any] = None):
+    config = ConfigManager.get_instance().config
+    api_key = (payload or {}).get("api_key") or config.grizzly_sms_api_key
+    country = (payload or {}).get("country") or config.target_country
+
+    svc = GrizzlySmsService(api_key)
+    try:
+        from backend.app.services.vaksms import format_no_number_message
+
+        balance = await svc.get_balance()
+        stock = 0
+        prices = None
+        country_id = None
+        try:
+            country_id = resolve_grizzly_country_id(country)
+            prices = await svc.get_prices(country=country_id, service="tg")
+            stock = svc._stock_from_prices(prices, country_id, "tg")
+        except Exception as stock_exc:
+            prices = {"error": str(stock_exc)}
+        message = f"{GRIZZLY_PROVIDER_LABEL} 鉴权与通信正常，余额 {balance} RUB"
+        if int(stock or 0) <= 0 and not (isinstance(prices, dict) and prices.get("error")):
+            message = format_no_number_message(country)
+        return TestApiResponse(
+            success=True,
+            service="Grizzly-SMS",
+            message=message,
+            data={
+                "balance": balance,
+                "currency": "RUB",
+                "country": country,
+                "country_id": country_id,
+                "telegram_stock": stock,
+                "prices": prices,
+                "no_number": int(stock or 0) <= 0,
+                "provider": "grizzlysms",
+                "endpoint": GrizzlySmsService.BASE_URL,
+            },
+        )
+    except Exception as e:
+        return TestApiResponse(
+            success=False,
+            service="Grizzly-SMS",
+            message=f"Grizzly SMS 探针异常: {str(e)}",
         )
     finally:
         await svc.close()
@@ -626,6 +680,7 @@ async def start_registration(req: RegisterTaskRequest, background_tasks: Backgro
         set_2fa=req.set_2fa,
         proxy_id=req.proxy_id,
         proxy_mode=req.proxy_mode,
+        sms_provider=req.sms_provider,
     )
 
     return RegisterTaskResponse(
@@ -656,6 +711,7 @@ async def start_batch_registration(req: BatchRegisterRequest, background_tasks: 
         concurrency=req.concurrency,
         proxy_id=req.proxy_id,
         proxy_mode=req.proxy_mode,
+        sms_provider=req.sms_provider,
     )
     return BatchRegisterResponse(
         batch_id=batch_id,

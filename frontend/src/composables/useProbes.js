@@ -7,18 +7,40 @@ const { proxyPool, proxyPoolMeta, testing } = useProxy()
 
 const probeTesting = reactive({
   vaksms: false,
+  grizzlysms: false,
   antisafety: false,
   reghelp: false
 })
 
 const testResults = reactive({
   vaksms: null,
+  grizzlysms: null,
   antisafety: null,
   reghelp: null,
   proxyseller: null,
   proxyall: null,
   connectivity: null
 })
+
+export const testGrizzlySms = async () => {
+  probeTesting.grizzlysms = true
+  testResults.grizzlysms = null
+  try {
+    const res = await fetch('/api/test/grizzlysms', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        api_key: config.grizzly_sms_api_key,
+        country: config.target_country
+      })
+    })
+    testResults.grizzlysms = await res.json()
+  } catch (e) {
+    testResults.grizzlysms = { success: false, message: e.message }
+  } finally {
+    probeTesting.grizzlysms = false
+  }
+}
 
 export const testVakSms = async () => {
   probeTesting.vaksms = true
@@ -147,6 +169,7 @@ export const testProxyConnectivity = async () => {
 export const useProbes = () => ({
   probeTesting,
   testResults,
+  testGrizzlySms,
   testVakSms,
   testAntiSafety,
   testRegHelp,
