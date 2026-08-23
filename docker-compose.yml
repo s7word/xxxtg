@@ -10,10 +10,9 @@ services:
     volumes:
       - ./data:/app/data
       - ./lod_user:/app/lod_user
-      - ./2026-08-23_07-06-02_Base.db:/app/2026-08-23_07-06-02_Base.db:ro
-      - ./2026-08-23_07-06-02_Base.db:/app/Base.db:ro
     environment:
       - DATA_DIR=/app/data
+      - DEVICE_DBS_DIR=/app/data/device_dbs
       - LOD_USER_DIR=/app/lod_user
       - FRONTEND_DIST=/app/frontend/dist
     healthcheck:

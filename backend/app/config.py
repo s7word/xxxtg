@@ -21,6 +21,7 @@ DATA_DIR = Path(os.getenv("DATA_DIR", "./data")).resolve()
 CONFIG_FILE = DATA_DIR / "config.json"
 SESSIONS_DIR = DATA_DIR / "sessions"
 SESSION_ARTIFACTS_DIR = SESSIONS_DIR  # 学术化规范别名
+DEVICE_DBS_DIR = Path(os.getenv("DEVICE_DBS_DIR", str(DATA_DIR / "device_dbs"))).resolve()
 
 _CONFIG_MEM_LOCK = threading.RLock()
 
@@ -47,6 +48,7 @@ LOD_USER_DIR = _resolve_lod_user_dir()
 
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+DEVICE_DBS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def _config_lock_path(dest: Path) -> Path:

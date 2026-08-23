@@ -43,8 +43,15 @@ from backend.app.models.schemas import (
     CustomProxyUpdateItemResponse,
     ToggleVaultProbeRequest,
     ToggleVaultProbeResponse,
+    DeviceDbGenerateRequest,
+    DeviceDbListResponse,
+    DeviceDbPackResponse,
+    DeviceDbToggleRequest,
+    DeviceDbUpdateRequest,
 )
 from backend.app.services.device_profile import DeviceProfileManager
+from backend.app.services.device_db_manager import DeviceDbManager
+from backend.app.services.device_generator import generate_country_db, list_supported_countries
 from backend.app.services.vaksms import VakSmsService
 from backend.app.services.antisafety import AntiSafetyService
 from backend.app.services.reghelp import RegHelpService
@@ -82,6 +89,132 @@ async def list_device_profiles():
 @router.get("/device-db-stats", summary="获取真机硬件拓扑指纹数据库统计")
 async def get_device_db_stats():
     return DeviceProfileManager.get_db_stats()
+
+
+def _device_db_list_payload(message: str = "") -> DeviceDbListResponse:
+    stats = DeviceDbManager.aggregate_stats()
+    return DeviceDbListResponse(
+        success=True,
+        message=message,
+        supported_countries=list_supported_countries(),
+        **stats,
+    )
+
+
+@router.get("/device-dbs", response_model=DeviceDbListResponse, summary="列出已持久化的多国家硬件指纹包")
+async def list_device_dbs():
+    DeviceDbManager.ensure_ready()
+    return _device_db_list_payload("已载入硬件指纹 & 拓扑库目录")
+
+
+@router.get("/device-dbs/{pack_id}", response_model=DeviceDbPackResponse, summary="获取单个硬件指纹包详情与解析统计")
+async def get_device_db(pack_id: str):
+    pack = DeviceDbManager.get_pack(pack_id)
+    if not pack:
+        raise HTTPException(status_code=404, detail="未找到指定的硬件指纹包")
+    return DeviceDbPackResponse(success=True, message="ok", pack=pack)
+
+
+@router.get("/device-dbs/{pack_id}/stats", summary="重新解析并返回机型/SDK/语言/时区分布")
+async def get_device_db_pack_stats(pack_id: str):
+    try:
+        pack = DeviceDbManager.refresh_stats(pack_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="未找到指定的硬件指纹包") from None
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"解析失败: {exc}") from exc
+    return {"success": True, "pack": pack, "stats": pack.get("stats") or {}}
+
+
+@router.post("/device-dbs/upload", response_model=DeviceDbPackResponse, summary="上传 REGISTRATOR SQLite 硬件指纹包")
+async def upload_device_db(
+    file: UploadFile = File(..., description="REGISTRATOR 结构的 .db / .sqlite"),
+    alias: Optional[str] = None,
+    country: Optional[str] = None,
+    enabled: bool = True,
+):
+    filename = file.filename or "device.db"
+    if not filename.lower().endswith((".db", ".sqlite", ".sqlite3")):
+        raise HTTPException(status_code=400, detail="仅接受 .db / .sqlite / .sqlite3")
+    try:
+        content = await file.read()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"读取上传文件失败: {exc}") from exc
+    try:
+        pack = DeviceDbManager.import_bytes(
+            filename,
+            content,
+            alias=alias,
+            country=country,
+            enabled=enabled,
+        )
+    except ValueError as exc:
+        status = 413 if "过大" in str(exc) else 400
+        raise HTTPException(status_code=status, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"导入硬件指纹包失败: {exc}") from exc
+    return DeviceDbPackResponse(
+        success=True,
+        message=f"已导入 {pack.get('alias')}（{pack.get('country_name') or pack.get('country') or '未标注国家'} / {pack.get('sample_count')} 条）",
+        pack=pack,
+    )
+
+
+@router.patch("/device-dbs/{pack_id}", response_model=DeviceDbPackResponse, summary="重命名别名、调整国家或启停状态")
+async def update_device_db(pack_id: str, req: DeviceDbUpdateRequest):
+    try:
+        pack = DeviceDbManager.update_pack(
+            pack_id,
+            alias=req.alias,
+            country=req.country,
+            enabled=req.enabled,
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail="未找到指定的硬件指纹包") from None
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return DeviceDbPackResponse(success=True, message="已更新硬件指纹包", pack=pack)
+
+
+@router.post("/device-dbs/{pack_id}/toggle", response_model=DeviceDbPackResponse, summary="启用或停用某个硬件指纹包")
+async def toggle_device_db(pack_id: str, req: DeviceDbToggleRequest):
+    try:
+        pack = DeviceDbManager.update_pack(pack_id, enabled=req.enabled)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="未找到指定的硬件指纹包") from None
+    state = "启用" if pack.get("enabled") else "停用"
+    return DeviceDbPackResponse(success=True, message=f"已{state} {pack.get('alias')}", pack=pack)
+
+
+@router.delete("/device-dbs/{pack_id}", response_model=DeviceDbPackResponse, summary="删除硬件指纹包及其持久化文件")
+async def delete_device_db(pack_id: str):
+    try:
+        pack = DeviceDbManager.delete_pack(pack_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="未找到指定的硬件指纹包") from None
+    return DeviceDbPackResponse(success=True, message=f"已删除 {pack.get('alias')}", pack=pack)
+
+
+@router.post("/device-dbs/generate", response_model=DeviceDbPackResponse, summary="按目标国家参数化合成一套合规硬件指纹库")
+async def generate_device_db(req: DeviceDbGenerateRequest):
+    try:
+        pack = generate_country_db(
+            country=req.country,
+            count=req.count,
+            alias=req.alias,
+            enabled=req.enabled,
+            brand_weights=req.brand_weights,
+            seed=req.seed,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"合成硬件指纹库失败: {exc}") from exc
+    return DeviceDbPackResponse(
+        success=True,
+        message=f"已合成 {pack.get('alias')}（{pack.get('sample_count')} 条 / {pack.get('country')}）",
+        pack=pack,
+    )
 
 # ==================== 2. 服务探针与连通性审计 ====================
 @router.post("/test/vaksms", response_model=TestApiResponse, summary="带外遥测与挑战响应通道诊断探针")

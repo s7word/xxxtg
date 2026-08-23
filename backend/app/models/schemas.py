@@ -771,3 +771,65 @@ class CustomProxyDeleteResponse(BaseModel):
     remaining: int = 0
     cleared: bool = False
     proxy: Optional[Dict[str, Any]] = None
+
+
+# ==================== Device fingerprint catalog ====================
+
+class DeviceDbPack(BaseModel):
+    """单个国家/标签硬件指纹 SQLite 包"""
+    id: str
+    origin_name: str = ""
+    stored_name: str = ""
+    alias: str
+    country: Optional[str] = None
+    country_name: Optional[str] = None
+    enabled: bool = True
+    source: str = Field(default="upload", description="upload / generated / imported")
+    sample_count: int = 0
+    stats: Dict[str, Any] = Field(default_factory=dict)
+    quality: Dict[str, Any] = Field(default_factory=dict)
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+    generated: Optional[Dict[str, Any]] = None
+
+
+class DeviceDbListResponse(BaseModel):
+    success: bool = True
+    message: str = ""
+    total_count: int = 0
+    is_loaded: bool = False
+    sample_models: List[str] = Field(default_factory=list)
+    pack_count: int = 0
+    enabled_packs: int = 0
+    disabled_packs: int = 0
+    active_countries: List[str] = Field(default_factory=list)
+    packs: List[DeviceDbPack] = Field(default_factory=list)
+    supported_countries: List[Dict[str, str]] = Field(default_factory=list)
+
+
+class DeviceDbPackResponse(BaseModel):
+    success: bool
+    message: str = ""
+    pack: Optional[DeviceDbPack] = None
+
+
+class DeviceDbUpdateRequest(BaseModel):
+    alias: Optional[str] = Field(default=None, description="展示别名，如 智利安装300.db")
+    country: Optional[str] = Field(default=None, description="绑定国家 ISO-2，如 cl / id")
+    enabled: Optional[bool] = None
+
+
+class DeviceDbToggleRequest(BaseModel):
+    enabled: bool = True
+
+
+class DeviceDbGenerateRequest(BaseModel):
+    country: str = Field(..., description="目标国家 ISO-2，如 cl / id / in")
+    count: int = Field(default=300, ge=10, le=5000, description="合成样本条数")
+    alias: Optional[str] = Field(default=None, description="生成后的展示别名")
+    enabled: bool = Field(default=True, description="生成后是否立即投入调度")
+    brand_weights: Optional[Dict[str, int]] = Field(
+        default=None,
+        description="可选品牌权重覆盖: samsung/xiaomi/huawei/motorola/realme/vivo/oppo/other",
+    )
+    seed: Optional[int] = Field(default=None, description="可选随机种子，便于复现实验")

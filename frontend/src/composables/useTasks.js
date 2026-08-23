@@ -18,8 +18,8 @@ const startError = ref('')
 const activeTask = ref(null)
 const taskList = ref([])
 const sessions = ref([])
-const deviceProfiles = ref([])
-const dbStats = ref({ total_count: 0, is_loaded: false, sample_models: [] })
+export const deviceProfiles = ref([])
+export const dbStats = ref({ total_count: 0, is_loaded: false, sample_models: [] })
 const terminalRef = ref(null)
 const phonePrecheckStatus = ref({
   enabled: true,

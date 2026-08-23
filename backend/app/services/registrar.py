@@ -951,6 +951,19 @@ class RegistrationOrchestrator:
 
         try:
             await manager.append_log(task_id, f"选定端点模板: {profile['name']} (AID: {aid})")
+            pack_alias = profile.get("device_pack_alias")
+            pack_country = (profile.get("device_pack_country") or "").upper()
+            pack_match = profile.get("device_pack_match") or "none"
+            if pack_alias:
+                match_label = "国家精确匹配" if pack_match == "country" else "跨库回退采样"
+                await manager.append_log(
+                    task_id,
+                    f"硬件指纹包: {pack_alias}"
+                    + (f" [{pack_country}]" if pack_country else "")
+                    + f" · {match_label}"
+                )
+            elif pack_match == "none":
+                await manager.append_log(task_id, "硬件指纹包: 目录为空，回退端点模板默认机型")
             await manager.append_log(task_id, f"绑定硬件特征: {profile['device_model']} ({profile['system_version']}), App: {profile['app_version']}")
             await manager.append_log(task_id, f"网络语言拓扑: {profile['system_lang_code']}, 时区偏置: {profile.get('tz_offset', -14400)}")
 

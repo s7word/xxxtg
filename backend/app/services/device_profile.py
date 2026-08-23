@@ -1,7 +1,3 @@
-import os
-import re
-import sqlite3
-import random
 import logging
 from pathlib import Path
 from typing import Dict, Any, List, Optional
@@ -86,65 +82,60 @@ class DeviceProfileManager:
     _db_loaded = False
 
     @classmethod
+    def _manager(cls):
+        from backend.app.services.device_db_manager import DeviceDbManager
+        return DeviceDbManager
+
+    @classmethod
     def load_sqlite_devices(cls, db_path: Optional[str] = None) -> List[Dict[str, Any]]:
-        """从 SQLite 拓扑指纹数据库 (Base.db) 动态解析高保真硬件遥测样本"""
+        """从已激活的国家指纹包（或显式路径）解析硬件遥测样本。"""
+        if db_path:
+            from backend.app.services.device_db_manager import parse_registrator_db
+            try:
+                return parse_registrator_db(Path(db_path))
+            except Exception as exc:
+                logger.warning("解析指定硬件指纹库失败: %s", exc)
+                return []
+
         if cls._db_loaded and cls._cached_db_devices:
             return cls._cached_db_devices
 
+        manager = cls._manager()
+        manager.ensure_ready()
+        pooled: List[Dict[str, Any]] = []
+        for pack in manager.enabled_packs():
+            pooled.extend(manager.load_rows(str(pack["id"])))
+        if pooled:
+            cls._cached_db_devices = pooled
+            cls._db_loaded = True
+            logger.info("已从 %s 个已激活指纹包载入 %s 组终端遥测特征", len(manager.enabled_packs()), len(pooled))
+            return pooled
+
+        # 兼容尚未迁入 catalog 的遗留单文件 Base.db
         search_paths = [
-            db_path,
             Path("./2026-08-23_07-06-02_Base.db"),
             Path("/Users/mac/Downloads/tg_auto/2026-08-23_07-06-02_Base.db"),
-            DATA_DIR / "Base.db"
+            DATA_DIR / "Base.db",
         ]
+        for candidate in search_paths:
+            if candidate.exists():
+                try:
+                    from backend.app.services.device_db_manager import parse_registrator_db
+                    parsed = parse_registrator_db(candidate)
+                except Exception as exc:
+                    logger.warning("解析遗留硬件指纹库 %s 失败: %s", candidate, exc)
+                    continue
+                cls._cached_db_devices = parsed
+                cls._db_loaded = True
+                logger.info("成功从遗留硬件数据库 %s 载入 %s 组特征", candidate.name, len(parsed))
+                return parsed
+        return []
 
-        target_file = None
-        for p in search_paths:
-            if p and Path(p).exists():
-                target_file = Path(p)
-                break
-
-        if not target_file:
-            return []
-
-        try:
-            conn = sqlite3.connect(target_file)
-            cursor = conn.cursor()
-            cursor.execute("SELECT APP_ID, APP_HASH, SDK, DEVICE, APP_VERSION, LANG_CODE, SYSTEM_LANG_CODE, LANG_PACK, TZ_OFFSET, PERF_CAT FROM REGISTRATOR")
-            rows = cursor.fetchall()
-
-            parsed = []
-            for r in rows:
-                app_ver_str = str(r[4])
-                pure_ver = app_ver_str
-                build_code = "69792"
-                m = re.search(r'([\d\.]+)\s*\((\d+)\)', app_ver_str)
-                if m:
-                    pure_ver = m.group(1)
-                    build_code = m.group(2)
-
-                parsed.append({
-                    "api_id": int(r[0]),
-                    "api_hash": str(r[1]),
-                    "system_version": str(r[2]),
-                    "device_model": str(r[3]),
-                    "app_version": app_ver_str,
-                    "app_version_pure": pure_ver,
-                    "app_build": build_code,
-                    "lang_code": str(r[5]),
-                    "system_lang_code": str(r[6]),
-                    "lang_pack": str(r[7]),
-                    "tz_offset": int(r[8]),
-                    "perf_cat": int(r[9])
-                })
-
-            cls._cached_db_devices = parsed
-            cls._db_loaded = True
-            logger.info(f"成功从硬件数据库 {target_file.name} 载入 {len(parsed)} 组高保真终端遥测特征")
-            return parsed
-        except Exception as e:
-            logger.warning(f"解析硬件拓扑指纹数据库失败: {e}")
-            return []
+    @classmethod
+    def invalidate_device_cache(cls) -> None:
+        cls._cached_db_devices = []
+        cls._db_loaded = False
+        cls._manager().invalidate_cache()
 
     @classmethod
     def get_all_profiles(cls) -> List[Dict[str, Any]]:
@@ -231,12 +222,26 @@ class DeviceProfileManager:
 
     @classmethod
     def get_db_stats(cls) -> Dict[str, Any]:
-        devices = cls.load_sqlite_devices()
-        return {
-            "total_count": len(devices),
-            "is_loaded": len(devices) > 0,
-            "sample_models": [d["device_model"] for d in devices[:6]] if devices else []
-        }
+        return cls._manager().aggregate_stats()
+
+    @classmethod
+    def _apply_locale(cls, profile: Dict[str, Any], country: str, sampled: Optional[Dict[str, Any]], match: str) -> None:
+        fallback = COUNTRY_LANG_MAP.get(
+            (country or "").lower(),
+            {"lang_code": "es", "system_lang_code": "es-cl", "tz_offset": -14400},
+        )
+        sampled = sampled or {}
+        keep_sampled_locale = match == "country" and sampled.get("lang_code") and sampled.get("system_lang_code")
+        if keep_sampled_locale:
+            profile["lang_code"] = str(sampled["lang_code"]).lower()
+            profile["system_lang_code"] = str(sampled["system_lang_code"]).lower()
+            profile["tz_offset"] = int(sampled.get("tz_offset") or fallback["tz_offset"])
+            profile["locale_source"] = "pack"
+            return
+        profile["lang_code"] = fallback["lang_code"]
+        profile["system_lang_code"] = fallback["system_lang_code"]
+        profile["tz_offset"] = int(fallback.get("tz_offset", -14400))
+        profile["locale_source"] = "country_overlay"
 
     @classmethod
     def get_resolved_profile(cls, app_type: str = "telegram_android", country: str = "cl") -> Dict[str, Any]:
@@ -246,15 +251,26 @@ class DeviceProfileManager:
 
         profile = dict(base)
         profile["aid"] = aid
+        profile["device_pack_id"] = None
+        profile["device_pack_alias"] = None
+        profile["device_pack_country"] = None
+        profile["device_pack_match"] = "none"
 
-        # 采样匹配 Base.db 中的高保真硬件参数
-        db_devices = cls.load_sqlite_devices()
-        if db_devices:
-            sampled_dev = random.choice(db_devices)
+        selection = cls._manager().select_sample(country)
+        sampled_dev = None
+        match = "none"
+        if selection:
+            sampled_dev = selection["row"]
+            pack = selection["pack"]
+            match = selection.get("match") or "none"
             profile["device_model"] = sampled_dev["device_model"]
             profile["system_version"] = sampled_dev["system_version"]
-            profile["tz_offset"] = sampled_dev.get("tz_offset", -14400)
-
+            profile["perf_cat"] = sampled_dev.get("perf_cat", 2)
+            profile["lang_pack"] = sampled_dev.get("lang_pack") or profile.get("lang_pack") or "android"
+            profile["device_pack_id"] = pack.get("id")
+            profile["device_pack_alias"] = pack.get("alias")
+            profile["device_pack_country"] = pack.get("country")
+            profile["device_pack_match"] = match
             if app_type == "telegram_android":
                 profile["app_version"] = sampled_dev["app_version"]
                 profile["app_version_pure"] = sampled_dev["app_version_pure"]
@@ -262,11 +278,7 @@ class DeviceProfileManager:
                 profile["api_id"] = sampled_dev.get("api_id", base["api_id"])
                 profile["api_hash"] = sampled_dev.get("api_hash", base["api_hash"])
 
-        # 动态对齐地理拓扑与语言环境
-        lang_info = COUNTRY_LANG_MAP.get(country.lower(), {"lang_code": "es", "system_lang_code": "es-CL", "tz_offset": -14400})
-        profile["lang_code"] = lang_info["lang_code"]
-        profile["system_lang_code"] = lang_info["system_lang_code"]
-
+        cls._apply_locale(profile, country, sampled_dev, match)
         return profile
 
 # 学术规范别名

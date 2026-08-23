@@ -5,7 +5,7 @@ export const tabs = [
   { id: 'vault', name: '凭证库 & 开发者 API', en: 'Account Vault & Telegram Apps', icon: 'shield' },
   { id: 'proxy', name: '代理网关 & 多径中继', en: 'Proxy Relay & Custom Pool', icon: 'globe' },
   { id: 'settings', name: '参数拓扑 & 探针审计', en: 'Parameters & Audit Probes', icon: 'sliders' },
-  { id: 'devices', name: '硬件指纹 & 拓扑库', en: 'Device Profiles & Base.db', icon: 'smartphone' }
+  { id: 'devices', name: '硬件指纹 & 拓扑库', en: 'Device Profiles & Topology Library', icon: 'smartphone' }
 ]
 
 export const activeTab = ref('console')

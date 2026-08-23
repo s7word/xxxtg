@@ -27,6 +27,7 @@ import { fetchCustomProxyList, refreshProxyPool } from './composables/useProxy'
 import {
   fetchDbStats, fetchPhonePrecheckStatus, fetchProfiles, fetchSessions, fetchTasks
 } from './composables/useTasks'
+import { fetchDeviceCatalog } from './composables/useDevices'
 import { fetchVaultAccounts, stopAppsPoll } from './composables/useVault'
 
 const { activeTab, fetchEngineHealth } = useUi()
@@ -52,6 +53,7 @@ onMounted(() => {
   fetchConfig()
   fetchProfiles()
   fetchDbStats()
+  fetchDeviceCatalog()
   fetchTasks()
   fetchSessions()
   fetchVaultAccounts()
