@@ -307,7 +307,21 @@ async def test_grizzlysms(payload: Dict[str, Any] = None):
             stock = svc._stock_from_prices(prices, country_id, "tg")
         except Exception as stock_exc:
             prices = {"error": str(stock_exc)}
-        message = f"{GRIZZLY_PROVIDER_LABEL} 鉴权与通信正常，余额 {balance} RUB"
+        ref_cost = None
+        if isinstance(prices, dict) and country_id is not None:
+            bucket = prices.get(str(country_id)) or prices.get(country_id)
+            if isinstance(bucket, dict):
+                node = bucket.get("tg") or bucket
+                if isinstance(node, dict) and node.get("cost") is not None:
+                    try:
+                        ref_cost = float(node.get("cost"))
+                    except (TypeError, ValueError):
+                        ref_cost = None
+        # Grizzly 账户可能是 USD(840) 或 RUB；小额参考价按美元结算账户处理。
+        currency = "USD" if ref_cost is not None and 0 < ref_cost <= 5 else "账户结算币种"
+        message = f"{GRIZZLY_PROVIDER_LABEL} 鉴权与通信正常，余额 {balance}（{currency}）"
+        if ref_cost is not None:
+            message += f"，参考价 {ref_cost}"
         if int(stock or 0) <= 0 and not (isinstance(prices, dict) and prices.get("error")):
             message = format_no_number_message(country)
         return TestApiResponse(
@@ -316,7 +330,8 @@ async def test_grizzlysms(payload: Dict[str, Any] = None):
             message=message,
             data={
                 "balance": balance,
-                "currency": "RUB",
+                "currency": currency,
+                "ref_cost": ref_cost,
                 "country": country,
                 "country_id": country_id,
                 "telegram_stock": stock,

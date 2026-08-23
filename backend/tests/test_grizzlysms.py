@@ -21,6 +21,7 @@ from backend.app.models.schemas import (  # noqa: E402
     BatchRegisterRequest,
     RegisterBatchRequest,
     RegisterTaskRequest,
+    format_sms_max_price,
     normalize_sms_max_price,
 )
 from backend.app.services.grizzlysms import (  # noqa: E402
@@ -134,23 +135,52 @@ class TestGrizzlySmsClient(unittest.IsolatedAsyncioTestCase):
 
     async def test_get_number_with_max_price_sends_both_aliases(self):
         self.svc.client.get.return_value = DummyResponse("ACCESS_NUMBER:91001:9647782082712")
-        act_id, phone = await self.svc.get_number(country="iq", service="tg", max_price=50.0)
+        act_id, phone = await self.svc.get_number(country="iq", service="tg", max_price=1.0)
         self.assertEqual(act_id, "91001")
         self.assertEqual(phone, "+9647782082712")
         params = self.svc.client.get.await_args.kwargs["params"]
         self.assertEqual(params["action"], "getNumber")
         self.assertEqual(params["country"], 47)
         self.assertEqual(params["service"], "tg")
-        self.assertEqual(params["maxPrice"], 50.0)
-        self.assertEqual(params["max_price"], 50.0)
+        self.assertEqual(params["maxPrice"], "1")
+        self.assertEqual(params["max_price"], "1")
+
+    async def test_get_number_usd_decimal_max_price_0_6(self):
+        """美元账户伊拉克实测：maxPrice=0.6 立即返回 ACCESS_NUMBER。"""
+        self.svc.client.get.return_value = DummyResponse("ACCESS_NUMBER:579688409:9647724612701")
+        with self.assertLogs("GrizzlySmsService", level="INFO") as cm:
+            act_id, phone = await self.svc.get_number(country="iq", service="tg", max_price=0.6)
+        self.assertEqual(act_id, "579688409")
+        self.assertEqual(phone, "+9647724612701")
+        params = self.svc.client.get.await_args.kwargs["params"]
+        self.assertEqual(params["country"], 47)
+        self.assertEqual(params["maxPrice"], "0.6")
+        self.assertEqual(params["max_price"], "0.6")
+        self.assertTrue(any(isinstance(v, str) for v in (params["maxPrice"], params["max_price"])))
+        self.assertTrue(
+            any("country=47/IQ" in line and "maxPrice=0.6" in line for line in cm.output),
+            msg=cm.output,
+        )
+
+    async def test_get_number_usd_decimal_max_price_0_53(self):
+        """网页端伊拉克标价 $0.5294，出价 0.53 必须原样以浮点字符串发出。"""
+        self.svc.client.get.return_value = DummyResponse("ACCESS_NUMBER:579688424:9647706110433")
+        act_id, phone = await self.svc.get_number(country=47, service="tg", max_price="0.53")
+        self.assertEqual(act_id, "579688424")
+        self.assertEqual(phone, "+9647706110433")
+        params = self.svc.client.get.await_args.kwargs["params"]
+        self.assertEqual(params["maxPrice"], "0.53")
+        self.assertEqual(params["max_price"], "0.53")
+        self.assertNotEqual(params["maxPrice"], 50)
+        self.assertNotEqual(params["maxPrice"], "50")
 
     async def test_get_number_with_operator_and_max_price(self):
         self.svc.client.get.return_value = DummyResponse("ACCESS_NUMBER:77:9647700111222")
-        await self.svc.get_number(country="iraq", service="tg", operator="asiacell", max_price="80")
+        await self.svc.get_number(country="iraq", service="tg", operator="asiacell", max_price="1.0")
         params = self.svc.client.get.await_args.kwargs["params"]
         self.assertEqual(params["operator"], "asiacell")
-        self.assertEqual(params["maxPrice"], 80.0)
-        self.assertEqual(params["max_price"], 80.0)
+        self.assertEqual(params["maxPrice"], "1")
+        self.assertEqual(params["max_price"], "1")
 
     async def test_get_number_ignores_non_positive_max_price(self):
         self.svc.client.get.return_value = DummyResponse("ACCESS_NUMBER:1:919000000000")
@@ -244,9 +274,22 @@ class TestSmsProviderConfig(unittest.TestCase):
     def test_sms_max_price_normalizes(self):
         self.assertEqual(AppConfigModel(sms_max_price=50).sms_max_price, 50.0)
         self.assertEqual(AppConfigModel(sms_max_price="80.5").sms_max_price, 80.5)
+        self.assertEqual(AppConfigModel(sms_max_price="0.53").sms_max_price, 0.53)
+        self.assertEqual(AppConfigModel(sms_max_price=0.6).sms_max_price, 0.6)
+        self.assertEqual(AppConfigModel(sms_max_price=1.0).sms_max_price, 1.0)
         self.assertIsNone(AppConfigModel(sms_max_price="").sms_max_price)
         self.assertIsNone(AppConfigModel(sms_max_price=0).sms_max_price)
         self.assertIsNone(normalize_sms_max_price("not-a-price"))
+        self.assertEqual(normalize_sms_max_price("0.53"), 0.53)
+        self.assertEqual(normalize_sms_max_price(0.6), 0.6)
+        self.assertEqual(normalize_sms_max_price("1.0"), 1.0)
+        self.assertEqual(format_sms_max_price(0.53), "0.53")
+        self.assertEqual(format_sms_max_price(0.6), "0.6")
+        self.assertEqual(format_sms_max_price(1.0), "1")
+        self.assertEqual(format_sms_max_price("0.5294"), "0.5294")
+        self.assertEqual(format_sms_max_price(5.0), "5")
+        self.assertIsNone(format_sms_max_price(0))
+        self.assertIsNone(format_sms_max_price(None))
 
     def test_aliases_normalize(self):
         self.assertEqual(AppConfigModel(sms_provider="Grizzly-SMS").sms_provider, "grizzlysms")
@@ -259,10 +302,11 @@ class TestSmsProviderConfig(unittest.TestCase):
         self.assertEqual(req.sms_provider, "vaksms")
 
     def test_task_and_batch_accept_max_price(self):
-        req = RegisterTaskRequest(country="iq", max_price=50)
-        self.assertEqual(req.max_price, 50.0)
-        batch = BatchRegisterRequest(country="iq", count=2, concurrency=2, max_price="60")
-        self.assertEqual(batch.max_price, 60.0)
+        req = RegisterTaskRequest(country="iq", max_price=0.6)
+        self.assertEqual(req.max_price, 0.6)
+        batch = BatchRegisterRequest(country="iq", count=2, concurrency=2, max_price="0.53")
+        self.assertEqual(batch.max_price, 0.53)
+        self.assertEqual(RegisterTaskRequest(country="iq", max_price="1.0").max_price, 1.0)
         self.assertIs(RegisterBatchRequest, BatchRegisterRequest)
         self.assertIsNone(RegisterTaskRequest(country="iq", max_price="").max_price)
 
@@ -417,7 +461,7 @@ class TestRegistrarGrizzlyPipeline(unittest.IsolatedAsyncioTestCase):
         gw = MagicMock()
         gw.close = AsyncMock()
         cfg = self._config("grizzlysms")
-        cfg.sms_max_price = 50.0
+        cfg.sms_max_price = 0.55
         cfg_mgr = SimpleNamespace(config=cfg)
         with patch("backend.app.services.registrar.ConfigManager.get_instance", return_value=cfg_mgr), \
              patch("backend.app.services.registrar.GrizzlySmsService", return_value=sms), \
@@ -428,15 +472,16 @@ class TestRegistrarGrizzlyPipeline(unittest.IsolatedAsyncioTestCase):
                 task_id=self.task_id,
                 country="iq",
                 sms_provider="grizzlysms",
-                max_price=80.0,
+                max_price=0.6,
             )
         sms.get_number.assert_awaited()
         kwargs = sms.get_number.await_args.kwargs
         self.assertEqual(kwargs["country"], "iq")
         self.assertEqual(kwargs["service"], "tg")
-        self.assertEqual(kwargs["max_price"], 80.0)
+        self.assertEqual(kwargs["max_price"], 0.6)
         logs = "\n".join(self.manager.get_task(self.task_id)["logs"])
-        self.assertIn("maxPrice=80.0 RUB", logs)
+        self.assertIn("maxPrice=0.6", logs)
+        self.assertNotIn("RUB", logs)
         self.assertIn("可继续上调 sms_max_price", logs)
 
     async def test_pipeline_falls_back_to_config_sms_max_price(self):
@@ -445,7 +490,7 @@ class TestRegistrarGrizzlyPipeline(unittest.IsolatedAsyncioTestCase):
         gw = MagicMock()
         gw.close = AsyncMock()
         cfg = self._config("grizzlysms")
-        cfg.sms_max_price = 50.0
+        cfg.sms_max_price = 0.53
         cfg_mgr = SimpleNamespace(config=cfg)
         with patch("backend.app.services.registrar.ConfigManager.get_instance", return_value=cfg_mgr), \
              patch("backend.app.services.registrar.GrizzlySmsService", return_value=sms), \
@@ -457,9 +502,10 @@ class TestRegistrarGrizzlyPipeline(unittest.IsolatedAsyncioTestCase):
                 country="iq",
                 sms_provider="grizzlysms",
             )
-        self.assertEqual(sms.get_number.await_args.kwargs["max_price"], 50.0)
+        self.assertEqual(sms.get_number.await_args.kwargs["max_price"], 0.53)
         logs = "\n".join(self.manager.get_task(self.task_id)["logs"])
-        self.assertIn("maxPrice=50.0 RUB", logs)
+        self.assertIn("maxPrice=0.53", logs)
+        self.assertNotIn("RUB", logs)
 
     async def test_pipeline_hints_when_max_price_missing(self):
         sms = FakeSms()
@@ -480,7 +526,7 @@ class TestRegistrarGrizzlyPipeline(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(sms.get_number.await_args.kwargs["max_price"])
         logs = "\n".join(self.manager.get_task(self.task_id)["logs"])
         self.assertIn("未设置最高出价", logs)
-        self.assertIn("伊拉克 IQ 建议 50~80 RUB", logs)
+        self.assertIn("伊拉克 IQ 美元账户建议 0.55~1.0", logs)
 
     async def test_refund_helper_prints_grizzly_status_8(self):
         class FakeManager:

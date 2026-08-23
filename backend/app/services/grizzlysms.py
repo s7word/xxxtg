@@ -14,7 +14,7 @@ from typing import Any, Callable, Dict, Optional, Tuple, Union
 
 import httpx
 
-from backend.app.models.schemas import normalize_sms_max_price
+from backend.app.models.schemas import format_sms_max_price, normalize_sms_max_price
 from backend.app.services.vaksms import NoNumberAvailableError, is_no_number_error
 
 logger = logging.getLogger("GrizzlySmsService")
@@ -592,10 +592,25 @@ class GrizzlySmsService:
         if operator:
             extra["operator"] = operator
         bid = normalize_sms_max_price(max_price)
-        if bid is not None:
+        bid_str = format_sms_max_price(bid)
+        iso = (resolve_country_iso2(country) or str(country) or "").upper()
+        if bid_str is not None:
             # 同时携带 camelCase / snake_case，兼容 SMS-Activate 与 Grizzly 协议子集。
-            extra["maxPrice"] = bid
-            extra["max_price"] = bid
+            # 必须传账户结算币种的真实浮点字符串（美元账户 0.53/0.6，勿传 50/100）。
+            extra["maxPrice"] = bid_str
+            extra["max_price"] = bid_str
+            if bid is not None and bid > 5:
+                logger.warning(
+                    "Grizzly SMS maxPrice=%s 数值较大。若账户为美元结算 (currency:840，伊拉克约 $0.53)，"
+                    "请改填 0.55/0.6/1.0；传入 50/100 会被平台拒绝并返回 NO_NUMBERS。",
+                    bid_str,
+                )
+        logger.info(
+            "向 Grizzly SMS 申请租号 (country=%s/%s, maxPrice=%s)...",
+            country_id,
+            iso or "?",
+            bid_str if bid_str is not None else "未设置",
+        )
         raw = await self._get("getNumber", extra)
         if _is_no_numbers(raw):
             iso = resolve_country_iso2(country) or str(country)

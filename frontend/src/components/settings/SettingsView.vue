@@ -137,14 +137,15 @@
             v-model.number="config.sms_max_price"
             type="number"
             min="0"
-            step="0.1"
+            step="0.01"
             class="ce-input mono"
-            placeholder="留空=平台底价；热门国家建议 40~60"
+            placeholder="如 0.55 / 1.0 (根据平台结算币种如美元/卢布填入)"
           />
           <p class="ce-tiny">
-            单位 RUB。如遇伊拉克 IQ、欧美热门段返回 <code>NO_NUMBERS</code>，
-            可提高最高出价（如 40~60 RUB / 约 $0.50），平台将在
-            <code>[底价, maxPrice]</code> 内优先分配高优先级现卡，而不是卡在 0.5 卢布的空库存底价桶。
+            按账户结算币种原样填写小数出价，不要换算。美元账户（currency:840）伊拉克约
+            <code>$0.5294</code>，建议 <code>0.55</code> / <code>0.6</code> / <code>1.0</code>。
+            误填 <code>50</code> / <code>100</code> 会被 Grizzly 拒绝并返回 <code>NO_NUMBERS</code>。
+            平台在 <code>[底价, maxPrice]</code> 内匹配高优先级现卡。
           </p>
         </div>
         <LiveStockCountryPicker
@@ -159,7 +160,7 @@
         <div v-if="testResults.grizzlysms" class="ce-alert" :class="testResults.grizzlysms.success ? 'is-ok' : 'is-danger'">
           <div>{{ testResults.grizzlysms.message }}</div>
           <div v-if="testResults.grizzlysms.data" class="mono ce-tiny">
-            余额: {{ testResults.grizzlysms.data.balance }} {{ testResults.grizzlysms.data.currency || 'RUB' }}
+            余额: {{ testResults.grizzlysms.data.balance }} {{ testResults.grizzlysms.data.currency || '账户结算币种' }}
             | 拓扑 {{ testResults.grizzlysms.data.country }} (id={{ testResults.grizzlysms.data.country_id }})
             | 库存: {{ testResults.grizzlysms.data.telegram_stock }}
           </div>

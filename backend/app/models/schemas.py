@@ -35,11 +35,18 @@ def normalize_proxy_mode(value: Any) -> str:
 
 
 def normalize_sms_max_price(value: Any) -> Optional[float]:
-    """把配置/任务级最高出价规范化为 >0 的 float；空值或非法输入视为未设置。"""
+    """把配置/任务级最高出价规范化为任意正浮点数。
+
+    必须保留精确小数（如 0.53 / 0.6 / 1.0），不得强转为整数，也不得要求 >1。
+    Grizzly 账户可能按 USD(840) 或 RUB 结算：出价按账户币种原样传递，不做单位换算。
+    空值或非法输入视为未设置。
+    """
     if value is None:
         return None
+    if isinstance(value, bool):
+        return None
     if isinstance(value, str):
-        token = value.strip()
+        token = value.strip().replace(",", "")
         if not token:
             return None
         value = token
@@ -47,9 +54,22 @@ def normalize_sms_max_price(value: Any) -> Optional[float]:
         parsed = float(value)
     except (TypeError, ValueError):
         return None
-    if parsed <= 0:
+    if parsed <= 0 or parsed != parsed:  # NaN
+        return None
+    if parsed == float("inf"):
         return None
     return parsed
+
+
+def format_sms_max_price(value: Any) -> Optional[str]:
+    """把最高出价格式化为 Grizzly/SMS-Activate 可接受的浮点字符串。
+
+    例如 0.53 → "0.53"，0.6 → "0.6"，1.0 → "1"，50.0 → "50"。
+    """
+    bid = normalize_sms_max_price(value)
+    if bid is None:
+        return None
+    return f"{bid:.4f}".rstrip("0").rstrip(".")
 
 
 class CustomProxyItem(BaseModel):
@@ -127,9 +147,10 @@ class AppConfigModel(BaseModel):
     sms_max_price: Optional[float] = Field(
         default=None,
         description=(
-            "单次接码最高出价上限（RUB）。热门/稀缺国家（如伊拉克 IQ）开启动态竞价时，"
-            "平台在 [底价, maxPrice] 范围内匹配高优先级现卡。"
-            "为空表示使用平台默认底价；建议热门国家设为 40~80。"
+            "单次接码最高出价上限（按接码平台账户结算币种原样填写）。"
+            "美元账户填小数（如伊拉克 IQ 网页价 $0.5294，建议 0.55 / 0.6 / 1.0）；"
+            "卢布账户填网页显示的卢布价。平台在 [底价, maxPrice] 范围内匹配高优先级现卡。"
+            "为空表示使用平台默认底价。勿把美元账户误填 50/100，会被拒绝并返回 NO_NUMBERS。"
         ),
     )
     target_country: str = Field(
@@ -406,8 +427,8 @@ class RegisterTaskRequest(BaseModel):
     max_price: Optional[float] = Field(
         default=None,
         description=(
-            "单次任务接码最高出价上限（RUB）。覆盖全局 sms_max_price；"
-            "为空则回落系统配置，再为空则使用平台默认底价"
+            "单次任务接码最高出价上限（按账户结算币种原样填写，支持 0.53 / 0.6 / 1.0）。"
+            "覆盖全局 sms_max_price；为空则回落系统配置，再为空则使用平台默认底价"
         ),
     )
 

@@ -32,22 +32,23 @@
           <div class="between">
             <strong>📈 动态最高出价上限 (Max Price / Bidding)</strong>
             <span :class="effectiveMaxPrice ? 'ce-badge is-success' : 'ce-badge is-warn'">
-              {{ effectiveMaxPrice ? `${effectiveMaxPrice} RUB` : '未设置 · 平台底价' }}
+              {{ effectiveMaxPrice ? `${effectiveMaxPrice}（账户结算币种）` : '未设置 · 平台底价' }}
             </span>
           </div>
           <p class="ce-tiny" style="margin-top:6px">
-            热门/稀缺国家（如伊拉克 IQ）网页端约 $0.53 / 50 RUB 才有现卡。
-            不传 <code>maxPrice</code> 时 API 只会打底价空桶并返回 <code>NO_NUMBERS</code>。
+            按接码平台账户结算币种原样填写。美元账户（如伊拉克 IQ 网页价 $0.5294）填
+            <code>0.55</code> / <code>0.6</code> / <code>1.0</code>；卢布账户按网页卢布价填写。
+            勿把美元账户误填 <code>50</code> / <code>100</code>，平台会直接返回 <code>NO_NUMBERS</code>。
           </p>
           <div style="margin-top:8px">
-            <label class="ce-label">本次任务出价覆盖（RUB，可选）</label>
+            <label class="ce-label">本次任务出价覆盖（可选）</label>
             <input
               v-model.number="form.max_price"
               type="number"
               min="0"
-              step="0.1"
+              step="0.01"
               class="ce-input mono"
-              placeholder="留空则使用全局设置"
+              placeholder="如 0.55 / 1.0 (根据平台结算币种如美元/卢布填入)"
             />
           </div>
         </div>

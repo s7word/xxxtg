@@ -1191,11 +1191,14 @@ class RegistrationOrchestrator:
             await manager.append_log(task_id, f"网络语言拓扑: {profile['system_lang_code']}, 时区偏置: {profile.get('tz_offset', -14400)}")
 
             # 1. 租用带外通信句柄（热门/稀缺国家需携带 maxPrice 动态竞价，否则卡在底价空桶）
-            if lease_max_price is not None:
+            from backend.app.models.schemas import format_sms_max_price
+
+            bid_label = format_sms_max_price(lease_max_price)
+            if bid_label is not None:
                 await manager.append_log(
                     task_id,
                     f"正在向带外遥测提供者申请拓扑代码 '{target_country.upper()}' 的信道句柄"
-                    f"（动态竞价上限 maxPrice={lease_max_price} RUB）..."
+                    f"（动态竞价上限 maxPrice={bid_label}，按账户结算币种原样出价）..."
                 )
             else:
                 await manager.append_log(
@@ -1500,12 +1503,17 @@ class RegistrationOrchestrator:
                 await manager.append_log(
                     task_id,
                     "提示: 热门/稀缺国家存在动态竞价。可在「参数拓扑」设置 sms_max_price"
-                    "（如伊拉克 IQ 建议 50~80 RUB）以匹配网页端高优先级现卡。"
+                    "（如伊拉克 IQ 美元账户建议 0.55~1.0，卢布账户按网页价填写）"
+                    "以匹配网页端高优先级现卡。"
                 )
             else:
+                from backend.app.models.schemas import format_sms_max_price
+
+                bid_label = format_sms_max_price(lease_max_price) or str(lease_max_price)
                 await manager.append_log(
                     task_id,
-                    f"提示: 当前最高出价 {lease_max_price} RUB 仍未匹配到现卡，可继续上调 sms_max_price 后重试。"
+                    f"提示: 当前最高出价 {bid_label}（按账户结算币种）仍未匹配到现卡，"
+                    "可继续上调 sms_max_price 后重试。"
                 )
             manager.update_task_status(task_id, "failed", error=err, no_number=True)
         except PhoneNumberBannedError:
