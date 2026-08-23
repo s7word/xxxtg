@@ -107,11 +107,50 @@ class TestLodUserVaultScan(unittest.TestCase):
         self.assertIn("samsung", (sample.device_model or "").lower())
         self.assertTrue(sample.register_time)
         self.assertTrue(sample.can_request_new_api_credentials)
-        self.assertTrue(sample.session_missing_for_auto_code)
-        self.assertIn(".session", sample.apps_apply_hint)
+        # *.session 受 gitignore 保护：CI 上通常只有 JSON；对话窗口上传后可与同名 JSON 成对出现。
+        sibling_session = (
+            Path(REPO_ROOT) / "lod_user" / "autoc_sessions_20260823_084149_3" / "918310013712.session"
+        )
+        if sibling_session.exists():
+            self.assertTrue(sample.has_session)
+            self.assertFalse(sample.session_missing_for_auto_code)
+            self.assertTrue(sample.session_path)
+            self.assertTrue(sample.session_path.endswith("918310013712.session"))
+            self.assertIn("777000", sample.apps_apply_hint)
+        else:
+            self.assertFalse(sample.has_session)
+            self.assertTrue(sample.session_missing_for_auto_code)
+            self.assertIn(".session", sample.apps_apply_hint)
         self.assertGreaterEqual(listing.published_api_id_count, 3)
         self.assertTrue(listing.guidance)
         self.assertIn("custom_api_id", listing.guidance)
+
+    def test_three_target_accounts_pair_session_when_present(self):
+        listing = AccountVaultService.list_accounts()
+        wanted = {"+918296691905", "+918302332054", "+918310013712"}
+        by_phone = {acc.phone: acc for acc in listing.accounts if acc.phone in wanted}
+        self.assertEqual(set(by_phone), wanted)
+        root = Path(REPO_ROOT) / "lod_user" / "autoc_sessions_20260823_084149_3"
+        for phone, stem in (
+            ("+918296691905", "918296691905"),
+            ("+918302332054", "918302332054"),
+            ("+918310013712", "918310013712"),
+        ):
+            acc = by_phone[phone]
+            sess = root / f"{stem}.session"
+            js = root / f"{stem}.json"
+            self.assertTrue(js.exists(), f"missing sibling json for {stem}")
+            if not sess.exists():
+                continue
+            self.assertTrue(acc.has_session, phone)
+            self.assertFalse(acc.session_missing_for_auto_code, phone)
+            self.assertTrue(acc.session_path)
+            self.assertTrue(acc.session_path.endswith(f"{stem}.session"))
+            self.assertTrue((acc.json_path or "").endswith(f"{stem}.json"))
+            resolved = AccountVaultService.resolve_session_file(acc)
+            self.assertIsNotNone(resolved)
+            self.assertTrue(resolved.exists())
+            self.assertEqual(resolved.resolve(), sess.resolve())
 
     def test_get_account_roundtrip(self):
         listing = AccountVaultService.list_accounts()
