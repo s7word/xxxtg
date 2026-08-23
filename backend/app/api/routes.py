@@ -1,7 +1,7 @@
 import asyncio
 import os
 from pathlib import Path
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 
 from backend.app.config import ConfigManager, SESSIONS_DIR
@@ -11,14 +11,30 @@ from backend.app.models.schemas import (
     RegisterTaskRequest,
     RegisterTaskResponse,
     TaskStatusResponse,
-    EgressRelayConfig
+    EgressRelayConfig,
+    VaultAccountListResponse,
+    ApplyVaultCredentialsRequest,
+    ApplyVaultCredentialsResponse,
+    TelegramAppsStartRequest,
+    TelegramAppsSubmitCodeRequest,
+    TelegramAppsApplyRequest,
+    TelegramAppsJobResponse,
+    TelegramAppsJobListResponse,
+    ProxySellerListResponse,
+    ProxySellerAutoSelectRequest,
+    ProxySellerAutoSelectResponse,
+    ProxySellerTestAllRequest,
+    ProxySellerTestAllResponse,
 )
 from backend.app.services.device_profile import DeviceProfileManager
 from backend.app.services.vaksms import VakSmsService
 from backend.app.services.antisafety import AntiSafetyService
 from backend.app.services.reghelp import RegHelpService
+from backend.app.services.attestation_urls import sanitize_provider_urls
 from backend.app.services.proxyseller import ProxySellerService
 from backend.app.services.registrar import RegistrationTaskManager, RegistrationOrchestrator
+from backend.app.services.account_vault import AccountVaultService
+from backend.app.services.telegram_apps import TelegramAppsHelper, TelegramAppsJobManager
 
 router = APIRouter(prefix="/api")
 
@@ -73,8 +89,14 @@ async def test_antisafety(payload: Dict[str, Any] = None):
 
     svc = AntiSafetyService(
         api_key,
-        api_bases=(payload or {}).get("base_urls") or config.antisafety_base_urls,
-        reporting_bases=(payload or {}).get("reporting_base_urls") or config.antisafety_reporting_base_urls,
+        api_bases=sanitize_provider_urls(
+            (payload or {}).get("base_urls") or config.antisafety_base_urls,
+            "antisafety",
+        ),
+        reporting_bases=sanitize_provider_urls(
+            (payload or {}).get("reporting_base_urls") or config.antisafety_reporting_base_urls,
+            "antisafety_reporting",
+        ),
         connect_timeout=config.antisafety_connect_timeout,
         total_timeout=config.antisafety_total_timeout
     )
@@ -105,7 +127,10 @@ async def test_antisafety(payload: Dict[str, Any] = None):
 async def test_reghelp(payload: Dict[str, Any] = None):
     config = ConfigManager.get_instance().config
     api_key = (payload or {}).get("api_key") or config.reghelp_api_key
-    base_urls = (payload or {}).get("base_urls") or config.reghelp_base_urls
+    base_urls = sanitize_provider_urls(
+        (payload or {}).get("base_urls") or config.reghelp_base_urls,
+        "reghelp",
+    )
 
     svc = RegHelpService(
         api_key,
@@ -176,6 +201,132 @@ async def test_proxy_connectivity(proxy_data: Dict[str, Any]):
         message=f"中继链路探测失败: {res.get('error')}"
     )
 
+
+def _proxy_seller_service(api_key: Optional[str] = None) -> ProxySellerService:
+    config = ConfigManager.get_instance().config
+    key = (api_key or config.proxy_seller_key or "").strip()
+    if not key:
+        raise HTTPException(status_code=400, detail="未配置 Proxy-Seller API Key")
+    return ProxySellerService(key)
+
+
+def _available_countries(proxies: List[Dict[str, Any]]) -> List[str]:
+    codes = []
+    seen = set()
+    for item in proxies:
+        label = (item.get("country_code") or item.get("country_alpha3") or item.get("country") or "").upper()
+        if label and label not in seen:
+            seen.add(label)
+            codes.append(label)
+    return codes
+
+
+@router.get("/proxy-seller/proxies", response_model=ProxySellerListResponse, summary="检索 Proxy-Seller 区域代理池")
+async def list_proxy_seller_proxies(country: Optional[str] = None, refresh: bool = False, api_key: Optional[str] = None):
+    """列出账户下全部或指定区域的代理，附带缓存健康状态与地理归属。"""
+    svc = _proxy_seller_service(api_key)
+    try:
+        proxies = await svc.get_proxy_list(country=country, refresh=refresh)
+        all_items = await svc.get_proxy_list(country=None, refresh=False)
+        meta = svc.cache_meta()
+        scope = (country or "ALL").upper()
+        return ProxySellerListResponse(
+            success=True,
+            message=f"成功检索到 {len(proxies)} 个 {scope} 区域出口中继跳点",
+            country=country,
+            total=len(proxies),
+            proxies=proxies,
+            cached=bool(meta.get("cached")) and not refresh,
+            cache_age_seconds=meta.get("cache_age_seconds"),
+            available_countries=_available_countries(all_items),
+        )
+    except Exception as e:
+        return ProxySellerListResponse(
+            success=False,
+            message=f"检索 Proxy-Seller 代理池失败: {e}",
+            country=country,
+            total=0,
+            proxies=[],
+        )
+    finally:
+        await svc.close()
+
+
+@router.post("/proxy-seller/auto-select", response_model=ProxySellerAutoSelectResponse, summary="按目标国家自动挑选并可选写入后备代理")
+async def auto_select_proxy_seller(req: ProxySellerAutoSelectRequest):
+    """给定 target_country，自动挑选该区域最佳/可用代理；可一键应用为 fallback_proxy。"""
+    config_mgr = ConfigManager.get_instance()
+    svc = _proxy_seller_service(req.api_key)
+    try:
+        target = (req.target_country or config_mgr.config.target_country or "").strip()
+        selection = await svc.select_best_proxy(
+            target_country=target,
+            probe=req.probe,
+            allow_fallback=req.allow_fallback,
+            refresh=req.refresh,
+        )
+        applied = False
+        fallback = None
+        proxy = selection.get("proxy")
+        if req.apply_fallback and proxy:
+            current = config_mgr.config.model_dump()
+            current["fallback_proxy"] = {
+                "proxy_type": proxy.get("proxy_type") or "socks5",
+                "addr": proxy.get("addr"),
+                "port": int(proxy.get("port")),
+                "username": proxy.get("username"),
+                "password": proxy.get("password"),
+            }
+            saved = config_mgr.save_config(AppConfigModel(**current))
+            fallback = saved.fallback_proxy
+            applied = True
+            selection["message"] = (
+                f"{selection.get('message')}；已一键写入 fallback_proxy "
+                f"{proxy.get('addr')}:{proxy.get('port')}"
+            )
+        return ProxySellerAutoSelectResponse(
+            success=bool(selection.get("success")),
+            message=selection.get("message") or "未匹配到可用代理",
+            matched=bool(selection.get("matched")),
+            fallback_used=bool(selection.get("fallback_used")),
+            applied=applied,
+            target_country=target,
+            source=selection.get("source"),
+            hint=selection.get("hint"),
+            proxy=proxy,
+            fallback_proxy=fallback,
+        )
+    except Exception as e:
+        return ProxySellerAutoSelectResponse(
+            success=False,
+            message=f"自动挑选区域代理失败: {e}",
+            target_country=req.target_country,
+        )
+    finally:
+        await svc.close()
+
+
+@router.post("/proxy-seller/test-all", response_model=ProxySellerTestAllResponse, summary="批量测活 Proxy-Seller 代理出口")
+async def test_all_proxy_seller(req: ProxySellerTestAllRequest):
+    """批量测试连通性，并回写每个节点的出口 IP / 国家。"""
+    svc = _proxy_seller_service(req.api_key)
+    try:
+        result = await svc.test_all(
+            country=req.country,
+            refresh=req.refresh,
+            limit=req.limit,
+            concurrency=req.concurrency,
+        )
+        return ProxySellerTestAllResponse(**result)
+    except Exception as e:
+        return ProxySellerTestAllResponse(
+            success=False,
+            message=f"批量测活失败: {e}",
+            country=req.country,
+        )
+    finally:
+        await svc.close()
+
 # ==================== 3. 虚拟节点引导任务调度 ====================
 @router.post("/register/start", response_model=RegisterTaskResponse, summary="触发边缘节点引导任务")
 @router.post("/provision/start", response_model=RegisterTaskResponse, summary="触发边缘节点引导任务 (学术规范路径)")
@@ -229,3 +380,107 @@ async def list_sessions():
 def datetime_from_timestamp(ts: float) -> str:
     import datetime
     return datetime.datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
+
+
+# ==================== 5. 已有账号凭证库 (Account Vault) ====================
+@router.get(
+    "/vault/accounts",
+    response_model=VaultAccountListResponse,
+    summary="扫描 lod_user/ 与 data/sessions/ 中的已有账号凭证",
+)
+async def list_vault_accounts():
+    return AccountVaultService.list_accounts()
+
+
+@router.post(
+    "/vault/accounts/apply",
+    response_model=ApplyVaultCredentialsResponse,
+    summary="将某个已有账号的 app_id/app_hash 一键写入全局配置",
+)
+async def apply_vault_account_credentials(req: ApplyVaultCredentialsRequest):
+    result = AccountVaultService.apply_account_credentials(
+        req.account_id,
+        set_mode_custom=req.set_mode_custom,
+    )
+    if not result.success:
+        raise HTTPException(status_code=400, detail=result.message)
+    return result
+
+
+# ==================== 6. 开发者凭证申请助手 (my.telegram.org) ====================
+@router.post(
+    "/vault/apps/start",
+    response_model=TelegramAppsJobResponse,
+    summary="对指定已有账号发起 my.telegram.org 登录并申请/读取 api_id/api_hash",
+)
+async def start_telegram_apps_job(req: TelegramAppsStartRequest):
+    if not req.account_id and not req.phone:
+        raise HTTPException(status_code=400, detail="account_id 或 phone 至少提供一个")
+    return await TelegramAppsHelper.start_job(
+        account_id=req.account_id,
+        phone=req.phone,
+        auto_read_code=req.auto_read_code,
+        app_title=req.app_title,
+        app_shortname=req.app_shortname,
+        apply_to_config=req.apply_to_config,
+    )
+
+
+@router.post(
+    "/vault/apps/submit-code",
+    response_model=TelegramAppsJobResponse,
+    summary="手动提交 my.telegram.org 登录验证码并继续申请流程",
+)
+async def submit_telegram_apps_code(req: TelegramAppsSubmitCodeRequest):
+    return await TelegramAppsHelper.submit_code(
+        job_id=req.job_id,
+        code=req.code,
+        apply_to_config=req.apply_to_config,
+    )
+
+
+@router.get(
+    "/vault/apps/jobs",
+    response_model=TelegramAppsJobListResponse,
+    summary="列出开发者凭证申请任务",
+)
+async def list_telegram_apps_jobs():
+    manager = TelegramAppsJobManager.get_instance()
+    return TelegramAppsJobListResponse(
+        jobs=[manager.to_response(job) for job in manager.list_jobs()]
+    )
+
+
+@router.get(
+    "/vault/apps/jobs/{job_id}",
+    response_model=TelegramAppsJobResponse,
+    summary="查询指定开发者凭证申请任务状态",
+)
+async def get_telegram_apps_job(job_id: str):
+    manager = TelegramAppsJobManager.get_instance()
+    job = manager.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Apps job not found")
+    return manager.to_response(job)
+
+
+@router.post(
+    "/vault/apps/apply",
+    response_model=ApplyVaultCredentialsResponse,
+    summary="将某次申请任务得到的专属 api_id/api_hash 写入全局配置",
+)
+async def apply_telegram_apps_credentials(req: TelegramAppsApplyRequest):
+    manager = TelegramAppsJobManager.get_instance()
+    job = manager.get_job(req.job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Apps job not found")
+    if not job.get("api_id") or not job.get("api_hash"):
+        raise HTTPException(status_code=400, detail="Job has no api_id/api_hash yet")
+    result = AccountVaultService.apply_raw_credentials(
+        int(job["api_id"]),
+        str(job["api_hash"]),
+        set_mode_custom=req.set_mode_custom,
+    )
+    manager.update(req.job_id, applied_to_config=True)
+    result.account_id = job.get("account_id")
+    return result
