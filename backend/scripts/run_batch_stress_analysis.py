@@ -45,6 +45,7 @@ REASON_RULES: List[Tuple[str, Tuple[str, ...]]] = [
     ("PHONE_NUMBER_BANNED", ("PHONE_NUMBER_BANNED", "LOCAL_BANNED", "PHONE_PREAUDIT_BANNED")),
     ("SENT_CODE_TYPE_APP", ("SENT_CODE_TYPE_APP", "SentCodeTypeApp")),
     ("NO_NUMBERS", ("NO_NUMBERS", "noNumber", "no_number", "NO_NUMBER")),
+    ("NO_BALANCE", ("NO_BALANCE", "余额不足")),
     ("FLOOD_WAIT", ("FLOOD_WAIT",)),
     ("EARLY_CANCEL_DENIED", ("EARLY_CANCEL_DENIED", "EARLY_CANCEL")),
     ("WRONG_CODE", ("WRONG_CODE",)),
@@ -290,6 +291,7 @@ def render_report(run: Dict[str, Any]) -> str:
         "PHONE_NUMBER_BANNED",
         "PRECHECK_PHONE_ALREADY_REGISTERED",
         "NO_NUMBERS",
+        "NO_BALANCE",
         "FLOOD_WAIT",
         "EARLY_CANCEL_DENIED",
         "WRONG_CODE",
@@ -305,7 +307,7 @@ def render_report(run: Dict[str, Any]) -> str:
     extra = sorted(
         (k, v) for k, v in totals["reasons"].items() if k not in {
             "SUCCESS", "SENT_CODE_TYPE_APP", "PHONE_NUMBER_BANNED",
-            "PRECHECK_PHONE_ALREADY_REGISTERED", "NO_NUMBERS", "FLOOD_WAIT",
+            "PRECHECK_PHONE_ALREADY_REGISTERED", "NO_NUMBERS", "NO_BALANCE", "FLOOD_WAIT",
             "EARLY_CANCEL_DENIED", "WRONG_CODE", "NO_CODE", "RECAPTCHA_CHECK",
             "API_ID_PUBLISHED_FLOOD", "NETWORK_TIMEOUT", "OTHER", "UNKNOWN_EMPTY",
         }
@@ -403,7 +405,8 @@ def build_narrative(run: Dict[str, Any]) -> str:
         f"本轮退号被拒 **{denied}** 次、退款成功 **{refunded}** 次。",
         f"白号预检拦截 `PRECHECK_PHONE_ALREADY_REGISTERED`：**{pre}** 次（{pct(pre, n)}）。"
         "说明号池大量是已被注册过的二手卡；预检避免了继续烧 Push Token / sendCode，但租号费用仍可能因过早 cancel 无法退。",
-        f"`PHONE_NUMBER_BANNED` **{banned}** 次，`NO_NUMBERS` **{none}** 次，`FLOOD_WAIT` **{flood}** 次。",
+        f"`PHONE_NUMBER_BANNED` **{banned}** 次，`NO_NUMBERS` **{none}** 次，"
+        f"`NO_BALANCE` **{reasons.get('NO_BALANCE', 0)}** 次，`FLOOD_WAIT` **{flood}** 次。",
         f"Grizzly 余额从 **{run.get('balance_start')}** 变为 **{run.get('balance_end')}**，净消耗 **{run.get('balance_delta')}**。",
     ]
     by_country = run.get("by_country") or {}
