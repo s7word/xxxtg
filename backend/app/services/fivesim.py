@@ -491,7 +491,7 @@ def _parse_maybe_json(text: str) -> Any:
     stripped = (text or "").strip()
     if not stripped:
         return stripped
-    if stripped[:1] in "{[\"":
+    if stripped[:1] in "{[\"" or stripped in {"null", "true", "false"}:
         try:
             return json.loads(stripped)
         except (TypeError, ValueError):
@@ -791,6 +791,8 @@ class FiveSimService:
         except FiveSimError:
             # 无 Token 时 guest 接口仍可用
             data = await self._get("/guest/prices", params=params, authed=False, country=country_slug)
+        if data in (None, "null"):
+            return {}
         if isinstance(data, (dict, list)):
             return data
         raise FiveSimError(f"获取 5SIM 价格/库存失败: {data}")

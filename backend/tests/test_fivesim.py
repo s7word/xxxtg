@@ -211,6 +211,11 @@ class TestFiveSimClient(unittest.IsolatedAsyncioTestCase):
         self.svc.client.aclose = AsyncMock()
         await self.svc.close()
 
+    async def test_get_prices_treats_null_as_empty(self):
+        self.svc.client.get.return_value = DummyResponse("null")
+        data = await self.svc.get_prices(country="chile", product="telegram")
+        self.assertEqual(data, {})
+
     async def test_get_balance_parses_profile(self):
         self.svc.client.get.return_value = DummyResponse({
             "balance": 25.1154,
