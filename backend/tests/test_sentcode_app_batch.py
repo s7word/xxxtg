@@ -218,7 +218,7 @@ class TestBatchScheduler(unittest.IsolatedAsyncioTestCase):
         max_seen = 0
         lock = asyncio.Lock()
 
-        async def fake_run(task_id, country=None, app_type=None, proxy_override=None, set_2fa=None):
+        async def fake_run(task_id, country=None, app_type=None, proxy_override=None, set_2fa=None, **_kwargs):
             nonlocal running, max_seen
             async with lock:
                 running += 1
