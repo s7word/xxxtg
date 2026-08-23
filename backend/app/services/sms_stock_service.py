@@ -286,14 +286,19 @@ class SmsStockService:
     CACHE_TTL_SECONDS = CACHE_TTL_SECONDS
 
     @classmethod
-    def peek_cache(cls, provider: str, service: str = DEFAULT_SERVICE) -> Optional[SmsStockSnapshot]:
+    def peek_cache(
+        cls,
+        provider: str,
+        service: str = DEFAULT_SERVICE,
+        allow_stale: bool = False,
+    ) -> Optional[SmsStockSnapshot]:
         key = _cache_key(provider, service)
         hit = _CACHE.get(key)
         if not hit:
             return None
         ts, snap = hit
         age = time.time() - ts
-        if age > cls.CACHE_TTL_SECONDS:
+        if age > cls.CACHE_TTL_SECONDS and not allow_stale:
             return None
         cached = SmsStockSnapshot(
             provider=snap.provider,
@@ -324,10 +329,18 @@ class SmsStockService:
             if cached is not None:
                 return cached
 
-        if resolved == PROVIDER_VAK:
-            items = await cls._fetch_vaksms(service=service, api_key=api_key, config=config)
-        else:
-            items = await cls._fetch_grizzly(service=service, api_key=api_key, config=config)
+        try:
+            if resolved == PROVIDER_VAK:
+                items = await cls._fetch_vaksms(service=service, api_key=api_key, config=config)
+            else:
+                items = await cls._fetch_grizzly(service=service, api_key=api_key, config=config)
+        except Exception as exc:
+            stale = cls.peek_cache(resolved, service, allow_stale=True)
+            if stale is not None:
+                stale.message = f"接码平台刷新失败，返回上次有货快照: {exc}"
+                logger.warning("库存发现失败，回落缓存 provider=%s: %s", resolved, exc)
+                return stale
+            raise
 
         now = time.time()
         total_stock = sum(int(item.get("stock") or 0) for item in items)

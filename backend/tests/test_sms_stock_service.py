@@ -195,6 +195,20 @@ class TestSmsStockServiceCache(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(first.total_stock, sum(item["stock"] for item in items))
         self.assertEqual(first.items[0]["code"], "cl")
 
+    async def test_refresh_failure_falls_back_to_stale_cache(self):
+        items = enrich_stock_rows(
+            parse_grizzly_price_payload({"151": {"tg": {"cost": 0.26, "count": 10}}}),
+            "grizzlysms",
+        )
+        fetch = AsyncMock(side_effect=[items, RuntimeError("NO_KEY")])
+        with patch.object(SmsStockService, "_fetch_grizzly", fetch):
+            first = await SmsStockService.get_available_countries(provider="grizzlysms", refresh=True)
+            failed = await SmsStockService.get_available_countries(provider="grizzlysms", refresh=True)
+        self.assertEqual(first.total_countries, 1)
+        self.assertTrue(failed.cached)
+        self.assertEqual(failed.total_countries, 1)
+        self.assertIn("NO_KEY", failed.message)
+
 
 class TestAvailableCountriesApi(unittest.TestCase):
     @classmethod

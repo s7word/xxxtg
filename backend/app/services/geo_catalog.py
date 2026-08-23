@@ -67,6 +67,7 @@ _ISO2_CORE: Dict[str, Tuple[str, str, str, str, str, str, int, str]] = {
     "nl": ("NLD", "Netherlands", "荷兰", "31", "nl", "nl-nl", 3600, "eu"),
     "be": ("BEL", "Belgium", "比利时", "32", "nl", "nl-be", 3600, "eu"),
     "lu": ("LUX", "Luxembourg", "卢森堡", "352", "fr", "fr-lu", 3600, "eu"),
+    "mc": ("MCO", "Monaco", "摩纳哥", "377", "fr", "fr-mc", 3600, "eu"),
     "at": ("AUT", "Austria", "奥地利", "43", "de", "de-at", 3600, "eu"),
     "ch": ("CHE", "Switzerland", "瑞士", "41", "de", "de-ch", 3600, "eu"),
     "se": ("SWE", "Sweden", "瑞典", "46", "sv", "sv-se", 3600, "eu"),
@@ -494,6 +495,8 @@ SMSACTIVATE_ID_TO_ISO2: Dict[int, str] = {
     # 与现有权威反向表保持一致的特殊项（覆盖 SMS-Activate 默认）
     129: "ge", 130: "gr", 133: "is", 143: "sk", 145: "tj", 147: "bh", 150: "am",
     163: "fi",
+    # 官方 SMS-Activate 别名（与现有权威 ID 并存，仅用于反向展示）
+    132: "is", 141: "sk",
 }
 
 
