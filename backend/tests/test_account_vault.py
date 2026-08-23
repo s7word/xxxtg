@@ -105,6 +105,12 @@ class TestLodUserVaultScan(unittest.TestCase):
         self.assertTrue(sample.has_json)
         self.assertIn("samsung", (sample.device_model or "").lower())
         self.assertTrue(sample.register_time)
+        self.assertTrue(sample.can_request_new_api_credentials)
+        self.assertTrue(sample.session_missing_for_auto_code)
+        self.assertIn(".session", sample.apps_apply_hint)
+        self.assertGreaterEqual(listing.published_api_id_count, 3)
+        self.assertTrue(listing.guidance)
+        self.assertIn("custom_api_id", listing.guidance)
 
     def test_get_account_roundtrip(self):
         listing = AccountVaultService.list_accounts()

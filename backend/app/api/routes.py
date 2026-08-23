@@ -25,6 +25,7 @@ from backend.app.services.device_profile import DeviceProfileManager
 from backend.app.services.vaksms import VakSmsService
 from backend.app.services.antisafety import AntiSafetyService
 from backend.app.services.reghelp import RegHelpService
+from backend.app.services.attestation_urls import sanitize_provider_urls
 from backend.app.services.proxyseller import ProxySellerService
 from backend.app.services.registrar import RegistrationTaskManager, RegistrationOrchestrator
 from backend.app.services.account_vault import AccountVaultService
@@ -83,8 +84,14 @@ async def test_antisafety(payload: Dict[str, Any] = None):
 
     svc = AntiSafetyService(
         api_key,
-        api_bases=(payload or {}).get("base_urls") or config.antisafety_base_urls,
-        reporting_bases=(payload or {}).get("reporting_base_urls") or config.antisafety_reporting_base_urls,
+        api_bases=sanitize_provider_urls(
+            (payload or {}).get("base_urls") or config.antisafety_base_urls,
+            "antisafety",
+        ),
+        reporting_bases=sanitize_provider_urls(
+            (payload or {}).get("reporting_base_urls") or config.antisafety_reporting_base_urls,
+            "antisafety_reporting",
+        ),
         connect_timeout=config.antisafety_connect_timeout,
         total_timeout=config.antisafety_total_timeout
     )
@@ -115,7 +122,10 @@ async def test_antisafety(payload: Dict[str, Any] = None):
 async def test_reghelp(payload: Dict[str, Any] = None):
     config = ConfigManager.get_instance().config
     api_key = (payload or {}).get("api_key") or config.reghelp_api_key
-    base_urls = (payload or {}).get("base_urls") or config.reghelp_base_urls
+    base_urls = sanitize_provider_urls(
+        (payload or {}).get("base_urls") or config.reghelp_base_urls,
+        "reghelp",
+    )
 
     svc = RegHelpService(
         api_key,

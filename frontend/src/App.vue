@@ -267,8 +267,9 @@
             </div>
 
             <div>
-              <label class="block text-[11px] text-zinc-400 mb-1">Key API 候选网关地址 (每行一个，按序容灾切换)</label>
+              <label class="block text-[11px] text-zinc-400 mb-1">Key API 候选网关地址 (仅 reghelp.net，勿填入 antisafety.net)</label>
               <textarea v-model="reghelpBaseUrlsText" rows="2" class="input-field font-mono text-xs" placeholder="https://api.reghelp.net"></textarea>
+              <p class="text-[11px] text-zinc-500 mt-1">与 AntiSafety 密钥/地址严格隔离：REGHelp 的 Key 只能打 api.reghelp.net。</p>
             </div>
 
             <div class="grid grid-cols-2 gap-2">
@@ -460,8 +461,10 @@
             <div class="p-3 rounded-lg bg-amber-950/30 border border-amber-800/50 text-xs text-amber-200 leading-relaxed">
               官方内置 api_id (如 4 / 6 / 21724) 早年已被公开泄露，Telegram 服务端对其 auth.sendCode 请求执行近乎无差别拦截：
               若本次未附带合法 Push Token，几乎必然返回 <code class="font-mono">API_ID_PUBLISHED_FLOOD</code>。
-              可在下方申请并填入自建开发者凭证 (<a href="https://my.telegram.org/apps" target="_blank" class="underline text-amber-100">my.telegram.org/apps</a>)，
-              系统将按策略自动或强制使用该凭证规避该限制。
+              可在「🔐 凭证库 / 开发者 API」用已有账号申请，或在下方直接填入自建
+              <code class="font-mono">custom_api_id</code> / <code class="font-mono">custom_api_hash</code>
+              (<a href="https://my.telegram.org/apps" target="_blank" class="underline text-amber-100">my.telegram.org/apps</a>)。
+              REGHelp 与 AntiSafety 是两套独立服务，密钥和网关地址不能交叉混用。
             </div>
 
             <div>
@@ -499,8 +502,9 @@
 
               <div class="space-y-3">
                 <div>
-                  <label class="block text-[11px] text-zinc-400 mb-1">AntiSafety Push Token 网关候选地址 (每行一个，按序容灾切换)</label>
+                  <label class="block text-[11px] text-zinc-400 mb-1">AntiSafety Push Token 网关候选地址 (仅 antisafety.net，勿填入 reghelp.net)</label>
                   <textarea v-model="antisafetyBaseUrlsText" rows="2" class="input-field font-mono text-xs" placeholder="https://api.antisafety.net"></textarea>
+                  <p class="text-[11px] text-zinc-500 mt-1">保存时会自动剔除交叉污染地址，避免出现 Invalid API key。</p>
                 </div>
                 <div class="grid grid-cols-2 gap-2">
                   <div>
@@ -526,10 +530,12 @@
           <div>
             <h2 class="text-lg font-bold text-white">🔐 已有账户凭证库 & 开发者 API 凭证管理</h2>
             <p class="text-xs text-zinc-400">
-              扫描 <code class="text-zinc-200">lod_user/</code> 与 <code class="text-zinc-200">data/sessions/</code>，
-              一键应用账号内已有 api_id/api_hash，或通过官方
-              <a href="https://my.telegram.org/apps" target="_blank" class="underline text-blue-300">my.telegram.org/apps</a>
-              为指定 session 账号申请专属开发者凭证。
+              扫描 <code class="text-zinc-200">lod_user/</code> 与 <code class="text-zinc-200">data/sessions/</code>。
+              现存账号若带有 <code class="text-zinc-200">app_id=4</code>，那是公开泄露官方 ID，不能直接当专属凭证。
+              申请全新 api_id/api_hash：放入同名 <code class="text-zinc-200">.session</code>，或在本页发起
+              <a href="https://my.telegram.org/apps" target="_blank" class="underline text-blue-300">my.telegram.org</a>
+              登录后于 Telegram 客户端查看 Web 登录码并提交；也可直接在「参数拓扑」填写已有的
+              <code class="text-zinc-200">custom_api_id</code> / <code class="text-zinc-200">custom_api_hash</code>。
             </p>
           </div>
           <button @click="fetchVaultAccounts" :disabled="vaultLoading" class="btn-secondary text-xs">
@@ -562,6 +568,10 @@
               公开泄露官方 ID（如 4 / 6 / 21724）缺少 Push Token 时容易触发 API_ID_PUBLISHED_FLOOD。
               优先使用 my.telegram.org 申请的专属凭证，并将策略设为 custom / auto。
             </div>
+            <div v-if="isPublishedCustomApiId" class="p-2.5 rounded-lg bg-red-950/40 border border-red-800/60 text-[11px] text-red-200 leading-relaxed">
+              当前 custom_api_id={{ config.custom_api_id }} 仍是公开泄露 ID，写入全局配置不会规避 FLOOD。
+              请申请专属新 ID，或填入真正的自建凭证。
+            </div>
           </div>
 
           <!-- 开发者凭证申请与管理 -->
@@ -574,9 +584,18 @@
               <span v-if="appsJob" :class="getStatusBadgeClass(appsJob.status)">{{ appsJob.status }}</span>
             </div>
 
+            <div class="p-3 rounded-lg bg-blue-950/20 border border-blue-800/40 text-[11px] text-blue-100 leading-relaxed space-y-1">
+              <div>1. 将 <code class="text-blue-50">918296691905.session</code> 这类与 JSON 同名的 Telethon 快照放到同一目录，可自动读取 Web 登录码。</div>
+              <div>2. 若只有 JSON：在本页发起申请后，到该账号的 Telegram 客户端查看 my.telegram.org 登录码并手动提交。</div>
+              <div>3. 申请成功后点「将本次申请结果写入 config.json」，或自行在参数拓扑填入已有自建凭证。</div>
+            </div>
+            <div v-if="selectedVaultAccount?.apps_apply_hint" class="p-2.5 rounded-lg bg-zinc-900 border border-zinc-800 text-[11px] text-zinc-400 leading-relaxed">
+              {{ selectedVaultAccount.apps_apply_hint }}
+            </div>
+
             <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div>
-                <label class="block text-xs font-medium text-zinc-400 mb-1">选择已有 session 账号</label>
+                <label class="block text-xs font-medium text-zinc-400 mb-1">选择已有账号（JSON 或 session）</label>
                 <select v-model="vaultSelectedId" class="input-field font-mono text-xs">
                   <option value="">请选择账号...</option>
                   <option v-for="acc in vaultAccounts" :key="acc.account_id" :value="acc.account_id">
@@ -643,6 +662,8 @@
             </div>
             <div class="text-[11px] text-zinc-500 font-mono">
               {{ vaultMeta.lod_user_dir }} · {{ vaultMeta.sessions_dir }}
+              <span v-if="vaultMeta.published_api_id_count"> · 泄露 ID {{ vaultMeta.published_api_id_count }}</span>
+              <span v-if="vaultMeta.missing_session_count"> · 缺 session {{ vaultMeta.missing_session_count }}</span>
             </div>
           </div>
 
@@ -690,12 +711,14 @@
                   </td>
                   <td class="space-x-2 whitespace-nowrap">
                     <button
+                      v-if="acc.has_usable_custom_credentials"
                       @click.stop="applyVaultCredentials(acc)"
-                      :disabled="!acc.app_id || !acc.app_hash || vaultApplyingId === acc.account_id"
+                      :disabled="vaultApplyingId === acc.account_id"
                       class="text-blue-400 hover:text-blue-300"
                     >
-                      {{ vaultApplyingId === acc.account_id ? '写入中...' : '一键应用内置凭证' }}
+                      {{ vaultApplyingId === acc.account_id ? '写入中...' : '一键应用专属凭证' }}
                     </button>
+                    <span v-else class="text-zinc-600">请申请新 API</span>
                     <button @click.stop="selectAndStartApps(acc)" class="text-cyan-400 hover:text-cyan-300">
                       申请专属 API
                     </button>
@@ -705,6 +728,9 @@
             </table>
           </div>
 
+          <div v-if="vaultGuidance" class="p-3 rounded-lg bg-amber-950/20 border border-amber-800/40 text-[11px] text-amber-100 leading-relaxed">
+            {{ vaultGuidance }}
+          </div>
           <div v-if="vaultApplyResult" :class="['p-3 rounded-lg text-xs', vaultApplyResult.success ? 'bg-green-950/40 border border-green-800/60 text-green-300' : 'bg-red-950/40 border border-red-800/60 text-red-300']">
             <div>{{ vaultApplyResult.message }}</div>
             <div v-if="vaultApplyResult.warning" class="mt-1 text-amber-300">{{ vaultApplyResult.warning }}</div>
@@ -815,7 +841,7 @@ adb shell getprop ro.build.fingerprint   # 官方完整签名指纹
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted, nextTick } from 'vue'
 
 const tabs = [
   { id: 'console', name: '状态机编排与控制台', icon: '⚡' },
@@ -874,19 +900,23 @@ const syncBaseUrlsTextFromConfig = () => {
   reghelpBaseUrlsText.value = (config.reghelp_base_urls || []).join('\n')
 }
 
+const isCrossProviderUrl = (url, provider) => {
+  const host = String(url || '').toLowerCase()
+  if (provider === 'reghelp') return host.includes('antisafety.net')
+  return host.includes('reghelp.net')
+}
+
 const applyBaseUrlsTextToConfig = () => {
-  config.antisafety_base_urls = antisafetyBaseUrlsText.value
-    .split('\n')
-    .map(s => s.trim())
-    .filter(Boolean)
-  config.antisafety_reporting_base_urls = antisafetyReportingBaseUrlsText.value
-    .split('\n')
-    .map(s => s.trim())
-    .filter(Boolean)
-  config.reghelp_base_urls = reghelpBaseUrlsText.value
-    .split('\n')
-    .map(s => s.trim())
-    .filter(Boolean)
+  const parseLines = (text) => text.split('\n').map(s => s.trim()).filter(Boolean)
+  config.antisafety_base_urls = parseLines(antisafetyBaseUrlsText.value)
+    .filter(url => !isCrossProviderUrl(url, 'antisafety'))
+  config.antisafety_reporting_base_urls = parseLines(antisafetyReportingBaseUrlsText.value)
+    .filter(url => !isCrossProviderUrl(url, 'antisafety'))
+  config.reghelp_base_urls = parseLines(reghelpBaseUrlsText.value)
+    .filter(url => !isCrossProviderUrl(url, 'reghelp'))
+  if (!config.antisafety_base_urls.length) config.antisafety_base_urls = ['https://api.antisafety.net']
+  if (!config.antisafety_reporting_base_urls.length) config.antisafety_reporting_base_urls = ['https://reporting.antisafety.net']
+  if (!config.reghelp_base_urls.length) config.reghelp_base_urls = ['https://api.reghelp.net']
 }
 
 const form = reactive({
@@ -920,10 +950,14 @@ const dbStats = ref({ total_count: 0, is_loaded: false, sample_models: [] })
 
 const vaultLoading = ref(false)
 const vaultAccounts = ref([])
-const vaultMeta = reactive({ lod_user_dir: '', sessions_dir: '' })
+const vaultMeta = reactive({ lod_user_dir: '', sessions_dir: '', published_api_id_count: 0, missing_session_count: 0 })
 const vaultSelectedId = ref('')
 const vaultApplyingId = ref('')
 const vaultApplyResult = ref(null)
+const vaultGuidance = ref('')
+const PUBLISHED_API_IDS = new Set([4, 6, 8, 10, 2040, 2100, 17349, 21724])
+const isPublishedCustomApiId = computed(() => PUBLISHED_API_IDS.has(Number(config.custom_api_id)))
+const selectedVaultAccount = computed(() => vaultAccounts.value.find(acc => acc.account_id === vaultSelectedId.value) || null)
 const appsStarting = ref(false)
 const appsJob = ref(null)
 const appsShortname = ref('')
@@ -1175,6 +1209,9 @@ const fetchVaultAccounts = async () => {
     vaultAccounts.value = data.accounts || []
     vaultMeta.lod_user_dir = data.lod_user_dir || ''
     vaultMeta.sessions_dir = data.sessions_dir || ''
+    vaultMeta.published_api_id_count = data.published_api_id_count || 0
+    vaultMeta.missing_session_count = data.missing_session_count || 0
+    vaultGuidance.value = data.guidance || ''
     if (data.applied_api_id) config.custom_api_id = data.applied_api_id
     if (data.applied_api_hash) config.custom_api_hash = data.applied_api_hash
     if (data.api_credential_mode) config.api_credential_mode = data.api_credential_mode

@@ -1,5 +1,12 @@
 from typing import Optional, Dict, Any, List
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+from backend.app.services.attestation_urls import (
+    DEFAULT_ANTISAFETY_BASES,
+    DEFAULT_ANTISAFETY_REPORTING_BASES,
+    DEFAULT_REGHELP_BASES,
+    sanitize_provider_urls,
+)
 
 class EgressRelayConfig(BaseModel):
     """出口中继与网络传输网关配置 (Multipath Egress Relay Gateway)"""
@@ -83,11 +90,11 @@ class AppConfigModel(BaseModel):
         description="自建开发者 API Hash，与 custom_api_id 配套使用"
     )
     antisafety_base_urls: List[str] = Field(
-        default=["https://api.antisafety.net"],
-        description="AntiSafety Push Token 网关候选地址列表 (按序尝试并自动容灾切换)"
+        default_factory=lambda: list(DEFAULT_ANTISAFETY_BASES),
+        description="AntiSafety Push Token 网关候选地址列表 (仅 antisafety.net，禁止混入 REGHelp 地址)"
     )
     antisafety_reporting_base_urls: List[str] = Field(
-        default=["https://reporting.antisafety.net"],
+        default_factory=lambda: list(DEFAULT_ANTISAFETY_REPORTING_BASES),
         description="AntiSafety 历史安全审计 / 结果上报网关候选地址列表"
     )
     antisafety_connect_timeout: float = Field(
@@ -110,8 +117,8 @@ class AppConfigModel(BaseModel):
                      "(参考开源客户端 https://github.com/REGHELPNET/reghelp_client)"
     )
     reghelp_base_urls: List[str] = Field(
-        default=["https://api.reghelp.net"],
-        description="REGHelp Key API 候选网关地址列表 (按序尝试并自动容灾切换)"
+        default_factory=lambda: list(DEFAULT_REGHELP_BASES),
+        description="REGHelp Key API 候选网关地址列表 (仅 reghelp.net，禁止混入 AntiSafety 地址)"
     )
     reghelp_enabled: bool = Field(
         default=True,
@@ -134,6 +141,21 @@ class AppConfigModel(BaseModel):
             "reghelp_only (仅使用 REGHelp) / antisafety_only (仅使用 AntiSafety)"
         )
     )
+
+    @field_validator("antisafety_base_urls", mode="before")
+    @classmethod
+    def _isolate_antisafety_base_urls(cls, value):
+        return sanitize_provider_urls(value, "antisafety", DEFAULT_ANTISAFETY_BASES)
+
+    @field_validator("antisafety_reporting_base_urls", mode="before")
+    @classmethod
+    def _isolate_antisafety_reporting_urls(cls, value):
+        return sanitize_provider_urls(value, "antisafety_reporting", DEFAULT_ANTISAFETY_REPORTING_BASES)
+
+    @field_validator("reghelp_base_urls", mode="before")
+    @classmethod
+    def _isolate_reghelp_base_urls(cls, value):
+        return sanitize_provider_urls(value, "reghelp", DEFAULT_REGHELP_BASES)
 
 
 class DeviceProfileSchema(BaseModel):
@@ -232,6 +254,18 @@ class VaultAccountItem(BaseModel):
     has_session: bool = Field(default=False, description="是否存在可用的 Telethon .session 快照")
     has_json: bool = Field(default=False, description="是否存在 JSON 元数据")
     has_2fa: bool = Field(default=False, description="元数据是否标记了二级密码")
+    can_request_new_api_credentials: bool = Field(
+        default=False,
+        description="是否具备向 my.telegram.org 申请专属 api_id/api_hash 的基本条件 (至少有手机号)"
+    )
+    session_missing_for_auto_code: bool = Field(
+        default=True,
+        description="是否因缺少同名 .session 而无法自动读取 my.telegram.org 登录码"
+    )
+    apps_apply_hint: Optional[str] = Field(
+        default=None,
+        description="针对该账号申请/应用开发者凭证的操作提示"
+    )
     json_path: Optional[str] = Field(default=None, description="相对仓库的 JSON 路径")
     session_path: Optional[str] = Field(default=None, description="相对仓库的 .session 路径")
     filename: Optional[str] = Field(default=None)
@@ -246,6 +280,12 @@ class VaultAccountListResponse(BaseModel):
     applied_api_id: Optional[int] = Field(default=None, description="当前全局配置中的 custom_api_id")
     applied_api_hash: Optional[str] = Field(default=None, description="当前全局配置中的 custom_api_hash")
     api_credential_mode: Optional[str] = None
+    published_api_id_count: int = 0
+    missing_session_count: int = 0
+    guidance: Optional[str] = Field(
+        default=None,
+        description="如何用 lod_user 已有账号申请全新 api_id/api_hash 的操作说明"
+    )
 
 
 class ApplyVaultCredentialsRequest(BaseModel):

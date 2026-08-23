@@ -570,6 +570,15 @@ class TelegramAppsHelper:
             app_shortname_pref=app_shortname,
         )
         await manager.append_log(job_id, f"已创建申请任务，目标账号 {account.phone}")
+        if not account.has_session:
+            stem = Path(account.filename or (account.phone or "phone")).stem
+            await manager.append_log(
+                job_id,
+                f"⚠️ 该账号缺少同名 .session。自动读取 my.telegram.org 登录码需要 Telethon session："
+                f"请将 `{stem}.session` 放到与 JSON 相同的目录；否则请在 Telegram 客户端查看 Web 登录码后在控制台提交。",
+            )
+        elif account.apps_apply_hint:
+            await manager.append_log(job_id, account.apps_apply_hint)
         asyncio.create_task(
             cls.run_job(
                 job_id,

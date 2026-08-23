@@ -2,6 +2,10 @@ import logging
 from typing import Optional, Dict, Any, List, Tuple
 
 from backend.app.services.antisafety import AntiSafetyService
+from backend.app.services.attestation_urls import (
+    has_valid_api_key,
+    sanitize_provider_urls,
+)
 from backend.app.services.reghelp import RegHelpService
 
 logger = logging.getLogger("AttestationGatewayService")
@@ -11,8 +15,15 @@ class AttestationGatewayService:
     """统一 Attestation / Push 凭证网关高可用调度器 (Multi-Provider Attestation Gateway)
 
     在 REGHelp 与 AntiSafety 两个相互独立的凭证提供源之间，按 `config.attestation_provider_mode`
-    策略自动决定主备顺序；任一提供源未启用、鉴权失败、超时或网络不可达时，自动切换到下一候选提供源，
-    从而在不牺牲成功率的前提下获得高可用的 Push Token 获取能力。
+    策略自动决定主备顺序；任一提供源未启用、鉴权失败、超时或网络不可达时，自动切换到下一候选提供源。
+
+    密钥与网关地址严格隔离，禁止交叉混用：
+        - reghelp    -> config.reghelp_api_key    + config.reghelp_base_urls
+        - antisafety -> config.antisafety_api_key + config.antisafety_base_urls
+
+    当 `attestation_provider_mode == "reghelp_primary"` 时，优先使用带有有效
+    `reghelp_api_key` 的 REGHelpService；AntiSafety 仅作为备选，且不会把
+    api.reghelp.net 放进 AntiSafety 的候选列表。
 
     支持的调度策略 (`attestation_provider_mode`)：
         - reghelp_primary   REGHelp 优先，AntiSafety 备选 (默认推荐)
@@ -29,21 +40,36 @@ class AttestationGatewayService:
         self.reghelp: Optional[RegHelpService] = None
         self.antisafety: Optional[AntiSafetyService] = None
 
-        if getattr(config, "reghelp_enabled", True) and getattr(config, "reghelp_api_key", None):
+        reghelp_key = getattr(config, "reghelp_api_key", None)
+        antisafety_key = getattr(config, "antisafety_api_key", None)
+        reghelp_bases = sanitize_provider_urls(
+            getattr(config, "reghelp_base_urls", None),
+            "reghelp",
+        )
+        antisafety_bases = sanitize_provider_urls(
+            getattr(config, "antisafety_base_urls", None),
+            "antisafety",
+        )
+        reporting_bases = sanitize_provider_urls(
+            getattr(config, "antisafety_reporting_base_urls", None),
+            "antisafety_reporting",
+        )
+
+        if getattr(config, "reghelp_enabled", True) and has_valid_api_key(reghelp_key):
             self.reghelp = RegHelpService(
-                config.reghelp_api_key,
+                reghelp_key,
                 proxy=proxy,
-                api_bases=getattr(config, "reghelp_base_urls", None),
+                api_bases=reghelp_bases,
                 connect_timeout=getattr(config, "reghelp_connect_timeout", 6.0),
                 total_timeout=getattr(config, "reghelp_total_timeout", 20.0)
             )
 
-        if getattr(config, "antisafety_enabled", True) and getattr(config, "antisafety_api_key", None):
+        if getattr(config, "antisafety_enabled", True) and has_valid_api_key(antisafety_key):
             self.antisafety = AntiSafetyService(
-                config.antisafety_api_key,
+                antisafety_key,
                 proxy=proxy,
-                api_bases=getattr(config, "antisafety_base_urls", None),
-                reporting_bases=getattr(config, "antisafety_reporting_base_urls", None),
+                api_bases=antisafety_bases,
+                reporting_bases=reporting_bases,
                 connect_timeout=getattr(config, "antisafety_connect_timeout", 6.0),
                 total_timeout=getattr(config, "antisafety_total_timeout", 20.0)
             )
@@ -91,21 +117,33 @@ class AttestationGatewayService:
         log_callback=None
     ) -> Tuple[Optional[str], Optional[str]]:
         """按优先级策略依次尝试各 Attestation 提供源，返回 (token, 生效提供源名称)"""
+        mode = getattr(self.config, "attestation_provider_mode", "reghelp_primary") or "reghelp_primary"
         order = self._provider_order()
         if not order:
             if log_callback:
-                await log_callback("⚠️ 未启用任何 Attestation / Push 凭证提供源，将直接以标准信道模式继续")
+                hint = ""
+                if mode.startswith("reghelp") and not self.reghelp:
+                    hint = "（reghelp_primary/only 已配置，但缺少有效 reghelp_api_key）"
+                await log_callback(f"⚠️ 未启用任何 Attestation / Push 凭证提供源{hint}，将直接以标准信道模式继续")
             return None, None
 
         if log_callback:
             provider_labels = {"reghelp": "REGHelp", "antisafety": "AntiSafety"}
+            if mode.startswith("reghelp") and not self.reghelp:
+                await log_callback(
+                    "⚠️ attestation_provider_mode 优先 REGHelp，但未配置有效 reghelp_api_key，"
+                    "已跳过 REGHelp，仅尝试其它已启用提供源"
+                )
             await log_callback(
                 f"Attestation 高可用调度顺序: {' → '.join(provider_labels.get(n, n) for n, _ in order)}"
             )
 
         errors = []
         for name, svc in order:
+            bases = ",".join(getattr(svc, "api_bases", []) or [])
             try:
+                if log_callback:
+                    await log_callback(f"正在使用独立提供源 {name} (候选网关: {bases}) 申请 Push Token...")
                 if name == self.PROVIDER_REGHELP:
                     token = await svc.get_push_token(profile, log_callback=log_callback)
                 else:

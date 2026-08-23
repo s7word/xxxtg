@@ -57,6 +57,13 @@ class ConfigManager:
                     data = json.load(f)
                     self._config = AppConfigModel(**data)
                     logger.info("已从持久化存储区载入系统配置快照")
+                    # 旧配置可能把 api.reghelp.net 混进 antisafety_base_urls（或反过来），
+                    # Pydantic 校验器会隔离地址；若发生清洗则回写，避免下次仍读到污染列表。
+                    if self._persist_if_urls_sanitized(data, self._config):
+                        logger.warning(
+                            "已自动清洗交叉污染的 Attestation 网关地址："
+                            "AntiSafety 仅保留 antisafety.net，REGHelp 仅保留 reghelp.net"
+                        )
                     return self._config
             except Exception as e:
                 logger.warning(f"读取本地配置异常，正在回退至初始默认配置: {e}")
@@ -64,6 +71,25 @@ class ConfigManager:
         self._config = AppConfigModel()
         self.save_config(self._config)
         return self._config
+
+    @staticmethod
+    def _persist_if_urls_sanitized(raw: Dict[str, Any], config: AppConfigModel) -> bool:
+        keys = ("antisafety_base_urls", "antisafety_reporting_base_urls", "reghelp_base_urls")
+        changed = False
+        for key in keys:
+            before = [str(item).rstrip("/") for item in (raw.get(key) or []) if item]
+            after = [str(item).rstrip("/") for item in (getattr(config, key, None) or [])]
+            if before != after:
+                changed = True
+                break
+        if changed:
+            try:
+                with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+                    json.dump(config.model_dump(), f, ensure_ascii=False, indent=2)
+            except Exception as exc:
+                logger.warning("回写清洗后的网关地址失败: %s", exc)
+                return False
+        return changed
 
     def save_config(self, new_config: AppConfigModel) -> AppConfigModel:
         self._config = new_config

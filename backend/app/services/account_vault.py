@@ -27,6 +27,45 @@ logger = logging.getLogger("AccountVault")
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
+VAULT_GUIDANCE = (
+    "lod_user 中现存账号记录的 app_id=4 属于 Telegram 官方公开泄露 ID，"
+    "不能直接当作专属开发者凭证使用（缺少合法 Push Token 时会触发 API_ID_PUBLISHED_FLOOD）。"
+    "若要用这些已有账号申请全新 api_id / api_hash："
+    "1) 将与 JSON 同名的 .session 文件放到同一目录，控制台可尝试自动读取 my.telegram.org 登录码；"
+    "2) 若没有 .session，可在前端「🔐 凭证库 / 开发者 API」发起申请，然后在该账号的 Telegram 客户端"
+    "查看 Web 登录码并在本页提交；"
+    "3) 若已有自建 api_id/api_hash（曾在 my.telegram.org 申请过），直接在「参数拓扑」填写 "
+    "custom_api_id / custom_api_hash，并将 api_credential_mode 设为 auto 或 custom。"
+)
+
+
+def build_apps_apply_hint(account: Dict[str, Any]) -> str:
+    phone = account.get("phone") or account.get("filename") or "该账号"
+    has_session = bool(account.get("has_session"))
+    is_published = bool(account.get("is_published_api_id"))
+    app_id = account.get("app_id")
+    parts = []
+    if is_published:
+        parts.append(
+            f"记录中的 api_id={app_id} 属于公开泄露官方 ID，不能作为专属开发者凭证写入全局配置。"
+        )
+    if has_session:
+        parts.append(
+            f"{phone} 已检测到同名 .session，可在「🔐 凭证库 / 开发者 API」发起 my.telegram.org 登录，"
+            "系统将尝试自动读取官方账号 777000 的 Web 登录码；失败时仍可手动提交。"
+        )
+    else:
+        stem = Path(account.get("filename") or "phone.json").stem
+        parts.append(
+            f"{phone} 仅有 JSON、缺少同名 .session。自动读取登录码需要 Telethon session："
+            f"请将 `{stem}.session` 放到与 JSON 相同的目录，或在控制台发起申请后于 Telegram 客户端"
+            "查看 Web 登录码并手动提交。"
+        )
+    parts.append(
+        "也可直接在「参数拓扑」填入已有的自建 custom_api_id / custom_api_hash。"
+    )
+    return "".join(parts)
+
 
 def _rel_to_repo(path: Optional[Path]) -> Optional[str]:
     if path is None:
@@ -263,6 +302,14 @@ class AccountVaultService:
                     fields["register_time"] = readable
                     fields["register_time_unix"] = unix
 
+                has_session = bool(session_path and session_path.exists())
+                hint_payload = {
+                    "phone": fields.get("phone"),
+                    "filename": json_path.name,
+                    "has_session": has_session,
+                    "is_published_api_id": is_published,
+                    "app_id": app_id,
+                }
                 item = VaultAccountItem(
                     account_id=account_id,
                     source=source,
@@ -280,9 +327,12 @@ class AccountVaultService:
                     app_hash=app_hash,
                     is_published_api_id=is_published,
                     has_usable_custom_credentials=has_usable,
-                    has_session=bool(session_path and session_path.exists()),
+                    has_session=has_session,
                     has_json=True,
                     has_2fa=bool(fields.get("has_2fa")),
+                    can_request_new_api_credentials=bool(fields.get("phone")),
+                    session_missing_for_auto_code=not has_session,
+                    apps_apply_hint=build_apps_apply_hint(hint_payload),
                     json_path=_rel_to_repo(json_path),
                     session_path=_rel_to_repo(session_path) if session_path else None,
                     filename=json_path.name,
@@ -314,6 +364,13 @@ class AccountVaultService:
                 if not readable:
                     readable, unix = _file_mtime_as_register(session_path)
 
+                hint_payload = {
+                    "phone": fields.get("phone") or session_path.stem,
+                    "filename": session_path.name,
+                    "has_session": True,
+                    "is_published_api_id": is_published,
+                    "app_id": app_id,
+                }
                 merged[account_id] = VaultAccountItem(
                     account_id=account_id,
                     source=source,
@@ -334,6 +391,9 @@ class AccountVaultService:
                     has_session=True,
                     has_json=bool(sibling_json),
                     has_2fa=bool(fields.get("has_2fa")),
+                    can_request_new_api_credentials=bool(fields.get("phone") or session_path.stem),
+                    session_missing_for_auto_code=False,
+                    apps_apply_hint=build_apps_apply_hint(hint_payload),
                     json_path=_rel_to_repo(sibling_json) if sibling_json else None,
                     session_path=_rel_to_repo(session_path),
                     filename=session_path.name,
@@ -358,6 +418,9 @@ class AccountVaultService:
             applied_api_id=config.custom_api_id,
             applied_api_hash=config.custom_api_hash,
             api_credential_mode=config.api_credential_mode,
+            published_api_id_count=sum(1 for acc in accounts if acc.is_published_api_id),
+            missing_session_count=sum(1 for acc in accounts if acc.session_missing_for_auto_code),
+            guidance=VAULT_GUIDANCE,
         )
 
     @classmethod
@@ -414,8 +477,10 @@ class AccountVaultService:
         if account.is_published_api_id:
             warning = (
                 f"该账号记录的 api_id={account.app_id} 属于已知公开泄露官方 ID，"
-                "缺少合法 Push Token 时仍可能触发 API_ID_PUBLISHED_FLOOD。"
-                "建议改用 my.telegram.org 申请专属开发者凭证。"
+                "写入 custom_api_id 后仍会触发 API_ID_PUBLISHED_FLOOD。"
+                "请改用「🔐 凭证库 / 开发者 API」为该账号申请专属凭证："
+                "有同名 .session 时可自动读码，否则在 Telegram 客户端查看 Web 登录码后手动提交；"
+                "或直接在参数拓扑填入已有的自建 custom_api_id / custom_api_hash。"
             )
 
         return ApplyVaultCredentialsResponse(
