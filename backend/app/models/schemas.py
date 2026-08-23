@@ -204,3 +204,121 @@ class TaskStatusResponse(BaseModel):
     updated_at: str
 
 NodeTaskStatusResponse = TaskStatusResponse
+
+
+# ==================== Account Vault & Telegram Apps Helper ====================
+
+class VaultAccountItem(BaseModel):
+    """已有账号凭证库条目（脱敏后的可展示元数据）"""
+    account_id: str = Field(..., description="稳定账号标识，用于后续 apply / apps 操作")
+    source: str = Field(..., description="来源分区: lod_user / sessions")
+    phone: Optional[str] = Field(default=None, description="国际格式手机号")
+    phone_raw: Optional[str] = Field(default=None, description="原始文件中记录的手机号")
+    user_id: Optional[int] = Field(default=None, description="Telegram 用户 ID")
+    register_time: Optional[str] = Field(default=None, description="注册/导入时间 (ISO 或可读字符串)")
+    register_time_unix: Optional[int] = Field(default=None, description="原始 Unix 时间戳")
+    device_model: Optional[str] = Field(default=None, description="设备型号")
+    system_version: Optional[str] = Field(default=None, description="SDK / 系统版本")
+    app_version: Optional[str] = Field(default=None, description="客户端版本")
+    lang_pack: Optional[str] = Field(default=None)
+    system_lang_code: Optional[str] = Field(default=None)
+    app_id: Optional[int] = Field(default=None, description="该账号记录的 api_id / app_id")
+    app_hash: Optional[str] = Field(default=None, description="该账号记录的 api_hash / app_hash")
+    is_published_api_id: bool = Field(default=False, description="记录的 api_id 是否属于已知公开泄露 ID")
+    has_usable_custom_credentials: bool = Field(
+        default=False,
+        description="是否具备可一键应用到全局配置的非公开泄露 api_id/api_hash"
+    )
+    has_session: bool = Field(default=False, description="是否存在可用的 Telethon .session 快照")
+    has_json: bool = Field(default=False, description="是否存在 JSON 元数据")
+    has_2fa: bool = Field(default=False, description="元数据是否标记了二级密码")
+    json_path: Optional[str] = Field(default=None, description="相对仓库的 JSON 路径")
+    session_path: Optional[str] = Field(default=None, description="相对仓库的 .session 路径")
+    filename: Optional[str] = Field(default=None)
+
+
+class VaultAccountListResponse(BaseModel):
+    """凭证库扫描结果"""
+    total: int
+    lod_user_dir: str
+    sessions_dir: str
+    accounts: List[VaultAccountItem]
+    applied_api_id: Optional[int] = Field(default=None, description="当前全局配置中的 custom_api_id")
+    applied_api_hash: Optional[str] = Field(default=None, description="当前全局配置中的 custom_api_hash")
+    api_credential_mode: Optional[str] = None
+
+
+class ApplyVaultCredentialsRequest(BaseModel):
+    """将某个已有账号的 app_id/app_hash 写入全局配置"""
+    account_id: str
+    set_mode_custom: bool = Field(
+        default=True,
+        description="写入后是否将 api_credential_mode 设为 custom，确保立即生效"
+    )
+
+
+class ApplyVaultCredentialsResponse(BaseModel):
+    success: bool
+    message: str
+    account_id: Optional[str] = None
+    custom_api_id: Optional[int] = None
+    custom_api_hash: Optional[str] = None
+    api_credential_mode: Optional[str] = None
+    is_published_api_id: bool = False
+    warning: Optional[str] = None
+
+
+class TelegramAppsStartRequest(BaseModel):
+    """对指定已有账号发起 my.telegram.org 开发者门户登录"""
+    account_id: str
+    auto_read_code: bool = Field(
+        default=True,
+        description="若存在 Telethon session，则自动读取官方登录验证码"
+    )
+    app_title: Optional[str] = Field(default=None, description="若需创建新应用时使用的标题")
+    app_shortname: Optional[str] = Field(default=None, description="若需创建新应用时使用的短名")
+    apply_to_config: bool = Field(
+        default=False,
+        description="成功获取后是否立即写入 custom_api_id / custom_api_hash"
+    )
+
+
+class TelegramAppsSubmitCodeRequest(BaseModel):
+    """在无法自动读取验证码时，手动提交 my.telegram.org 登录码"""
+    job_id: str
+    code: str = Field(..., min_length=3, max_length=16)
+    apply_to_config: bool = Field(default=False)
+
+
+class TelegramAppsApplyRequest(BaseModel):
+    """将某次申请任务得到的 api_id/api_hash 写入全局配置"""
+    job_id: str
+    set_mode_custom: bool = Field(default=True)
+
+
+class TelegramAppsJobResponse(BaseModel):
+    """my.telegram.org 申请任务状态"""
+    job_id: str
+    account_id: Optional[str] = None
+    phone: Optional[str] = None
+    status: str = Field(
+        default="pending",
+        description=(
+            "pending / sending_code / waiting_code / logging_in / "
+            "fetching_apps / creating_app / success / failed"
+        )
+    )
+    logs: List[str] = []
+    api_id: Optional[int] = None
+    api_hash: Optional[str] = None
+    app_title: Optional[str] = None
+    created_new_app: bool = False
+    applied_to_config: bool = False
+    needs_manual_code: bool = False
+    error: Optional[str] = None
+    created_at: str
+    updated_at: str
+
+
+class TelegramAppsJobListResponse(BaseModel):
+    jobs: List[TelegramAppsJobResponse]

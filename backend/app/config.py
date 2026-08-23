@@ -12,6 +12,27 @@ CONFIG_FILE = DATA_DIR / "config.json"
 SESSIONS_DIR = DATA_DIR / "sessions"
 SESSION_ARTIFACTS_DIR = SESSIONS_DIR  # 学术化规范别名
 
+
+def _resolve_lod_user_dir() -> Path:
+    """定位已有测试会话目录 (lod_user/)，兼容仓库根、容器挂载与环境变量覆盖。"""
+    env = os.getenv("LOD_USER_DIR")
+    if env:
+        return Path(env).resolve()
+    here = Path(__file__).resolve()
+    candidates = [
+        Path("./lod_user").resolve(),
+        here.parents[2] / "lod_user",  # <repo>/lod_user
+        Path("/app/lod_user"),
+        Path("/workspace/lod_user"),
+    ]
+    for candidate in candidates:
+        if candidate.exists() and candidate.is_dir():
+            return candidate
+    return Path("./lod_user").resolve()
+
+
+LOD_USER_DIR = _resolve_lod_user_dir()
+
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
 
