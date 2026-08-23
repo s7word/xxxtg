@@ -33,7 +33,9 @@ from backend.app.services.account_vault import (  # noqa: E402
 from backend.app.services.telegram_apps import (  # noqa: E402
     TelegramAppsHelper,
     extract_login_code,
+    format_proxy_log,
     parse_apps_page,
+    to_telethon_proxy,
 )
 
 
@@ -211,6 +213,25 @@ class TestTelegramAppsParsers(unittest.TestCase):
         self.assertEqual(parsed["create_hash"], "aabbccddeeff00112233445566778899")
         self.assertTrue(parsed["has_create_form"])
 
+    def test_telethon_proxy_and_log_for_india_node(self):
+        proxy = {
+            "proxy_type": "socks5",
+            "addr": "res.proxy-seller.com",
+            "port": 10003,
+            "username": "2f11184ffd63ed46",
+            "password": "secret",
+            "country_code": "in",
+        }
+        tg = to_telethon_proxy(proxy)
+        self.assertEqual(tg["proxy_type"], "socks5")
+        self.assertEqual(tg["addr"], "res.proxy-seller.com")
+        self.assertEqual(tg["port"], 10003)
+        self.assertEqual(tg["username"], "2f11184ffd63ed46")
+        self.assertTrue(tg["rdns"])
+        self.assertIn("10003", format_proxy_log(proxy))
+        self.assertIn("IN", format_proxy_log(proxy))
+        self.assertIsNone(to_telethon_proxy({"proxy_type": "direct"}))
+
 
 class TestSchemasComplete(unittest.TestCase):
     def test_request_models_accept_expected_payloads(self):
@@ -223,6 +244,8 @@ class TestSchemasComplete(unittest.TestCase):
         self.assertIsNone(phone_req.account_id)
         submit_req = TelegramAppsSubmitCodeRequest(job_id="job1", code="12345")
         self.assertEqual(submit_req.code, "12345")
+        alpha_req = TelegramAppsSubmitCodeRequest(job_id="job1", code="AbC12-xyZ9")
+        self.assertEqual(alpha_req.code, "AbC12-xyZ9")
         apply_job = TelegramAppsApplyRequest(job_id="job1")
         self.assertTrue(apply_job.set_mode_custom)
         item = VaultAccountItem(account_id="x", source="lod_user", phone="+1")

@@ -65,6 +65,7 @@
               <label class="block text-xs font-medium text-zinc-400 mb-1">目标拓扑与地理区域 (GEO Topology)</label>
               <select v-model="form.country" class="input-field">
                 <option value="cl">🇨🇱 智利 (Chile, +56) - 推荐基线拓扑</option>
+                <option value="in">🇮🇳 印度 (India, +91) - 专属住宅池</option>
                 <option value="id">🇮🇩 印尼 (Indonesia, +62)</option>
                 <option value="af">🇦🇫 阿富汗 (Afghanistan, +93)</option>
                 <option value="kz">🇰🇿 哈萨克斯坦 (Kazakhstan, +7)</option>
@@ -396,11 +397,12 @@
 
             <div>
               <label class="block text-xs font-medium text-zinc-400 mb-1">默认地理拓扑区域代码</label>
-              <input v-model="config.target_country" type="text" placeholder="例如: cl, id, ru" class="input-field font-mono" />
+              <input v-model="config.target_country" type="text" placeholder="例如: cl, in, id, ru" class="input-field font-mono" />
             </div>
 
             <div class="p-3 rounded-lg bg-zinc-900 border border-zinc-800 text-xs text-zinc-400 space-y-1">
-              <div>• 智利拓扑 (Chile): <code class="text-zinc-200">cl</code> (+56)</div>
+              <div>• 智利拓扑 (Chile): <code class="text-zinc-200">cl</code> (+56) · 内置静态住宅 10000-10004</div>
+              <div>• 印度拓扑 (India): <code class="text-zinc-200">in</code> (+91) · 内置静态住宅 10000-10009</div>
               <div>• 印尼拓扑 (Indonesia): <code class="text-zinc-200">id</code> (+62)</div>
               <div>• 哈萨克斯坦拓扑 (Kazakhstan): <code class="text-zinc-200">kz</code> (+7)</div>
             </div>

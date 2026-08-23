@@ -155,6 +155,50 @@ def _proxy_dict_from_config() -> Optional[Dict[str, Any]]:
     return proxy
 
 
+def _slim_proxy(proxy: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if not proxy or not proxy.get("addr") or not proxy.get("port"):
+        return None
+    if str(proxy.get("proxy_type", "")).lower() in {"direct", "none", ""}:
+        return None
+    return {
+        "proxy_type": proxy.get("proxy_type") or "socks5",
+        "addr": proxy.get("addr"),
+        "port": int(proxy.get("port")),
+        "username": proxy.get("username"),
+        "password": proxy.get("password"),
+        "country": proxy.get("country") or proxy.get("country_code"),
+        "country_code": proxy.get("country_code") or proxy.get("egress_country_code"),
+        "egress_ip": proxy.get("egress_ip") or proxy.get("ip"),
+        "egress_country": proxy.get("egress_country") or proxy.get("country"),
+        "region": proxy.get("region"),
+    }
+
+
+def to_telethon_proxy(proxy: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    slim = _slim_proxy(proxy)
+    if not slim:
+        return None
+    ptype = str(slim.get("proxy_type") or "socks5").lower()
+    if ptype in {"socks", "socks5"}:
+        ptype = "socks5"
+    return {
+        "proxy_type": ptype,
+        "addr": slim["addr"],
+        "port": int(slim["port"]),
+        "username": slim.get("username"),
+        "password": slim.get("password"),
+        "rdns": True,
+    }
+
+
+def format_proxy_log(proxy: Optional[Dict[str, Any]]) -> str:
+    slim = _slim_proxy(proxy)
+    if not slim:
+        return "direct"
+    geo = (slim.get("country_code") or slim.get("country") or slim.get("region") or "?").upper()
+    return f"{slim.get('proxy_type')}://{slim.get('addr')}:{slim.get('port')} ({geo})"
+
+
 class TelegramAppsJobManager:
     """my.telegram.org 申请任务内存状态机。"""
 
@@ -189,6 +233,7 @@ class TelegramAppsJobManager:
             "cookies": {},
             "app_title_pref": None,
             "app_shortname_pref": None,
+            "proxy": None,
         }
         return job_id
 
@@ -238,14 +283,51 @@ class TelegramAppsHelper:
     """my.telegram.org 官方开发者门户交互助手。"""
 
     @classmethod
-    def _http_client(cls, cookies: Optional[Dict[str, str]] = None) -> httpx.AsyncClient:
-        proxy = _proxy_dict_from_config()
-        client = create_httpx_client(proxy=proxy, connect_timeout=10.0, total_timeout=30.0)
+    def _http_client(
+        cls,
+        cookies: Optional[Dict[str, str]] = None,
+        proxy: Optional[Dict[str, Any]] = None,
+    ) -> httpx.AsyncClient:
+        bound = _slim_proxy(proxy) if proxy is not None else _proxy_dict_from_config()
+        client = create_httpx_client(proxy=bound, connect_timeout=10.0, total_timeout=45.0)
         client.headers.update(BROWSER_HEADERS)
         if cookies:
             for key, value in cookies.items():
                 client.cookies.set(key, value, domain="my.telegram.org")
         return client
+
+    @classmethod
+    async def resolve_proxy_for_phone(cls, phone: Optional[str]) -> Optional[Dict[str, Any]]:
+        """+91 等号码按手机号国家自动挑选同区域静态/API 住宅代理。"""
+        from backend.app.services.proxyseller import ProxySellerService, infer_country_from_phone
+
+        country = infer_country_from_phone(phone)
+        config = ConfigManager.get_instance().config
+        try:
+            svc = ProxySellerService(getattr(config, "proxy_seller_key", "") or "")
+            try:
+                selection = await svc.select_best_proxy(
+                    target_country=country,
+                    phone=phone,
+                    probe=True,
+                    allow_fallback=False,
+                    refresh=False,
+                    max_probes=3,
+                )
+                chosen = _slim_proxy(selection.get("proxy") if selection.get("success") else None)
+                if chosen:
+                    chosen["inferred_country"] = country or selection.get("target_country")
+                    chosen["selection_source"] = selection.get("source")
+                    return chosen
+            finally:
+                await svc.close()
+        except Exception as exc:
+            logger.warning("按手机号自动挑选区域代理失败（%s），回退 fallback_proxy: %s", phone, exc)
+        fallback = _slim_proxy(_proxy_dict_from_config())
+        if fallback:
+            fallback["inferred_country"] = country
+            fallback["selection_source"] = "fallback_proxy"
+        return fallback
 
     @classmethod
     def _dump_cookies(cls, client: httpx.AsyncClient) -> Dict[str, str]:
@@ -429,6 +511,7 @@ class TelegramAppsHelper:
         account,
         timeout: float = 90.0,
         since: Optional[datetime.datetime] = None,
+        proxy: Optional[Dict[str, Any]] = None,
     ) -> Optional[str]:
         session_path = AccountVaultService.resolve_session_file(account)
         if not session_path:
@@ -438,12 +521,12 @@ class TelegramAppsHelper:
 
         from telethon import TelegramClient, events
 
-        proxy = _proxy_dict_from_config()
+        bound = to_telethon_proxy(proxy if proxy is not None else _proxy_dict_from_config())
         client = TelegramClient(
             session=_telethon_session_base(session_path),
             api_id=int(account.app_id),
             api_hash=account.app_hash,
-            proxy=proxy,
+            proxy=bound,
         )
         deadline = datetime.datetime.now(datetime.timezone.utc)
         since = since or (deadline - datetime.timedelta(seconds=15))
@@ -513,7 +596,22 @@ class TelegramAppsHelper:
                 "请在官方号 777000 的消息中查看后于控制台提交。",
             )
 
-        http = cls._http_client(job.get("cookies") or None)
+        proxy = job.get("proxy") or await cls.resolve_proxy_for_phone(phone)
+        if proxy:
+            manager.update(job_id, proxy=proxy)
+            await manager.append_log(
+                job_id,
+                f"已绑定同区域住宅出口 {format_proxy_log(proxy)}"
+                + (
+                    f"，推断国家={(proxy.get('inferred_country') or '').upper() or '-'}"
+                    if proxy.get("inferred_country")
+                    else ""
+                ),
+            )
+        else:
+            await manager.append_log(job_id, "未绑定代理，将直连 my.telegram.org（可能因出口 IP 被门户风控）")
+
+        http = cls._http_client(job.get("cookies") or None, proxy=proxy)
         try:
             random_hash = job.get("random_hash")
             if not random_hash:
@@ -528,7 +626,7 @@ class TelegramAppsHelper:
                 manager.update(job_id, status="waiting_code", needs_manual_code=False)
                 await manager.append_log(job_id, "正在通过 Telethon 读取官方账号 777000 的登录验证码...")
                 try:
-                    code = await cls._read_code_via_telethon(account)
+                    code = await cls._read_code_via_telethon(account, proxy=proxy)
                 except Exception as exc:
                     await manager.append_log(job_id, f"自动读取验证码失败: {exc}")
                     code = None
@@ -664,8 +762,8 @@ class TelegramAppsHelper:
             raise HTTPException(status_code=404, detail="Apps job not found")
         if job.get("status") == "success":
             return manager.to_response(job)
-        cleaned = re.sub(r"\D", "", code or "")
-        if len(cleaned) < 3:
+        cleaned = (code or "").strip()
+        if not re.fullmatch(r"[A-Za-z0-9_-]{3,24}", cleaned):
             raise HTTPException(status_code=400, detail="Invalid confirmation code")
         await manager.append_log(job_id, "已收到手动提交的 my.telegram.org 登录验证码")
         asyncio.create_task(

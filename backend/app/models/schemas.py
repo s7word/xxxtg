@@ -333,7 +333,7 @@ class TelegramAppsStartRequest(BaseModel):
 class TelegramAppsSubmitCodeRequest(BaseModel):
     """在无法自动读取验证码时，手动提交 my.telegram.org 登录码"""
     job_id: str
-    code: str = Field(..., min_length=3, max_length=16)
+    code: str = Field(..., min_length=3, max_length=24)
     apply_to_config: bool = Field(default=False)
 
 

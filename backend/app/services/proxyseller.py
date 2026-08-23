@@ -67,19 +67,84 @@ DEFAULT_PROBE_TIMEOUT = 8.0
 
 # 云主机出口 IP 无法固定加入 Proxy-Seller API 白名单时，直接使用这批带账密的
 # 专属住宅/动态节点作为内置候选池，保证自动分配与测活不依赖 API。
+# 同一 host 上不同账密对应不同区域隧道，因此按 region 分组，identity 必须带 username。
 STATIC_RESIDENTIAL_HOST = "res.proxy-seller.com"
-STATIC_RESIDENTIAL_USERNAME = "2c131619348a4a7c"
-STATIC_RESIDENTIAL_PASSWORD = "aU9dcl6IekEYLmtv"
-STATIC_RESIDENTIAL_PORTS = (10000, 10001, 10002, 10003, 10004)
 STATIC_CATALOG_TYPE = "resident_static"
+STATIC_REGIONAL_POOLS: Dict[str, Dict[str, Any]] = {
+    "cl": {
+        "iso2": "cl",
+        "country": "Chile",
+        "country_alpha3": "CHL",
+        "username": "2c131619348a4a7c",
+        "password": "aU9dcl6IekEYLmtv",
+        "ports": (10000, 10001, 10002, 10003, 10004),
+    },
+    "in": {
+        "iso2": "in",
+        "country": "India",
+        "country_alpha3": "IND",
+        "username": "2f11184ffd63ed46",
+        "password": "hUWcsFGSugR5CtrD",
+        "ports": (10000, 10001, 10002, 10003, 10004, 10005, 10006, 10007, 10008, 10009),
+    },
+}
+# 向后兼容：历史代码 / 测试默认指向智利静态池
+STATIC_RESIDENTIAL_USERNAME = STATIC_REGIONAL_POOLS["cl"]["username"]
+STATIC_RESIDENTIAL_PASSWORD = STATIC_REGIONAL_POOLS["cl"]["password"]
+STATIC_RESIDENTIAL_PORTS = STATIC_REGIONAL_POOLS["cl"]["ports"]
+STATIC_INDIA_USERNAME = STATIC_REGIONAL_POOLS["in"]["username"]
+STATIC_INDIA_PASSWORD = STATIC_REGIONAL_POOLS["in"]["password"]
+STATIC_INDIA_PORTS = STATIC_REGIONAL_POOLS["in"]["ports"]
 IP_PROBE_ENDPOINTS = (
     "https://ipapi.co/json/",
     "https://ipinfo.io/json",
 )
 
+# E.164 国际字冠 -> ISO-2。按最长前缀匹配，避免 1 / 7 这类共享字冠误伤。
+PHONE_DIAL_TO_ISO2: Dict[str, str] = {
+    "56": "cl",
+    "91": "in",
+    "54": "ar",
+    "55": "br",
+    "57": "co",
+    "52": "mx",
+    "62": "id",
+    "84": "vn",
+    "86": "cn",
+    "81": "jp",
+    "82": "kr",
+    "90": "tr",
+    "44": "gb",
+    "49": "de",
+    "33": "fr",
+    "39": "it",
+    "34": "es",
+    "31": "nl",
+    "32": "be",
+    "48": "pl",
+    "420": "cz",
+    "61": "au",
+    "65": "sg",
+    "380": "ua",
+}
+
 
 def _norm(value: Any) -> str:
     return str(value or "").strip().lower()
+
+
+def infer_country_from_phone(phone: Optional[str]) -> Optional[str]:
+    """从 +E.164 / 裸数字手机号推断 ISO-2。+91 → in，+56 → cl。"""
+    digits = "".join(ch for ch in str(phone or "") if ch.isdigit())
+    if not digits:
+        return None
+    best_iso: Optional[str] = None
+    best_len = 0
+    for prefix, iso2 in PHONE_DIAL_TO_ISO2.items():
+        if digits.startswith(prefix) and len(prefix) > best_len:
+            best_iso = iso2
+            best_len = len(prefix)
+    return best_iso
 
 
 def expand_country_aliases(query: Optional[str]) -> Set[str]:
@@ -288,7 +353,9 @@ def match_proxy_country(proxy: Dict[str, Any], query: Optional[str]) -> bool:
 
 
 def proxy_identity(proxy: Dict[str, Any]) -> str:
-    return f"{proxy.get('addr')}:{proxy.get('port')}"
+    """同一 host:port 上不同账密是不同区域隧道，必须带 username 去重。"""
+    user = _norm(proxy.get("username"))
+    return f"{proxy.get('addr')}:{proxy.get('port')}:{user}" if user else f"{proxy.get('addr')}:{proxy.get('port')}"
 
 
 def format_proxy_endpoint(proxy: Dict[str, Any]) -> str:
@@ -296,35 +363,56 @@ def format_proxy_endpoint(proxy: Dict[str, Any]) -> str:
     return f"{protocol}://{proxy.get('addr')}:{proxy.get('port')}"
 
 
-def builtin_static_residential_items() -> List[Dict[str, Any]]:
-    """内置 Proxy-Seller 专属住宅节点（端口 10000-10004，账密鉴权）。
+def _resolve_static_regions(region: Optional[str] = None) -> List[str]:
+    token = _norm(region)
+    if not token:
+        return list(STATIC_REGIONAL_POOLS.keys())
+    aliases = expand_country_aliases(token)
+    matched = [iso2 for iso2 in STATIC_REGIONAL_POOLS if iso2 in aliases]
+    if matched:
+        return matched
+    if token in STATIC_REGIONAL_POOLS:
+        return [token]
+    return []
 
-    实测这批节点出口均落在 Chile / Santiago，因此打上 CL 标签，
-    以便 target_country=cl 的自动分配也能直接命中。
+
+def static_residential_count(region: Optional[str] = None) -> int:
+    return len(builtin_static_residential_items(region))
+
+
+def builtin_static_residential_items(region: Optional[str] = None) -> List[Dict[str, Any]]:
+    """内置 Proxy-Seller 多区域专属住宅节点。
+
+    - cl: 端口 10000-10004，智利账密，出口 Chile
+    - in: 端口 10000-10009，印度账密，出口 India
+    target_country=in / +91 会命中印度池；target_country=cl 仍命中智利池。
     """
     collected: List[Dict[str, Any]] = []
-    for port in STATIC_RESIDENTIAL_PORTS:
-        normalized = normalize_proxy_item(
-            {
-                "id": f"static-res-{port}",
-                "ip": STATIC_RESIDENTIAL_HOST,
-                "protocol": "socks5",
-                "port": int(port),
-                "login": STATIC_RESIDENTIAL_USERNAME,
-                "password": STATIC_RESIDENTIAL_PASSWORD,
-                "country": "Chile",
-                "country_alpha3": "CHL",
-                "country_code": "cl",
-                "status": "ACTIVE",
-                "status_type": "ACTIVE",
-                "type": STATIC_CATALOG_TYPE,
-            },
-            bucket=STATIC_CATALOG_TYPE,
-        )
-        if not normalized:
-            continue
-        normalized["source"] = "static_residential"
-        collected.append(normalized)
+    for iso2 in _resolve_static_regions(region):
+        spec = STATIC_REGIONAL_POOLS[iso2]
+        for port in spec["ports"]:
+            normalized = normalize_proxy_item(
+                {
+                    "id": f"static-res-{iso2}-{port}",
+                    "ip": STATIC_RESIDENTIAL_HOST,
+                    "protocol": "socks5",
+                    "port": int(port),
+                    "login": spec["username"],
+                    "password": spec["password"],
+                    "country": spec["country"],
+                    "country_alpha3": spec["country_alpha3"],
+                    "country_code": iso2,
+                    "status": "ACTIVE",
+                    "status_type": "ACTIVE",
+                    "type": STATIC_CATALOG_TYPE,
+                },
+                bucket=STATIC_CATALOG_TYPE,
+            )
+            if not normalized:
+                continue
+            normalized["source"] = "static_residential"
+            normalized["region"] = iso2
+            collected.append(normalized)
     return collected
 
 
@@ -589,9 +677,13 @@ class ProxySellerService:
         allow_fallback: bool = True,
         refresh: bool = False,
         max_probes: int = 3,
+        phone: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """按目标国家自动挑选最佳/可用代理，支持测活与跨区域兜底。"""
-        country = _norm(target_country)
+        """按目标国家自动挑选最佳/可用代理，支持测活与跨区域兜底。
+
+        target_country 为空时可根据 phone（如 +91）推断区域，从而命中印度住宅池。
+        """
+        country = _norm(target_country) or infer_country_from_phone(phone)
         regional = await self.get_proxy_list(country=country or None, refresh=refresh, include_health=False)
         fallback_used = False
         source = "regional"

@@ -22,14 +22,20 @@ from backend.app.models.schemas import (  # noqa: E402
 )
 from backend.app.services.proxyseller import (  # noqa: E402
     ProxySellerService,
+    STATIC_INDIA_PORTS,
+    STATIC_INDIA_USERNAME,
     STATIC_RESIDENTIAL_HOST,
     STATIC_RESIDENTIAL_PORTS,
+    STATIC_RESIDENTIAL_USERNAME,
     builtin_static_residential_items,
     expand_country_aliases,
     format_proxy_endpoint,
+    infer_country_from_phone,
     is_static_residential,
     match_proxy_country,
     merge_proxy_pools,
+    proxy_identity,
+    static_residential_count,
     normalize_proxy_item,
     _extract_raw_items,
     _parse_ip_probe_payload,
@@ -131,7 +137,17 @@ class TestCountryMatching(unittest.TestCase):
         self.assertFalse(match_proxy_country(usa, "id"))
         india = normalize_proxy_item(_usa_raw(country="India", country_alpha3="IND", ip="49.1.1.1"))
         self.assertFalse(match_proxy_country(india, "id"))
+        self.assertTrue(match_proxy_country(india, "in"))
+        self.assertTrue(match_proxy_country(india, "IND"))
         self.assertTrue(match_proxy_country(chile, None))
+
+    def test_infer_country_from_phone(self):
+        self.assertEqual(infer_country_from_phone("+918302332054"), "in")
+        self.assertEqual(infer_country_from_phone("918310013712"), "in")
+        self.assertEqual(infer_country_from_phone("+56 9 7194 8355"), "cl")
+        self.assertEqual(infer_country_from_phone("56971948355"), "cl")
+        self.assertIsNone(infer_country_from_phone(""))
+        self.assertIsNone(infer_country_from_phone(None))
 
 
 class TestProxyNormalization(unittest.TestCase):
@@ -374,11 +390,13 @@ class TestProxySellerServicePool(unittest.IsolatedAsyncioTestCase):
         }, include_static=True)
         try:
             items = await svc.get_proxy_list(refresh=True, include_health=False)
-            self.assertEqual(len(items), 1 + len(STATIC_RESIDENTIAL_PORTS))
+            self.assertEqual(len(items), 1 + static_residential_count())
             self.assertEqual(items[0]["addr"], "23.81.44.9")
             self.assertTrue(any(is_static_residential(item) for item in items))
             chile = await svc.get_proxy_list(country="cl", include_health=False)
             self.assertEqual(len(chile), len(STATIC_RESIDENTIAL_PORTS))
+            india = await svc.get_proxy_list(country="in", include_health=False)
+            self.assertEqual(len(india), len(STATIC_INDIA_PORTS))
         finally:
             await svc.close()
 
@@ -386,15 +404,34 @@ class TestProxySellerServicePool(unittest.IsolatedAsyncioTestCase):
         svc = ProxySellerService("", include_static=True)
         try:
             items = await svc.get_proxy_list(refresh=True, include_health=False)
-            self.assertEqual(len(items), len(STATIC_RESIDENTIAL_PORTS))
+            self.assertEqual(len(items), static_residential_count())
             self.assertEqual(svc.cache_meta()["source"], "static_residential")
+        finally:
+            await svc.close()
+
+    async def test_select_best_proxy_india_from_static_pool(self):
+        svc = ProxySellerService("", include_static=True)
+        try:
+            selected = await svc.select_best_proxy(target_country="in", allow_fallback=False)
+            self.assertTrue(selected["success"])
+            self.assertTrue(selected["matched"])
+            self.assertEqual(selected["source"], "static_residential")
+            self.assertEqual(selected["proxy"]["addr"], STATIC_RESIDENTIAL_HOST)
+            self.assertEqual(selected["proxy"]["username"], STATIC_INDIA_USERNAME)
+            self.assertIn(selected["proxy"]["port"], STATIC_INDIA_PORTS)
+            self.assertEqual(selected["proxy"]["country_code"], "in")
+
+            by_phone = await svc.select_best_proxy(phone="+918302332054", allow_fallback=False)
+            self.assertTrue(by_phone["success"])
+            self.assertEqual(by_phone["target_country"], "in")
+            self.assertEqual(by_phone["proxy"]["username"], STATIC_INDIA_USERNAME)
         finally:
             await svc.close()
 
 
 class TestStaticResidentialHelpers(unittest.TestCase):
     def test_builtin_static_items_are_chile_socks5(self):
-        items = builtin_static_residential_items()
+        items = builtin_static_residential_items("cl")
         self.assertEqual(len(items), 5)
         self.assertEqual([item["port"] for item in items], list(STATIC_RESIDENTIAL_PORTS))
         for item in items:
@@ -402,13 +439,40 @@ class TestStaticResidentialHelpers(unittest.TestCase):
             self.assertEqual(item["addr"], STATIC_RESIDENTIAL_HOST)
             self.assertEqual(item["proxy_type"], "socks5")
             self.assertEqual(item["country_code"], "cl")
-            self.assertTrue(item["username"])
+            self.assertEqual(item["username"], STATIC_RESIDENTIAL_USERNAME)
             self.assertTrue(item["password"])
             self.assertTrue(match_proxy_country(item, "cl"))
             self.assertTrue(match_proxy_country(item, "chile"))
 
+    def test_builtin_static_items_include_india_pool(self):
+        india = builtin_static_residential_items("in")
+        self.assertEqual(len(india), 10)
+        self.assertEqual([item["port"] for item in india], list(STATIC_INDIA_PORTS))
+        for item in india:
+            self.assertTrue(is_static_residential(item))
+            self.assertEqual(item["addr"], STATIC_RESIDENTIAL_HOST)
+            self.assertEqual(item["proxy_type"], "socks5")
+            self.assertEqual(item["country_code"], "in")
+            self.assertEqual(item["username"], STATIC_INDIA_USERNAME)
+            self.assertTrue(match_proxy_country(item, "in"))
+            self.assertTrue(match_proxy_country(item, "india"))
+            self.assertTrue(match_proxy_country(item, "IND"))
+            self.assertFalse(match_proxy_country(item, "cl"))
+
+        all_items = builtin_static_residential_items()
+        self.assertEqual(len(all_items), static_residential_count())
+        self.assertEqual(static_residential_count("in"), 10)
+        self.assertEqual(static_residential_count("cl"), 5)
+
+    def test_cl_and_in_same_port_are_distinct_identities(self):
+        chile = next(item for item in builtin_static_residential_items("cl") if item["port"] == 10000)
+        india = next(item for item in builtin_static_residential_items("in") if item["port"] == 10000)
+        self.assertNotEqual(proxy_identity(chile), proxy_identity(india))
+        merged = merge_proxy_pools([chile], [india])
+        self.assertEqual(len(merged), 2)
+
     def test_merge_proxy_pools_dedupes_identity(self):
-        static = builtin_static_residential_items()
+        static = builtin_static_residential_items("cl")
         duplicate = dict(static[0])
         duplicate["id"] = "dup"
         merged = merge_proxy_pools(static, [duplicate, normalize_proxy_item(_usa_raw())])
