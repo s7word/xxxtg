@@ -262,6 +262,7 @@ class ManualTestBase(unittest.IsolatedAsyncioTestCase):
         tid = self.manager.create_task()
         session_path = self.tmp_path / f"{phone.lstrip('+')}.session"
         meta_path = self.tmp_path / f"{phone.lstrip('+')}.json"
+        client.connected = True
         self.manager.update_task_status(
             tid, "waiting_code", mode="manual", phone=phone, phone_code_hash="hash-1"
         )

@@ -78,6 +78,23 @@ def normalize_manual_phone(raw: Optional[str]) -> str:
     return normalized
 
 
+def _infer_country_from_geo_dial(phone: str) -> Optional[str]:
+    """用全球区号目录补全 Proxy-Seller 前缀表未覆盖的国家（如 +964 伊拉克）。"""
+    from backend.app.services.geo_catalog import _ISO2_CORE
+
+    digits = "".join(ch for ch in str(phone or "") if ch.isdigit())
+    if not digits:
+        return None
+    best_iso: Optional[str] = None
+    best_len = 0
+    for iso2, row in _ISO2_CORE.items():
+        dial = str(row[3] if len(row) > 3 else "").lstrip("+")
+        if dial and digits.startswith(dial) and len(dial) > best_len:
+            best_iso = str(iso2).strip().lower()
+            best_len = len(dial)
+    return best_iso
+
+
 def resolve_manual_country(
     phone: str,
     country: Optional[str] = None,
@@ -87,7 +104,7 @@ def resolve_manual_country(
     explicit = str(country or "").strip().lower()
     if explicit:
         return explicit
-    inferred = infer_country_from_phone(phone)
+    inferred = infer_country_from_phone(phone) or _infer_country_from_geo_dial(phone)
     if inferred:
         return str(inferred).strip().lower()
     if fallback:
