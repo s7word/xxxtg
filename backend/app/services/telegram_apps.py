@@ -94,8 +94,8 @@ API_HASH_PATTERNS = [
 ]
 
 UNEDITABLE_SPAN_RE = re.compile(
-    r'<span[^>]*(?:class="[^"]*(?:uneditable-input|input-xlarge)[^"]*"|uneditable-input|input-xlarge)[^>]*>\s*([^<]+?)\s*</span>',
-    re.I,
+    r'<span[^>]*(?:class="[^"]*(?:uneditable-input|input-xlarge)[^"]*"|uneditable-input|input-xlarge)[^>]*>(.*?)</span>',
+    re.I | re.S,
 )
 
 CREATE_HASH_PATTERNS = [
@@ -116,8 +116,16 @@ def extract_login_code(text: Optional[str]) -> Optional[str]:
 
 
 def _extract_from_uneditable_spans(html: str) -> tuple[Optional[int], Optional[str]]:
-    """my.telegram.org 把已创建应用的 api_id / api_hash 放在 span.uneditable-input 文本里。"""
-    values = [re.sub(r"\s+", "", item or "") for item in UNEDITABLE_SPAN_RE.findall(html or "")]
+    """my.telegram.org 把已创建应用的 api_id / api_hash 放在 span.uneditable-input 文本里。
+
+    新版门户会把 api_id 包在 <strong> 里，因此先剥掉内部标签再识别。
+    """
+    values = []
+    for item in UNEDITABLE_SPAN_RE.findall(html or ""):
+        text = re.sub(r"<[^>]+>", "", item or "")
+        text = re.sub(r"\s+", "", text)
+        if text:
+            values.append(text)
     api_id = None
     api_hash = None
     for value in values:

@@ -66,6 +66,24 @@ SAMPLE_CREATE_HTML = """
 </form>
 """
 
+SAMPLE_UNEDITABLE_STRONG_APPS_HTML = """
+<html>
+  <head><title>App configuration</title>
+  <meta name="apple-itunes-app" content="app-id=686449807">
+  </head>
+  <body>
+    <div class="form-group">
+      <label for="app_id">App api_id:</label>
+      <span class="form-control input-xlarge uneditable-input" onclick="this.select();"><strong>35337905</strong></span>
+    </div>
+    <div class="form-group">
+      <label for="app_hash">App api_hash:</label>
+      <span class="form-control input-xlarge uneditable-input" onclick="this.select();">e51cce64cafa6e4b84b89adb247e01e6</span>
+    </div>
+  </body>
+</html>
+"""
+
 SAMPLE_UNEDITABLE_APPS_HTML = """
 <html>
   <head><title>App configuration</title>
@@ -274,6 +292,13 @@ class TestTelegramAppsParsers(unittest.TestCase):
         self.assertEqual(parsed["api_hash"], "0a1b2c3d4e5f60718293a4b5c6d7e8f9")
         self.assertFalse(parsed["has_create_form"])
         # 不把 iTunes app-id=686449807 误当成 api_id
+        self.assertNotEqual(parsed["api_id"], 686449807)
+
+    def test_parse_strong_wrapped_api_id(self):
+        parsed = parse_apps_page(SAMPLE_UNEDITABLE_STRONG_APPS_HTML)
+        self.assertEqual(parsed["api_id"], 35337905)
+        self.assertEqual(parsed["api_hash"], "e51cce64cafa6e4b84b89adb247e01e6")
+        self.assertFalse(parsed["has_create_form"])
         self.assertNotEqual(parsed["api_id"], 686449807)
 
     def test_parse_create_form_html(self):

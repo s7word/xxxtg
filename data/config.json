@@ -20,9 +20,9 @@
   "default_2fa_password": "Password@2026!Sec",
   "auto_set_2fa": true,
   "custom_device_profiles": [],
-  "api_credential_mode": "auto",
-  "custom_api_id": null,
-  "custom_api_hash": null,
+  "api_credential_mode": "custom",
+  "custom_api_id": 35337905,
+  "custom_api_hash": "e51cce64cafa6e4b84b89adb247e01e6",
   "antisafety_base_urls": [
     "https://api.antisafety.net"
   ],
