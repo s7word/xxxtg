@@ -6,6 +6,7 @@ from backend.app.services.attestation_urls import (
     has_valid_api_key,
     sanitize_provider_urls,
 )
+from backend.app.services.recaptcha_check import recaptcha_app_device, recaptcha_app_name
 from backend.app.services.reghelp import RegHelpService
 
 logger = logging.getLogger("AttestationGatewayService")
@@ -163,6 +164,35 @@ class AttestationGatewayService:
         if errors:
             logger.warning(f"全部 Attestation 提供源均未成功获取 Push Token: {errors}")
         return None, None
+
+    async def get_recaptcha_mobile_token(
+        self,
+        site_key: str,
+        action: str = "signup",
+        profile: Optional[Dict[str, Any]] = None,
+        proxy: Optional[Dict[str, Any]] = None,
+        log_callback=None,
+    ) -> Optional[str]:
+        """仅走 REGHelp RecaptchaMobile（AntiSafety 无此能力），严格使用 config.reghelp_api_key。"""
+        if not self.reghelp:
+            raise RuntimeError(
+                "REGHelp 未启用或缺少有效 reghelp_api_key，无法自动解 RECAPTCHA_CHECK。"
+                "请确认 config.reghelp_api_key 与 config.reghelp_base_urls=https://api.reghelp.net"
+            )
+        profile = profile or {}
+        if log_callback:
+            await log_callback(
+                f"RECAPTCHA_CHECK 自动解题走独立 REGHelp 网关 "
+                f"(bases={', '.join(self.reghelp.api_bases)}, action={action})"
+            )
+        return await self.reghelp.get_recaptcha_mobile_token(
+            app_key=site_key,
+            app_action=action,
+            app_name=recaptcha_app_name(profile),
+            app_device=recaptcha_app_device(profile),
+            proxy=proxy,
+            log_callback=log_callback,
+        )
 
     async def report_result(self, check_id: Optional[str], aid: Optional[str], status: str):
         """向审计监控中心上报状态机最终迁移结果 (目前仅 AntiSafety 提供上报能力)"""

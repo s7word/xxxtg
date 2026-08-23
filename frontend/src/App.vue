@@ -112,6 +112,13 @@
               <span v-if="isStartingTask">正在调度状态机编排流水线...</span>
               <span v-else>🚀 启动虚拟节点引导仿真</span>
             </button>
+
+            <div v-if="!config.custom_api_id" class="p-2.5 rounded-lg bg-amber-950/30 border border-amber-800/50 text-[11px] text-amber-100 leading-relaxed">
+              尚未配置专属 <code class="font-mono">custom_api_id</code>。
+              本地 lod_user 只有 JSON、没有 .session，不能直接当开发者凭证。
+              请到「🔐 凭证库 / 开发者 API」：用已登录客户端收 777000 验证码申请，或放入 <code class="font-mono">*.session</code>，或到「⚙️ 参数拓扑」手填已有 api_id/hash。
+              <button @click="activeTab = 'vault'" class="ml-1 underline text-amber-50">立即前往</button>
+            </div>
           </div>
 
           <!-- 实时日志终端 -->
@@ -269,7 +276,7 @@
             <div>
               <label class="block text-[11px] text-zinc-400 mb-1">Key API 候选网关地址 (仅 reghelp.net，勿填入 antisafety.net)</label>
               <textarea v-model="reghelpBaseUrlsText" rows="2" class="input-field font-mono text-xs" placeholder="https://api.reghelp.net"></textarea>
-              <p class="text-[11px] text-zinc-500 mt-1">与 AntiSafety 密钥/地址严格隔离：REGHelp 的 Key 只能打 api.reghelp.net。</p>
+              <p class="text-[11px] text-zinc-500 mt-1">与 AntiSafety 密钥/地址严格隔离：REGHelp 的 Key 只能打 api.reghelp.net。RECAPTCHA_CHECK 自动解题也只走这把 Key 与 RecaptchaMobile 接口。</p>
             </div>
 
             <div class="grid grid-cols-2 gap-2">
@@ -531,11 +538,8 @@
             <h2 class="text-lg font-bold text-white">🔐 已有账户凭证库 & 开发者 API 凭证管理</h2>
             <p class="text-xs text-zinc-400">
               扫描 <code class="text-zinc-200">lod_user/</code> 与 <code class="text-zinc-200">data/sessions/</code>。
-              现存账号若带有 <code class="text-zinc-200">app_id=4</code>，那是公开泄露官方 ID，不能直接当专属凭证。
-              申请全新 api_id/api_hash：放入同名 <code class="text-zinc-200">.session</code>，或在本页发起
-              <a href="https://my.telegram.org/apps" target="_blank" class="underline text-blue-300">my.telegram.org</a>
-              登录后于 Telegram 客户端查看 Web 登录码并提交；也可直接在「参数拓扑」填写已有的
-              <code class="text-zinc-200">custom_api_id</code> / <code class="text-zinc-200">custom_api_hash</code>。
+              现存 JSON 的 <code class="text-zinc-200">app_id=4</code> 是公开泄露官方 ID，不能直接当专属凭证。
+              本地有账户就可以申请：没有 .session 也能用已登录客户端收 777000 验证码；有 session 就丢进目录自动读码；已经申请过的直接填到「⚙️ 参数拓扑」。
             </p>
           </div>
           <button @click="fetchVaultAccounts" :disabled="vaultLoading" class="btn-secondary text-xs">
@@ -584,10 +588,10 @@
               <span v-if="appsJob" :class="getStatusBadgeClass(appsJob.status)">{{ appsJob.status }}</span>
             </div>
 
-            <div class="p-3 rounded-lg bg-blue-950/20 border border-blue-800/40 text-[11px] text-blue-100 leading-relaxed space-y-1">
-              <div>1. 将 <code class="text-blue-50">918296691905.session</code> 这类与 JSON 同名的 Telethon 快照放到同一目录，可自动读取 Web 登录码。</div>
-              <div>2. 若只有 JSON：在本页发起申请后，到该账号的 Telegram 客户端查看 my.telegram.org 登录码并手动提交。</div>
-              <div>3. 申请成功后点「将本次申请结果写入 config.json」，或自行在参数拓扑填入已有自建凭证。</div>
+            <div class="p-3 rounded-lg bg-blue-950/20 border border-blue-800/40 text-[11px] text-blue-100 leading-relaxed space-y-1.5">
+              <div><span class="font-semibold text-blue-50">轨 A · 已登录客户端（无需 .session）</span>：下方填入该账号手机号，点申请。系统向 777000 发 Web 登录码，你在手机 Telegram 查看后填回本页。</div>
+              <div><span class="font-semibold text-blue-50">轨 B · 已有 .session</span>：把 <code class="text-blue-50">*.session</code> 复制到 <code class="text-blue-50">lod_user/</code> 或 <code class="text-blue-50">data/sessions/</code>（最好与 JSON 同名），刷新后选择账号再申请，系统会静默读 777000。</div>
+              <div><span class="font-semibold text-blue-50">轨 C · 已有现成凭证</span>：到「⚙️ 参数拓扑」直接填写 <code class="text-blue-50">custom_api_id</code> / <code class="text-blue-50">custom_api_hash</code>。</div>
             </div>
             <div v-if="selectedVaultAccount?.apps_apply_hint" class="p-2.5 rounded-lg bg-zinc-900 border border-zinc-800 text-[11px] text-zinc-400 leading-relaxed">
               {{ selectedVaultAccount.apps_apply_hint }}
@@ -604,6 +608,10 @@
                 </select>
               </div>
               <div>
+                <label class="block text-xs font-medium text-zinc-400 mb-1">或直接填已登录客户端的手机号（轨 A）</label>
+                <input v-model="appsPhone" type="text" class="input-field font-mono text-xs" placeholder="+56 / +91 手机号" />
+              </div>
+              <div>
                 <label class="block text-xs font-medium text-zinc-400 mb-1">可选：新建应用短名</label>
                 <input v-model="appsShortname" type="text" class="input-field font-mono text-xs" placeholder="edgenode2026" />
               </div>
@@ -612,7 +620,7 @@
             <div class="flex flex-wrap items-center gap-2">
               <button
                 @click="startAppsJob"
-                :disabled="!vaultSelectedId || appsStarting"
+                :disabled="(!vaultSelectedId && !appsPhone.trim()) || appsStarting"
                 class="btn-primary text-xs py-2"
               >
                 {{ appsStarting ? '正在发起登录...' : '从 my.telegram.org 申请专属 API ID/Hash' }}
@@ -628,8 +636,8 @@
 
             <div v-if="appsJob && appsJob.needs_manual_code" class="p-3 rounded-lg bg-amber-950/30 border border-amber-800/50 space-y-2">
               <p class="text-xs text-amber-200">
-                未能通过 Telethon 自动读取验证码（通常是缺少 .session 快照）。
-                请在该账号的 Telegram 客户端查看 my.telegram.org 登录码后手动提交。
+                未能自动读取验证码（本地没有可用 .session 时属于正常路径）。
+                请打开该手机号已登录的 Telegram 客户端，查看官方号 777000 发来的 my.telegram.org Web 登录码后提交。
               </p>
               <div class="flex items-center gap-2">
                 <input v-model="appsManualCode" type="text" class="input-field font-mono text-xs" placeholder="登录验证码" />
@@ -961,6 +969,7 @@ const selectedVaultAccount = computed(() => vaultAccounts.value.find(acc => acc.
 const appsStarting = ref(false)
 const appsJob = ref(null)
 const appsShortname = ref('')
+const appsPhone = ref('')
 const appsManualCode = ref('')
 let appsPollTimer = null
 
@@ -1281,7 +1290,8 @@ const pollAppsJob = async (jobId) => {
 }
 
 const startAppsJob = async () => {
-  if (!vaultSelectedId.value) return
+  const phone = (appsPhone.value || '').trim()
+  if (!vaultSelectedId.value && !phone) return
   appsStarting.value = true
   appsManualCode.value = ''
   try {
@@ -1289,7 +1299,8 @@ const startAppsJob = async () => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        account_id: vaultSelectedId.value,
+        account_id: vaultSelectedId.value || undefined,
+        phone: phone || undefined,
         auto_read_code: true,
         app_shortname: appsShortname.value || undefined,
         apply_to_config: false

@@ -25,6 +25,10 @@ from backend.app.config import ConfigManager, SESSIONS_DIR
 from backend.app.services.device_profile import DeviceProfileManager
 from backend.app.services.vaksms import VakSmsService
 from backend.app.services.attestation_gateway import AttestationGatewayService
+from backend.app.services.recaptcha_check import (
+    RecaptchaChallengeError,
+    parse_recaptcha_check,
+)
 
 logger = logging.getLogger("NodeProvisioningOrchestrator")
 
@@ -158,6 +162,79 @@ class RegistrationOrchestrator:
         jitter = random.uniform(3.5, 5.5)
         await manager.append_log(task_id, f"执行自适应状态机停顿与流量整形 ({jitter:.1f} 秒)...")
         await asyncio.sleep(jitter)
+
+    @classmethod
+    async def _send_code_with_recaptcha(
+        cls,
+        client: TelegramClient,
+        phone: str,
+        profile: Dict[str, Any],
+        code_settings,
+        bypass_svc: AttestationGatewayService,
+        active_proxy: Optional[Dict[str, Any]],
+        task_id: str,
+        manager: RegistrationTaskManager,
+    ):
+        """发送 auth.sendCode；若触发 RECAPTCHA_CHECK_* 则自动解题并 invokeWithReCaptcha 重发。"""
+        send_req = functions.auth.SendCodeRequest(
+            phone_number=phone,
+            api_id=profile["api_id"],
+            api_hash=profile["api_hash"],
+            settings=code_settings,
+        )
+        try:
+            return await client(send_req)
+        except Exception as send_err:
+            parsed = parse_recaptcha_check(send_err)
+            if not parsed:
+                raise
+            action, site_key = parsed
+            await manager.append_log(
+                task_id,
+                f"检测到 Telegram RECAPTCHA_CHECK 人机挑战 "
+                f"(action={action}, site_key={site_key})，正在通过 REGHelp RecaptchaMobile 自动解题..."
+            )
+            try:
+                token = await bypass_svc.get_recaptcha_mobile_token(
+                    site_key=site_key,
+                    action=action,
+                    profile=profile,
+                    proxy=active_proxy,
+                    log_callback=lambda msg: manager.append_log(task_id, msg),
+                )
+            except Exception as solve_err:
+                raise RecaptchaChallengeError(
+                    f"REGHelp RecaptchaMobile 解题失败: {solve_err}",
+                    action=action,
+                    site_key=site_key,
+                ) from solve_err
+
+            if not token:
+                raise RecaptchaChallengeError(
+                    "REGHelp RecaptchaMobile 未返回 token",
+                    action=action,
+                    site_key=site_key,
+                )
+
+            await manager.append_log(
+                task_id,
+                "已获得 Recaptcha token，通过 invokeWithReCaptcha 重发 auth.sendCode..."
+            )
+            try:
+                return await client(functions.InvokeWithReCaptchaRequest(
+                    token=token,
+                    query=send_req,
+                ))
+            except Exception as retry_err:
+                retry_parsed = parse_recaptcha_check(retry_err)
+                detail = str(retry_err)
+                if retry_parsed:
+                    detail = f"{detail} (仍为 RECAPTCHA_CHECK_{retry_parsed[0]}__{retry_parsed[1]})"
+                raise RecaptchaChallengeError(
+                    f"附带 Recaptcha token 重发 SendCodeRequest 仍失败: {detail}",
+                    action=action,
+                    site_key=site_key,
+                ) from retry_err
 
     @classmethod
     async def run_registration(
@@ -320,12 +397,16 @@ class RegistrationOrchestrator:
             )
 
             await manager.append_log(task_id, "调用 auth.sendCode 触发服务端瞬时握手挑战分发...")
-            sent_code = await client(functions.auth.SendCodeRequest(
-                phone_number=phone,
-                api_id=profile["api_id"],
-                api_hash=profile["api_hash"],
-                settings=code_settings
-            ))
+            sent_code = await cls._send_code_with_recaptcha(
+                client=client,
+                phone=phone,
+                profile=profile,
+                code_settings=code_settings,
+                bypass_svc=bypass_svc,
+                active_proxy=active_proxy,
+                task_id=task_id,
+                manager=manager,
+            )
             phone_code_hash = sent_code.phone_code_hash
             await manager.append_log(task_id, f"挑战已由服务端下发! 分发通道类型: {type(sent_code.type).__name__}")
 
@@ -460,10 +541,18 @@ class RegistrationOrchestrator:
             await cls._refund_and_revoke_channel(sms_svc, act_id, task_id, manager, "NO_CODE")
             if check_id: await bypass_svc.report_result(check_id, aid, "NO_CODE")
             manager.update_task_status(task_id, "failed", error=err)
+        except RecaptchaChallengeError as ex:
+            err = f"RECAPTCHA_CHECK 人机挑战未能突破: {str(ex) or repr(ex)}"
+            await manager.append_log(task_id, f"❌ {err}")
+            await cls._refund_and_revoke_channel(sms_svc, act_id, task_id, manager, "RECAPTCHA_CHECK")
+            if check_id: await bypass_svc.report_result(check_id, aid, "RECAPTCHA_CHECK")
+            manager.update_task_status(task_id, "failed", error=err)
         except Exception as ex:
+            parsed = parse_recaptcha_check(ex)
+            reason = "RECAPTCHA_CHECK" if parsed else "EXCEPTION"
             err = f"状态机引导流程异常: {str(ex) or repr(ex)}"
             await manager.append_log(task_id, f"❌ {err}")
-            await cls._refund_and_revoke_channel(sms_svc, act_id, task_id, manager, "EXCEPTION")
+            await cls._refund_and_revoke_channel(sms_svc, act_id, task_id, manager, reason)
             if check_id: await bypass_svc.report_result(check_id, aid, "NO_CODE")
             manager.update_task_status(task_id, "failed", error=err)
         finally:

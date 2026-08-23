@@ -31,6 +31,7 @@ from backend.app.services.account_vault import (  # noqa: E402
     make_account_id,
 )
 from backend.app.services.telegram_apps import (  # noqa: E402
+    TelegramAppsHelper,
     extract_login_code,
     parse_apps_page,
 )
@@ -172,6 +173,9 @@ class TestSchemasComplete(unittest.TestCase):
         self.assertEqual(apply_req.account_id, "abc123")
         start_req = TelegramAppsStartRequest(account_id="abc123", auto_read_code=True)
         self.assertTrue(start_req.auto_read_code)
+        phone_req = TelegramAppsStartRequest(phone="+56971948355")
+        self.assertEqual(phone_req.phone, "+56971948355")
+        self.assertIsNone(phone_req.account_id)
         submit_req = TelegramAppsSubmitCodeRequest(job_id="job1", code="12345")
         self.assertEqual(submit_req.code, "12345")
         apply_job = TelegramAppsApplyRequest(job_id="job1")
@@ -224,6 +228,19 @@ class TestVaultHttpApi(unittest.TestCase):
             json={"account_id": "does-not-exist"},
         )
         self.assertEqual(res.status_code, 404)
+
+    def test_apps_start_requires_account_or_phone(self):
+        res = self.client.post("/api/vault/apps/start", json={})
+        self.assertEqual(res.status_code, 400)
+
+    def test_resolve_phone_only_and_vault_match(self):
+        account, account_id, phone = TelegramAppsHelper._resolve_start_target(None, "56971948355")
+        self.assertIsNone(account)
+        self.assertEqual(phone, "+56971948355")
+        matched, matched_id, matched_phone = TelegramAppsHelper._resolve_start_target(None, "918310013712")
+        self.assertIsNotNone(matched)
+        self.assertEqual(matched_phone, "+918310013712")
+        self.assertTrue(matched_id)
 
     def test_apps_job_not_found(self):
         res = self.client.get("/api/vault/apps/jobs/not-a-job")

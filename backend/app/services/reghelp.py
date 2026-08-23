@@ -40,9 +40,15 @@ class RegHelpService:
                                     appVersionCode, [type=std|classic], [ref], [webHook]}
         GET /integrity/getStatus  {apiKey, id}
 
+        GET /RecaptchaMobile/getToken
+            {apiKey, appName, appKey(site_key), appAction, appDevice,
+             [proxyType], [proxyAddress], [proxyPort], [proxyLogin], [proxyPassword]}
+        GET /RecaptchaMobile/getStatus  {apiKey, id}
+
     与 `AntiSafetyService` 保持一致的多候选网关容灾风格，但使用 REGHelp 独立的 API Key 与
     协议字段 —— 无需 `aid`，`appName`/`appDevice` 与项目内置的 `DeviceProfileManager` 模板
     天然对齐 (telegram_android/telegram_9 -> appName=tg, telegram_x -> appName=tg_x)。
+    RecaptchaMobile 对 Telegram Android 使用 appName=org.telegram.messenger。
 
     注：REGHelp 官方接口目前未提供与 AntiSafety `/check` 等价的号码历史安全审计能力，
     该职责仍由 `AttestationGatewayService` 路由至 AntiSafety 处理。
@@ -256,6 +262,112 @@ class RegHelpService:
         raise TimeoutError("REGHelp Integrity 凭证获取超时 (超过最大轮询阈值)")
 
     request_integrity_token = get_integrity_token
+
+    async def get_recaptcha_mobile_token(
+        self,
+        app_key: str,
+        app_action: str = "signup",
+        app_name: str = "org.telegram.messenger",
+        app_device: str = "Android",
+        proxy: Optional[Dict[str, Any]] = None,
+        log_callback=None,
+        ref: Optional[str] = None,
+        webhook: Optional[str] = None,
+        request_id: Optional[str] = None,
+    ) -> Optional[str]:
+        """向 REGHelp RecaptchaMobile 申请人机验证 token，并轮询 getStatus 直到完成。
+
+        对应官方 Key API：
+            GET /RecaptchaMobile/getToken
+            GET /RecaptchaMobile/getStatus
+        """
+        site_key = str(app_key or "").strip()
+        action = str(app_action or "signup").strip() or "signup"
+        if not site_key:
+            raise RuntimeError("RecaptchaMobile 缺少 appKey / site_key")
+
+        device = self._normalize_device(app_device)
+        params: Dict[str, Any] = {
+            "apiKey": self.api_key,
+            "appName": app_name or "org.telegram.messenger",
+            "appKey": site_key,
+            "appAction": action,
+            "appDevice": device,
+            "ref": ref,
+            "webHook": webhook,
+        }
+        if proxy and proxy.get("addr") and proxy.get("port"):
+            proxy_type = str(proxy.get("proxy_type") or "socks5").lower()
+            if proxy_type not in {"direct", "none", ""}:
+                params["proxyType"] = "http" if proxy_type.startswith("http") else "socks5"
+                params["proxyAddress"] = proxy.get("addr")
+                params["proxyPort"] = int(proxy.get("port"))
+                if proxy.get("username"):
+                    params["proxyLogin"] = proxy.get("username")
+                if proxy.get("password"):
+                    params["proxyPassword"] = proxy.get("password")
+
+        headers = {"Idempotency-Key": request_id} if request_id else None
+        if log_callback:
+            await log_callback(
+                f"向 REGHelp RecaptchaMobile 发起解题任务 "
+                f"(appName={params['appName']}, action={action}, "
+                f"site_key={site_key[:12]}..., 候选网关: {', '.join(self.api_bases)})..."
+            )
+
+        try:
+            used_base, data = await self._get_with_fallback(
+                "/RecaptchaMobile/getToken", params, headers=headers
+            )
+        except Exception as req_err:
+            raise RuntimeError(
+                f"连接 REGHelp RecaptchaMobile 失败 (已尝试 {', '.join(self.api_bases)}): {req_err}"
+            )
+
+        if is_auth_error_payload(data):
+            raise RuntimeError(describe_auth_error("reghelp", data))
+
+        if data.get("status") == "error":
+            raise RuntimeError(
+                f"REGHelp RecaptchaMobile 任务创建失败: {data.get('detail') or data.get('message') or data}"
+            )
+
+        task_id = data.get("id")
+        if not task_id:
+            raise RuntimeError(f"REGHelp RecaptchaMobile 任务创建返回异常: {data}")
+
+        if log_callback:
+            price_info = ""
+            if data.get("price") is not None:
+                price_info = f" (计费: {data.get('price')}, 余额: {data.get('balance')})"
+            await log_callback(f"REGHelp RecaptchaMobile 任务已创建 (id={task_id}){price_info}")
+
+        for attempt in range(1, 91):
+            await asyncio.sleep(2.0)
+            if log_callback and attempt % 4 == 0:
+                await log_callback(f"等待 REGHelp RecaptchaMobile 解题 ({attempt * 2}s)...")
+
+            check_resp = await self.client.get(
+                f"{used_base}/RecaptchaMobile/getStatus",
+                params={"apiKey": self.api_key, "id": task_id},
+            )
+            res = check_resp.json()
+            status = str(res.get("status") or "").lower()
+            if status == "done":
+                token = res.get("token")
+                if not token:
+                    raise RuntimeError(f"REGHelp RecaptchaMobile 完成但未返回 token: {res}")
+                return token
+            if status == "error":
+                raise RuntimeError(
+                    f"REGHelp RecaptchaMobile 解题失败: {res.get('message') or res.get('detail') or res}"
+                )
+
+        raise TimeoutError("REGHelp RecaptchaMobile 解题超时 (超过最大轮询阈值)")
+
+    # 官方客户端 / 任务书对齐别名
+    RecaptchaMobile = get_recaptcha_mobile_token
+    solve_recaptcha_mobile = get_recaptcha_mobile_token
 
 
 # 学术规范别名，与 AntiSafetyService / AttestationProofService 命名风格保持一致

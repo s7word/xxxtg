@@ -283,8 +283,11 @@ async def apply_vault_account_credentials(req: ApplyVaultCredentialsRequest):
     summary="对指定已有账号发起 my.telegram.org 登录并申请/读取 api_id/api_hash",
 )
 async def start_telegram_apps_job(req: TelegramAppsStartRequest):
+    if not req.account_id and not req.phone:
+        raise HTTPException(status_code=400, detail="account_id 或 phone 至少提供一个")
     return await TelegramAppsHelper.start_job(
         account_id=req.account_id,
+        phone=req.phone,
         auto_read_code=req.auto_read_code,
         app_title=req.app_title,
         app_shortname=req.app_shortname,

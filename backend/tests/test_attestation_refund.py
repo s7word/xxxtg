@@ -16,6 +16,7 @@ if str(REPO_ROOT) not in sys.path:
 
 os.chdir(REPO_ROOT)
 
+from backend.app.config import raw_urls_are_contaminated  # noqa: E402
 from backend.app.models.schemas import AppConfigModel  # noqa: E402
 from backend.app.services.account_vault import VAULT_GUIDANCE, build_apps_apply_hint  # noqa: E402
 from backend.app.services.antisafety import AntiSafetyService  # noqa: E402
@@ -108,6 +109,48 @@ class TestAttestationUrlIsolation(unittest.TestCase):
         self.assertFalse(has_valid_api_key(""))
         self.assertFalse(has_valid_api_key("none"))
         self.assertFalse(has_valid_api_key("short"))
+
+    def test_raw_urls_contamination_detector(self):
+        self.assertTrue(raw_urls_are_contaminated({
+            "antisafety_base_urls": ["https://api.antisafety.net", "https://api.reghelp.net"],
+        }))
+        self.assertTrue(raw_urls_are_contaminated({
+            "reghelp_base_urls": ["https://api.reghelp.net", "https://api.antisafety.net"],
+        }))
+        self.assertFalse(raw_urls_are_contaminated({
+            "antisafety_base_urls": ["https://api.antisafety.net"],
+            "reghelp_base_urls": ["https://api.reghelp.net"],
+        }))
+
+    def test_load_config_rewrites_dirty_disk(self):
+        import json
+        import tempfile
+        import backend.app.config as cfg_mod
+
+        original_file = cfg_mod.CONFIG_FILE
+        original_instance = cfg_mod.ConfigManager._instance
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.json"
+            path.write_text(json.dumps({
+                "antisafety_base_urls": ["https://api.antisafety.net", "https://api.reghelp.net"],
+                "reghelp_base_urls": ["https://api.reghelp.net", "https://api.antisafety.net"],
+                "reghelp_api_key": "w9vcrhw7pOK0WKBtQLhdjH62eYtRSFbR",
+                "attestation_provider_mode": "reghelp_primary",
+            }), encoding="utf-8")
+            cfg_mod.CONFIG_FILE = path
+            cfg_mod.ConfigManager._instance = None
+            try:
+                mgr = cfg_mod.ConfigManager()
+                self.assertEqual(mgr.config.antisafety_base_urls, ["https://api.antisafety.net"])
+                self.assertEqual(mgr.config.reghelp_base_urls, ["https://api.reghelp.net"])
+                disk = json.loads(path.read_text(encoding="utf-8"))
+                self.assertEqual(disk["antisafety_base_urls"], ["https://api.antisafety.net"])
+                self.assertEqual(disk["reghelp_base_urls"], ["https://api.reghelp.net"])
+                self.assertNotIn("reghelp.net", "".join(disk["antisafety_base_urls"]))
+                self.assertNotIn("antisafety.net", "".join(disk["reghelp_base_urls"]))
+            finally:
+                cfg_mod.CONFIG_FILE = original_file
+                cfg_mod.ConfigManager._instance = original_instance
 
 
 class TestAttestationGatewayPreference(unittest.TestCase):
@@ -267,6 +310,8 @@ class TestVaultGuidance(unittest.TestCase):
         self.assertIn(".session", VAULT_GUIDANCE)
         self.assertIn("custom_api_id", VAULT_GUIDANCE)
         self.assertIn("凭证库", VAULT_GUIDANCE)
+        self.assertIn("777000", VAULT_GUIDANCE)
+        self.assertIn("轨 A", VAULT_GUIDANCE)
 
     def test_hint_for_json_only_published_account(self):
         hint = build_apps_apply_hint({

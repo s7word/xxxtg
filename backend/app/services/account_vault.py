@@ -28,14 +28,17 @@ logger = logging.getLogger("AccountVault")
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 VAULT_GUIDANCE = (
-    "lod_user 中现存账号记录的 app_id=4 属于 Telegram 官方公开泄露 ID，"
-    "不能直接当作专属开发者凭证使用（缺少合法 Push Token 时会触发 API_ID_PUBLISHED_FLOOD）。"
-    "若要用这些已有账号申请全新 api_id / api_hash："
-    "1) 将与 JSON 同名的 .session 文件放到同一目录，控制台可尝试自动读取 my.telegram.org 登录码；"
-    "2) 若没有 .session，可在前端「🔐 凭证库 / 开发者 API」发起申请，然后在该账号的 Telegram 客户端"
-    "查看 Web 登录码并在本页提交；"
-    "3) 若已有自建 api_id/api_hash（曾在 my.telegram.org 申请过），直接在「参数拓扑」填写 "
-    "custom_api_id / custom_api_hash，并将 api_credential_mode 设为 auto 或 custom。"
+    "本地 lod_user 里现有的 3 个 JSON 只有元数据、没有带 auth_key 的 .session，"
+    "记录中的 app_id=4 是公开泄露官方 ID，不能当专属开发者凭证。"
+    "可以这样提供/申请专属 api_id / api_hash："
+    "【轨 A · 已登录的 Telegram 客户端，哪怕没有 .session】"
+    "在「🔐 凭证库 / 开发者 API」填入该账号手机号，点击「从 my.telegram.org 申请专属 API ID/Hash」。"
+    "系统会向 777000 官方号发送 Web 登录码，你在手机 Telegram 里查看后填回本页即可自动登录 /apps 完成申请。"
+    "【轨 B · 已有 Telethon .session】"
+    "把 *.session 拖入/复制到 lod_user/ 或 data/sessions/（最好与 JSON 同名），刷新凭证库后点申请，"
+    "系统会静默读取 777000 消息并完成申请。"
+    "【轨 C · 已经在 my.telegram.org 申请过】"
+    "直接到「⚙️ 参数拓扑」填写 custom_api_id / custom_api_hash，并把 api_credential_mode 设为 auto 或 custom。"
 )
 
 

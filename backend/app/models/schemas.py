@@ -309,8 +309,15 @@ class ApplyVaultCredentialsResponse(BaseModel):
 
 
 class TelegramAppsStartRequest(BaseModel):
-    """对指定已有账号发起 my.telegram.org 开发者门户登录"""
-    account_id: str
+    """对指定已有账号或手机号发起 my.telegram.org 开发者门户登录"""
+    account_id: Optional[str] = Field(
+        default=None,
+        description="凭证库账号 ID；与 phone 二选一，优先使用 account_id"
+    )
+    phone: Optional[str] = Field(
+        default=None,
+        description="已登录 Telegram 客户端的手机号。无 .session 时走 Web 登录码手动提交"
+    )
     auto_read_code: bool = Field(
         default=True,
         description="若存在 Telethon session，则自动读取官方登录验证码"

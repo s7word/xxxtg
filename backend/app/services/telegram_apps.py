@@ -25,7 +25,7 @@ from fastapi import HTTPException
 
 from backend.app.config import ConfigManager
 from backend.app.models.schemas import TelegramAppsJobResponse
-from backend.app.services.account_vault import AccountVaultService
+from backend.app.services.account_vault import AccountVaultService, normalize_phone
 from backend.app.services.net_utils import create_httpx_client
 
 logger = logging.getLogger("TelegramAppsHelper")
@@ -162,12 +162,12 @@ class TelegramAppsJobManager:
             cls._instance = TelegramAppsJobManager()
         return cls._instance
 
-    def create_job(self, account_id: str, phone: str) -> str:
+    def create_job(self, account_id: Optional[str], phone: str) -> str:
         job_id = str(uuid.uuid4())[:8]
         now = datetime.datetime.now().isoformat()
         self.jobs[job_id] = {
             "job_id": job_id,
-            "account_id": account_id,
+            "account_id": account_id or "",
             "phone": phone,
             "status": "pending",
             "logs": [],
@@ -465,17 +465,22 @@ class TelegramAppsHelper:
         if not job:
             return
 
-        account = AccountVaultService.get_account(job["account_id"])
-        if not account:
-            manager.update(job_id, status="failed", error="账号已不在凭证库中")
-            await manager.append_log(job_id, "❌ 账号已不在凭证库中")
-            return
+        account = None
+        if job.get("account_id"):
+            account = AccountVaultService.get_account(job["account_id"])
 
-        phone = account.phone or job.get("phone")
+        phone = (account.phone if account else None) or job.get("phone")
         if not phone:
             manager.update(job_id, status="failed", error="账号缺少手机号")
-            await manager.append_log(job_id, "❌ 账号缺少手机号，无法向 my.telegram.org 发起登录")
+            await manager.append_log(job_id, "❌ 缺少手机号，无法向 my.telegram.org 发起登录")
             return
+
+        if not account:
+            await manager.append_log(
+                job_id,
+                "未绑定凭证库账号 / 缺少 .session：将向该手机号已登录的 Telegram 客户端发送 Web 登录码，"
+                "请在官方号 777000 的消息中查看后于控制台提交。",
+            )
 
         http = cls._http_client(job.get("cookies") or None)
         try:
@@ -488,7 +493,7 @@ class TelegramAppsHelper:
                 await manager.append_log(job_id, "登录验证码已请求，Telegram 会将其发送到该账号已登录的官方客户端")
 
             code = (manual_code or "").strip() or None
-            if not code and auto_read_code and account.has_session:
+            if not code and auto_read_code and account and account.has_session:
                 manager.update(job_id, status="waiting_code", needs_manual_code=False)
                 await manager.append_log(job_id, "正在通过 Telethon 读取官方账号 777000 的登录验证码...")
                 try:
@@ -501,8 +506,8 @@ class TelegramAppsHelper:
                 manager.update(job_id, status="waiting_code", needs_manual_code=True)
                 await manager.append_log(
                     job_id,
-                    "未自动获得验证码。请在该账号的 Telegram 客户端查看 my.telegram.org 登录码，"
-                    "然后调用提交验证码接口或在控制台手动填入。",
+                    "未自动获得验证码。请打开该手机号已登录的 Telegram 客户端，"
+                    "查看官方号 777000 发来的 my.telegram.org Web 登录码，然后在控制台填入。",
                 )
                 return
 
@@ -548,37 +553,64 @@ class TelegramAppsHelper:
             await http.aclose()
 
     @classmethod
+    def _resolve_start_target(
+        cls,
+        account_id: Optional[str],
+        phone: Optional[str],
+    ):
+        account = None
+        if account_id:
+            account = AccountVaultService.get_account(account_id)
+            if not account:
+                raise HTTPException(status_code=404, detail="Account not found in vault")
+        normalized = normalize_phone(phone) if phone else None
+        if not account and normalized:
+            for item in AccountVaultService.scan_accounts():
+                if item.phone == normalized:
+                    account = item
+                    account_id = item.account_id
+                    break
+        resolved_phone = (account.phone if account else None) or normalized
+        if not resolved_phone:
+            raise HTTPException(status_code=400, detail="account_id 或有效 phone 至少提供一个")
+        return account, account_id, resolved_phone
+
+    @classmethod
     async def start_job(
         cls,
-        account_id: str,
+        account_id: Optional[str] = None,
+        phone: Optional[str] = None,
         auto_read_code: bool = True,
         app_title: Optional[str] = None,
         app_shortname: Optional[str] = None,
         apply_to_config: bool = False,
     ) -> TelegramAppsJobResponse:
-        account = AccountVaultService.get_account(account_id)
-        if not account:
-            raise HTTPException(status_code=404, detail="Account not found in vault")
-        if not account.phone:
-            raise HTTPException(status_code=400, detail="Account is missing a phone number")
+        account, account_id, resolved_phone = cls._resolve_start_target(account_id, phone)
 
         manager = TelegramAppsJobManager.get_instance()
-        job_id = manager.create_job(account_id, account.phone)
+        job_id = manager.create_job(account_id, resolved_phone)
         manager.update(
             job_id,
             app_title_pref=app_title,
             app_shortname_pref=app_shortname,
         )
-        await manager.append_log(job_id, f"已创建申请任务，目标账号 {account.phone}")
-        if not account.has_session:
+        await manager.append_log(job_id, f"已创建申请任务，目标账号 {resolved_phone}")
+        if account and not account.has_session:
             stem = Path(account.filename or (account.phone or "phone")).stem
             await manager.append_log(
                 job_id,
                 f"⚠️ 该账号缺少同名 .session。自动读取 my.telegram.org 登录码需要 Telethon session："
-                f"请将 `{stem}.session` 放到与 JSON 相同的目录；否则请在 Telegram 客户端查看 Web 登录码后在控制台提交。",
+                f"请将 `{stem}.session` 放到 lod_user/ 或 data/sessions/；"
+                "否则请在已登录的 Telegram 客户端查看官方号 777000 的 Web 登录码后在控制台提交。",
             )
-        elif account.apps_apply_hint:
+        elif account and account.apps_apply_hint:
             await manager.append_log(job_id, account.apps_apply_hint)
+        elif not account:
+            await manager.append_log(
+                job_id,
+                "轨 A：无 .session，将向该手机号已登录的 Telegram 客户端发送 Web 登录码，"
+                "请在官方号 777000 查看后于本页提交。",
+            )
         asyncio.create_task(
             cls.run_job(
                 job_id,
