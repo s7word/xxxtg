@@ -34,6 +34,24 @@ def normalize_proxy_mode(value: Any) -> str:
     return token if token in PROXY_MODES else "custom_pool"
 
 
+def normalize_sms_max_price(value: Any) -> Optional[float]:
+    """把配置/任务级最高出价规范化为 >0 的 float；空值或非法输入视为未设置。"""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        token = value.strip()
+        if not token:
+            return None
+        value = token
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    if parsed <= 0:
+        return None
+    return parsed
+
+
 class CustomProxyItem(BaseModel):
     """用户手动粘贴并持久化的自建代理节点"""
     id: Optional[str] = None
@@ -105,6 +123,14 @@ class AppConfigModel(BaseModel):
     grizzly_sms_api_key: str = Field(
         default="66bd4d8e5f54db073d15c2856c9a1366",
         description="Grizzly SMS (grizzlysms.com) API Key"
+    )
+    sms_max_price: Optional[float] = Field(
+        default=None,
+        description=(
+            "单次接码最高出价上限（RUB）。热门/稀缺国家（如伊拉克 IQ）开启动态竞价时，"
+            "平台在 [底价, maxPrice] 范围内匹配高优先级现卡。"
+            "为空表示使用平台默认底价；建议热门国家设为 40~80。"
+        ),
     )
     target_country: str = Field(
         default="cl",
@@ -256,6 +282,11 @@ class AppConfigModel(BaseModel):
         }
         return aliases.get(token, "grizzlysms")
 
+    @field_validator("sms_max_price", mode="before")
+    @classmethod
+    def _normalize_sms_max_price(cls, value):
+        return normalize_sms_max_price(value)
+
 
 class DeviceProfileSchema(BaseModel):
     """边缘节点硬件拓扑与环境指纹模型"""
@@ -372,6 +403,13 @@ class RegisterTaskRequest(BaseModel):
         default=None,
         description="单次任务覆盖接码提供源: grizzlysms / vaksms；为空则使用全局配置",
     )
+    max_price: Optional[float] = Field(
+        default=None,
+        description=(
+            "单次任务接码最高出价上限（RUB）。覆盖全局 sms_max_price；"
+            "为空则回落系统配置，再为空则使用平台默认底价"
+        ),
+    )
 
     @field_validator("proxy_mode", mode="before")
     @classmethod
@@ -392,6 +430,11 @@ class RegisterTaskRequest(BaseModel):
         }
         return aliases.get(token, token)
 
+    @field_validator("max_price", mode="before")
+    @classmethod
+    def _normalize_task_max_price(cls, value):
+        return normalize_sms_max_price(value)
+
 # 学术化别名
 NodeProvisioningRequest = RegisterTaskRequest
 
@@ -400,6 +443,9 @@ class BatchRegisterRequest(RegisterTaskRequest):
     """并发批量节点引导请求"""
     count: int = Field(default=3, ge=1, le=10, description="批量任务数 (1~10)")
     concurrency: int = Field(default=3, ge=1, le=10, description="同时运行的最大任务数")
+
+
+RegisterBatchRequest = BatchRegisterRequest
 
 
 class RegisterTaskResponse(BaseModel):

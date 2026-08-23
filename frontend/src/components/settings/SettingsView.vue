@@ -131,6 +131,22 @@
           <label class="ce-label">Grizzly SMS API Key</label>
           <input v-model="config.grizzly_sms_api_key" type="password" class="ce-input mono" placeholder="66bd4d8e5f54db073d15c2856c9a1366" />
         </div>
+        <div>
+          <label class="ce-label">📈 动态最高出价上限 (Max Price / Bidding)</label>
+          <input
+            v-model.number="config.sms_max_price"
+            type="number"
+            min="0"
+            step="0.1"
+            class="ce-input mono"
+            placeholder="留空=平台底价；热门国家建议 40~60"
+          />
+          <p class="ce-tiny">
+            单位 RUB。如遇伊拉克 IQ、欧美热门段返回 <code>NO_NUMBERS</code>，
+            可提高最高出价（如 40~60 RUB / 约 $0.50），平台将在
+            <code>[底价, maxPrice]</code> 内优先分配高优先级现卡，而不是卡在 0.5 卢布的空库存底价桶。
+          </p>
+        </div>
         <LiveStockCountryPicker
           v-model="config.target_country"
           :provider="config.sms_provider"

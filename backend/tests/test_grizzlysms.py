@@ -16,7 +16,13 @@ if str(REPO_ROOT) not in sys.path:
 
 os.chdir(REPO_ROOT)
 
-from backend.app.models.schemas import AppConfigModel, RegisterTaskRequest  # noqa: E402
+from backend.app.models.schemas import (  # noqa: E402
+    AppConfigModel,
+    BatchRegisterRequest,
+    RegisterBatchRequest,
+    RegisterTaskRequest,
+    normalize_sms_max_price,
+)
 from backend.app.services.grizzlysms import (  # noqa: E402
     GrizzlySmsError,
     GrizzlySmsService,
@@ -85,6 +91,9 @@ class TestGrizzlyCountryMapping(unittest.TestCase):
         self.assertEqual(resolve_country_iso2("加拿大"), "ca")
         self.assertEqual(resolve_grizzly_country_id("CHL"), 151)
         self.assertEqual(resolve_grizzly_country_id("india"), 22)
+        self.assertEqual(resolve_country_iso2("伊拉克"), "iq")
+        self.assertEqual(resolve_country_iso2("IRQ"), "iq")
+        self.assertEqual(resolve_grizzly_country_id("iq"), 47)
 
     def test_numeric_passthrough_and_unknown(self):
         self.assertEqual(resolve_grizzly_country_id("22"), 22)
@@ -120,6 +129,35 @@ class TestGrizzlySmsClient(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(params["action"], "getNumber")
         self.assertEqual(params["country"], 22)
         self.assertEqual(params["service"], "tg")
+        self.assertNotIn("maxPrice", params)
+        self.assertNotIn("max_price", params)
+
+    async def test_get_number_with_max_price_sends_both_aliases(self):
+        self.svc.client.get.return_value = DummyResponse("ACCESS_NUMBER:91001:9647782082712")
+        act_id, phone = await self.svc.get_number(country="iq", service="tg", max_price=50.0)
+        self.assertEqual(act_id, "91001")
+        self.assertEqual(phone, "+9647782082712")
+        params = self.svc.client.get.await_args.kwargs["params"]
+        self.assertEqual(params["action"], "getNumber")
+        self.assertEqual(params["country"], 47)
+        self.assertEqual(params["service"], "tg")
+        self.assertEqual(params["maxPrice"], 50.0)
+        self.assertEqual(params["max_price"], 50.0)
+
+    async def test_get_number_with_operator_and_max_price(self):
+        self.svc.client.get.return_value = DummyResponse("ACCESS_NUMBER:77:9647700111222")
+        await self.svc.get_number(country="iraq", service="tg", operator="asiacell", max_price="80")
+        params = self.svc.client.get.await_args.kwargs["params"]
+        self.assertEqual(params["operator"], "asiacell")
+        self.assertEqual(params["maxPrice"], 80.0)
+        self.assertEqual(params["max_price"], 80.0)
+
+    async def test_get_number_ignores_non_positive_max_price(self):
+        self.svc.client.get.return_value = DummyResponse("ACCESS_NUMBER:1:919000000000")
+        await self.svc.get_number(country="in", max_price=0)
+        params = self.svc.client.get.await_args.kwargs["params"]
+        self.assertNotIn("maxPrice", params)
+        self.assertNotIn("max_price", params)
 
     async def test_get_number_no_numbers(self):
         self.svc.client.get.return_value = DummyResponse("NO_NUMBERS")
@@ -201,6 +239,14 @@ class TestSmsProviderConfig(unittest.TestCase):
         cfg = AppConfigModel()
         self.assertEqual(cfg.sms_provider, "grizzlysms")
         self.assertEqual(cfg.grizzly_sms_api_key, "66bd4d8e5f54db073d15c2856c9a1366")
+        self.assertIsNone(cfg.sms_max_price)
+
+    def test_sms_max_price_normalizes(self):
+        self.assertEqual(AppConfigModel(sms_max_price=50).sms_max_price, 50.0)
+        self.assertEqual(AppConfigModel(sms_max_price="80.5").sms_max_price, 80.5)
+        self.assertIsNone(AppConfigModel(sms_max_price="").sms_max_price)
+        self.assertIsNone(AppConfigModel(sms_max_price=0).sms_max_price)
+        self.assertIsNone(normalize_sms_max_price("not-a-price"))
 
     def test_aliases_normalize(self):
         self.assertEqual(AppConfigModel(sms_provider="Grizzly-SMS").sms_provider, "grizzlysms")
@@ -211,6 +257,14 @@ class TestSmsProviderConfig(unittest.TestCase):
     def test_task_request_accepts_override(self):
         req = RegisterTaskRequest(country="in", sms_provider="vak")
         self.assertEqual(req.sms_provider, "vaksms")
+
+    def test_task_and_batch_accept_max_price(self):
+        req = RegisterTaskRequest(country="iq", max_price=50)
+        self.assertEqual(req.max_price, 50.0)
+        batch = BatchRegisterRequest(country="iq", count=2, concurrency=2, max_price="60")
+        self.assertEqual(batch.max_price, 60.0)
+        self.assertIs(RegisterBatchRequest, BatchRegisterRequest)
+        self.assertIsNone(RegisterTaskRequest(country="iq", max_price="").max_price)
 
 
 class TestRegistrarGrizzlyPipeline(unittest.IsolatedAsyncioTestCase):
@@ -258,6 +312,7 @@ class TestRegistrarGrizzlyPipeline(unittest.IsolatedAsyncioTestCase):
             custom_api_hash="hash",
             default_2fa_password="x",
             auto_set_2fa=False,
+            sms_max_price=None,
         )
 
     async def test_factory_selects_grizzly(self):
@@ -355,6 +410,77 @@ class TestRegistrarGrizzlyPipeline(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Vak-SMS", logs)
         task = self.manager.get_task(self.task_id)
         self.assertTrue(task["no_number"])
+
+    async def test_pipeline_passes_task_max_price_over_config(self):
+        sms = FakeSms()
+        sms.get_number = AsyncMock(side_effect=NoNumberAvailableError("iq", "NO_NUMBERS"))
+        gw = MagicMock()
+        gw.close = AsyncMock()
+        cfg = self._config("grizzlysms")
+        cfg.sms_max_price = 50.0
+        cfg_mgr = SimpleNamespace(config=cfg)
+        with patch("backend.app.services.registrar.ConfigManager.get_instance", return_value=cfg_mgr), \
+             patch("backend.app.services.registrar.GrizzlySmsService", return_value=sms), \
+             patch("backend.app.services.registrar.AttestationGatewayService", return_value=gw), \
+             patch("backend.app.services.registrar.DeviceProfileManager.get_resolved_profile", return_value=self._profile()), \
+             patch.object(RegistrationOrchestrator, "_resolve_custom_proxy", new=AsyncMock(return_value=None)):
+            await RegistrationOrchestrator.run_registration(
+                task_id=self.task_id,
+                country="iq",
+                sms_provider="grizzlysms",
+                max_price=80.0,
+            )
+        sms.get_number.assert_awaited()
+        kwargs = sms.get_number.await_args.kwargs
+        self.assertEqual(kwargs["country"], "iq")
+        self.assertEqual(kwargs["service"], "tg")
+        self.assertEqual(kwargs["max_price"], 80.0)
+        logs = "\n".join(self.manager.get_task(self.task_id)["logs"])
+        self.assertIn("maxPrice=80.0 RUB", logs)
+        self.assertIn("可继续上调 sms_max_price", logs)
+
+    async def test_pipeline_falls_back_to_config_sms_max_price(self):
+        sms = FakeSms()
+        sms.get_number = AsyncMock(side_effect=NoNumberAvailableError("iq", "NO_NUMBERS"))
+        gw = MagicMock()
+        gw.close = AsyncMock()
+        cfg = self._config("grizzlysms")
+        cfg.sms_max_price = 50.0
+        cfg_mgr = SimpleNamespace(config=cfg)
+        with patch("backend.app.services.registrar.ConfigManager.get_instance", return_value=cfg_mgr), \
+             patch("backend.app.services.registrar.GrizzlySmsService", return_value=sms), \
+             patch("backend.app.services.registrar.AttestationGatewayService", return_value=gw), \
+             patch("backend.app.services.registrar.DeviceProfileManager.get_resolved_profile", return_value=self._profile()), \
+             patch.object(RegistrationOrchestrator, "_resolve_custom_proxy", new=AsyncMock(return_value=None)):
+            await RegistrationOrchestrator.run_registration(
+                task_id=self.task_id,
+                country="iq",
+                sms_provider="grizzlysms",
+            )
+        self.assertEqual(sms.get_number.await_args.kwargs["max_price"], 50.0)
+        logs = "\n".join(self.manager.get_task(self.task_id)["logs"])
+        self.assertIn("maxPrice=50.0 RUB", logs)
+
+    async def test_pipeline_hints_when_max_price_missing(self):
+        sms = FakeSms()
+        sms.get_number = AsyncMock(side_effect=NoNumberAvailableError("iq", "NO_NUMBERS"))
+        gw = MagicMock()
+        gw.close = AsyncMock()
+        cfg_mgr = SimpleNamespace(config=self._config("grizzlysms"))
+        with patch("backend.app.services.registrar.ConfigManager.get_instance", return_value=cfg_mgr), \
+             patch("backend.app.services.registrar.GrizzlySmsService", return_value=sms), \
+             patch("backend.app.services.registrar.AttestationGatewayService", return_value=gw), \
+             patch("backend.app.services.registrar.DeviceProfileManager.get_resolved_profile", return_value=self._profile()), \
+             patch.object(RegistrationOrchestrator, "_resolve_custom_proxy", new=AsyncMock(return_value=None)):
+            await RegistrationOrchestrator.run_registration(
+                task_id=self.task_id,
+                country="iq",
+                sms_provider="grizzlysms",
+            )
+        self.assertIsNone(sms.get_number.await_args.kwargs["max_price"])
+        logs = "\n".join(self.manager.get_task(self.task_id)["logs"])
+        self.assertIn("未设置最高出价", logs)
+        self.assertIn("伊拉克 IQ 建议 50~80 RUB", logs)
 
     async def test_refund_helper_prints_grizzly_status_8(self):
         class FakeManager:

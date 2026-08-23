@@ -13,6 +13,7 @@ const config = reactive({
   vak_sms_api_key: '',
   sms_provider: 'grizzlysms',
   grizzly_sms_api_key: '',
+  sms_max_price: null,
   target_country: 'cl',
   proxy_seller_key: '',
   use_proxy_seller_auto: false,
@@ -47,7 +48,8 @@ const form = reactive({
   app_type: 'telegram_android',
   proxy_mode: 'custom_pool',
   proxy_id: '',
-  sms_provider: 'grizzlysms'
+  sms_provider: 'grizzlysms',
+  max_price: null
 })
 
 const smsStock = reactive({
@@ -172,6 +174,7 @@ export const fetchConfig = async () => {
     form.country = data.target_country || 'cl'
     form.app_type = data.active_app_type || 'telegram_android'
     form.sms_provider = data.sms_provider || 'grizzlysms'
+    form.max_price = data.sms_max_price != null ? data.sms_max_price : null
     syncBaseUrlsTextFromConfig()
     fetchAvailableCountries({ provider: form.sms_provider, toast: false }).catch(() => {})
   } catch (e) {
@@ -183,6 +186,8 @@ export const fetchConfig = async () => {
 export const saveConfig = async () => {
   isSavingConfig.value = true
   applyBaseUrlsTextToConfig()
+  const bid = Number(config.sms_max_price)
+  config.sms_max_price = Number.isFinite(bid) && bid > 0 ? bid : null
   try {
     const res = await fetch('/api/config', {
       method: 'POST',

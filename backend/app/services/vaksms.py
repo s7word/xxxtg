@@ -101,11 +101,25 @@ class VakSmsService:
             logger.warning("Vak-SMS 全量库存聚合失败: %s", last_error)
         return {}
 
-    async def get_number(self, country: str = "cl", service: str = "tg", operator: Optional[str] = None) -> Tuple[str, str]:
+    async def get_number(
+        self,
+        country: str = "cl",
+        service: str = "tg",
+        operator: Optional[str] = None,
+        max_price: Optional[float] = None,
+    ) -> Tuple[str, str]:
         """动态申请租借一个临时带外通信通道句柄"""
         params = {"apiKey": self.api_key, "service": service, "country": country}
         if operator:
             params["operator"] = operator
+        if max_price is not None:
+            try:
+                bid = float(max_price)
+            except (TypeError, ValueError):
+                bid = 0.0
+            if bid > 0:
+                params["maxPrice"] = bid
+                params["max_price"] = bid
         resp = await self.client.get(f"{self.BASE_URL}/getNumber/", params=params)
         data = resp.json()
         if isinstance(data, dict) and "error" in data:

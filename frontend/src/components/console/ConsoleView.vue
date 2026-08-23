@@ -28,6 +28,30 @@
           </p>
         </div>
 
+        <div class="ce-alert" :class="effectiveMaxPrice ? 'is-ok' : 'is-warn'">
+          <div class="between">
+            <strong>📈 动态最高出价上限 (Max Price / Bidding)</strong>
+            <span :class="effectiveMaxPrice ? 'ce-badge is-success' : 'ce-badge is-warn'">
+              {{ effectiveMaxPrice ? `${effectiveMaxPrice} RUB` : '未设置 · 平台底价' }}
+            </span>
+          </div>
+          <p class="ce-tiny" style="margin-top:6px">
+            热门/稀缺国家（如伊拉克 IQ）网页端约 $0.53 / 50 RUB 才有现卡。
+            不传 <code>maxPrice</code> 时 API 只会打底价空桶并返回 <code>NO_NUMBERS</code>。
+          </p>
+          <div style="margin-top:8px">
+            <label class="ce-label">本次任务出价覆盖（RUB，可选）</label>
+            <input
+              v-model.number="form.max_price"
+              type="number"
+              min="0"
+              step="0.1"
+              class="ce-input mono"
+              placeholder="留空则使用全局设置"
+            />
+          </div>
+        </div>
+
         <div>
           <label class="ce-label">代理配对策略（使用者决定）</label>
           <select v-model="form.proxy_mode" class="ce-select">
@@ -318,6 +342,7 @@
 </template>
 
 <script setup>
+import { computed } from 'vue'
 import { APP_TYPE_OPTIONS, countryFlag, classifyLogLine, getStatusBadgeClass, formatDuration, formatTime } from '../../composables/useShared'
 import LiveStockCountryPicker from './LiveStockCountryPicker.vue'
 import { useConfig } from '../../composables/useConfig'
@@ -338,6 +363,14 @@ const {
   toggleSelectVisibleTasks, viewSelectedLogs, focusBatchTask, clearActiveLogs, retryTask, openTaskDetail
 } = useTasks()
 const { terminalExpanded, detailTask, goTab } = useUi()
+
+const effectiveMaxPrice = computed(() => {
+  const taskBid = Number(form.max_price)
+  if (Number.isFinite(taskBid) && taskBid > 0) return taskBid
+  const cfgBid = Number(config.sms_max_price)
+  if (Number.isFinite(cfgBid) && cfgBid > 0) return cfgBid
+  return null
+})
 
 const healthClass = (healthy) => {
   if (healthy === true) return 'ce-badge is-success'

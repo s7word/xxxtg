@@ -14,6 +14,7 @@ from typing import Any, Callable, Dict, Optional, Tuple, Union
 
 import httpx
 
+from backend.app.models.schemas import normalize_sms_max_price
 from backend.app.services.vaksms import NoNumberAvailableError, is_no_number_error
 
 logger = logging.getLogger("GrizzlySmsService")
@@ -270,6 +271,7 @@ COUNTRY_NAME_TO_ISO2: Dict[str, str] = {
     "argentina": "ar", "阿根廷": "ar",
     "peru": "pe", "秘鲁": "pe",
     "egypt": "eg", "埃及": "eg",
+    "iraq": "iq", "伊拉克": "iq",
 }
 
 US_COUNTRY_ALIASES = frozenset({187, 12})
@@ -583,11 +585,17 @@ class GrizzlySmsService:
         country: Union[str, int] = "in",
         service: str = DEFAULT_SERVICE,
         operator: Optional[str] = None,
+        max_price: Optional[float] = None,
     ) -> Tuple[str, str]:
         country_id = resolve_grizzly_country_id(country)
         extra: Dict[str, Any] = {"service": service or DEFAULT_SERVICE, "country": country_id}
         if operator:
             extra["operator"] = operator
+        bid = normalize_sms_max_price(max_price)
+        if bid is not None:
+            # 同时携带 camelCase / snake_case，兼容 SMS-Activate 与 Grizzly 协议子集。
+            extra["maxPrice"] = bid
+            extra["max_price"] = bid
         raw = await self._get("getNumber", extra)
         if _is_no_numbers(raw):
             iso = resolve_country_iso2(country) or str(country)

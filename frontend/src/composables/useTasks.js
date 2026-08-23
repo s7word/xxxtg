@@ -176,6 +176,10 @@ export const startRegistrationTask = async () => {
       proxy_mode: form.proxy_mode || 'custom_pool',
       sms_provider: form.sms_provider || config.sms_provider || 'grizzlysms'
     }
+    const taskMaxPrice = Number(form.max_price)
+    if (Number.isFinite(taskMaxPrice) && taskMaxPrice > 0) {
+      payload.max_price = taskMaxPrice
+    }
     if (form.proxy_mode === 'explicit' && form.proxy_id) {
       payload.proxy_id = form.proxy_id
     }

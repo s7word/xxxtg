@@ -446,6 +446,18 @@ class RegistrationOrchestrator:
             return VakSmsService(getattr(config, "vak_sms_api_key", "") or "")
         return GrizzlySmsService(getattr(config, "grizzly_sms_api_key", "") or "")
 
+    @staticmethod
+    def resolve_sms_max_price(config=None, max_price=None):
+        """任务级 max_price 优先，其次系统 sms_max_price；均未设置则返回 None。"""
+        from backend.app.models.schemas import normalize_sms_max_price
+
+        bid = normalize_sms_max_price(max_price)
+        if bid is not None:
+            return bid
+        if config is None:
+            return None
+        return normalize_sms_max_price(getattr(config, "sms_max_price", None))
+
     @classmethod
     def _sms_provider_label(cls, sms_svc, provider: Optional[str] = None) -> str:
         label = getattr(sms_svc, "PROVIDER_LABEL", None)
@@ -1065,6 +1077,7 @@ class RegistrationOrchestrator:
         proxy_id: Optional[str] = None,
         proxy_mode: str = "custom_pool",
         sms_provider: Optional[str] = None,
+        max_price: Optional[float] = None,
     ):
         """执行单次边缘虚拟节点引导全流程"""
         manager = RegistrationTaskManager.get_instance()
@@ -1076,6 +1089,7 @@ class RegistrationOrchestrator:
 
         resolved_sms_provider = cls.resolve_sms_provider(config, sms_provider)
         sms_svc = cls._create_sms_service(config, resolved_sms_provider)
+        lease_max_price = cls.resolve_sms_max_price(config, max_price)
 
         from backend.app.models.schemas import normalize_proxy_mode
         from backend.app.services.proxy_manager import find_custom_proxy
@@ -1176,9 +1190,24 @@ class RegistrationOrchestrator:
             await manager.append_log(task_id, f"绑定硬件特征: {profile['device_model']} ({profile['system_version']}), App: {profile['app_version']}")
             await manager.append_log(task_id, f"网络语言拓扑: {profile['system_lang_code']}, 时区偏置: {profile.get('tz_offset', -14400)}")
 
-            # 1. 租用带外通信句柄
-            await manager.append_log(task_id, f"正在向带外遥测提供者申请拓扑代码 '{target_country.upper()}' 的信道句柄...")
-            act_id, phone = await sms_svc.get_number(country=target_country, service="tg")
+            # 1. 租用带外通信句柄（热门/稀缺国家需携带 maxPrice 动态竞价，否则卡在底价空桶）
+            if lease_max_price is not None:
+                await manager.append_log(
+                    task_id,
+                    f"正在向带外遥测提供者申请拓扑代码 '{target_country.upper()}' 的信道句柄"
+                    f"（动态竞价上限 maxPrice={lease_max_price} RUB）..."
+                )
+            else:
+                await manager.append_log(
+                    task_id,
+                    f"正在向带外遥测提供者申请拓扑代码 '{target_country.upper()}' 的信道句柄"
+                    "（未设置最高出价，使用平台底价；热门国家可能 NO_NUMBERS）..."
+                )
+            act_id, phone = await sms_svc.get_number(
+                country=target_country,
+                service="tg",
+                max_price=lease_max_price,
+            )
             manager.update_task_status(task_id, "running", phone=phone)
             await manager.append_log(task_id, f"成功获取端点通信句柄: {phone} (Session Handle ID: {act_id})")
 
@@ -1467,6 +1496,17 @@ class RegistrationOrchestrator:
         except NoNumberAvailableError as ex:
             err = str(ex) or format_no_number_message(target_country)
             await manager.append_log(task_id, err)
+            if lease_max_price is None:
+                await manager.append_log(
+                    task_id,
+                    "提示: 热门/稀缺国家存在动态竞价。可在「参数拓扑」设置 sms_max_price"
+                    "（如伊拉克 IQ 建议 50~80 RUB）以匹配网页端高优先级现卡。"
+                )
+            else:
+                await manager.append_log(
+                    task_id,
+                    f"提示: 当前最高出价 {lease_max_price} RUB 仍未匹配到现卡，可继续上调 sms_max_price 后重试。"
+                )
             manager.update_task_status(task_id, "failed", error=err, no_number=True)
         except PhoneNumberBannedError:
             err = f"通信句柄 {phone} 处于服务端拒绝服务状态 (PHONE_NUMBER_BANNED)"
@@ -1550,6 +1590,7 @@ class RegistrationOrchestrator:
         proxy_id: Optional[str] = None,
         proxy_mode: str = "custom_pool",
         sms_provider: Optional[str] = None,
+        max_price: Optional[float] = None,
     ) -> None:
         """使用 Semaphore 异步并行调度一批虚拟节点引导任务。"""
         manager = RegistrationTaskManager.get_instance()
@@ -1575,6 +1616,7 @@ class RegistrationOrchestrator:
                     proxy_id=proxy_id,
                     proxy_mode=proxy_mode,
                     sms_provider=sms_provider,
+                    max_price=max_price,
                 )
 
         await asyncio.gather(*[_run_one(tid) for tid in task_ids], return_exceptions=True)
