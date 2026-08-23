@@ -17,7 +17,7 @@ logger = logging.getLogger("EdgeNodeApp")
 
 app = FastAPI(
     title="EdgeNode-Auditor Simulation Engine",
-    version="2.1.0",
+    version="2.2.0",
     description="分布式多协议边缘节点状态机仿真、带外挑战响应与密码学上下文审计框架"
 )
 
@@ -38,7 +38,7 @@ async def health_check():
     return {
         "status": "ok",
         "system": "EdgeNode-Auditor",
-        "version": "2.1.0",
+        "version": "2.2.0",
         "engine": "Distributed State Machine & Crypto Context Auditor"
     }
 

@@ -4,6 +4,13 @@ import hashlib
 from typing import Optional, Dict, Any, List
 import httpx
 
+from backend.app.services.attestation_urls import (
+    DEFAULT_ANTISAFETY_BASES,
+    DEFAULT_ANTISAFETY_REPORTING_BASES,
+    describe_auth_error,
+    is_auth_error_payload,
+    sanitize_provider_urls,
+)
 from backend.app.services.net_utils import create_httpx_client as _create_httpx_client
 
 logger = logging.getLogger("AttestationProofService")
@@ -22,8 +29,8 @@ class AntiSafetyService:
     API_BASE = "https://api.antisafety.net"
     REPORTING_BASE = "https://reporting.antisafety.net"
 
-    DEFAULT_API_BASES = ["https://api.antisafety.net"]
-    DEFAULT_REPORTING_BASES = ["https://reporting.antisafety.net"]
+    DEFAULT_API_BASES = list(DEFAULT_ANTISAFETY_BASES)
+    DEFAULT_REPORTING_BASES = list(DEFAULT_ANTISAFETY_REPORTING_BASES)
 
     def __init__(
         self,
@@ -35,12 +42,12 @@ class AntiSafetyService:
         total_timeout: float = 20.0
     ):
         self.api_key = api_key
-        self.api_bases = [b.rstrip("/") for b in (api_bases or self.DEFAULT_API_BASES) if b]
-        self.reporting_bases = [b.rstrip("/") for b in (reporting_bases or self.DEFAULT_REPORTING_BASES) if b]
-        if not self.api_bases:
-            self.api_bases = list(self.DEFAULT_API_BASES)
-        if not self.reporting_bases:
-            self.reporting_bases = list(self.DEFAULT_REPORTING_BASES)
+        self.api_bases = sanitize_provider_urls(api_bases or self.DEFAULT_API_BASES, "antisafety", self.DEFAULT_API_BASES)
+        self.reporting_bases = sanitize_provider_urls(
+            reporting_bases or self.DEFAULT_REPORTING_BASES,
+            "antisafety_reporting",
+            self.DEFAULT_REPORTING_BASES,
+        )
         self.client = _create_httpx_client(proxy=proxy, connect_timeout=connect_timeout, total_timeout=total_timeout)
         self._last_good_api_base: Optional[str] = None
 
@@ -61,13 +68,17 @@ class AntiSafetyService:
             try:
                 resp = await self.client.get(f"{base}{path}", params=params)
                 data = resp.json()
+                if is_auth_error_payload(data, getattr(resp, "status_code", None)):
+                    errors.append(f"{base} -> {describe_auth_error('antisafety', data)}")
+                    logger.warning("AntiSafety 候选网关 %s%s 鉴权失败，尝试下一候选: %s", base, path, data)
+                    continue
                 self._last_good_api_base = base
                 return base, data
             except Exception as e:
                 errors.append(f"{base} -> {e}")
-                logger.warning(f"Attestation 候选网关 {base}{path} 请求失败，尝试下一候选: {e}")
+                logger.warning(f"AntiSafety 候选网关 {base}{path} 请求失败，尝试下一候选: {e}")
 
-        raise RuntimeError("所有 Attestation 候选网关均不可达 (" + "; ".join(errors) + ")")
+        raise RuntimeError("所有 AntiSafety 候选网关均不可达 (" + "; ".join(errors) + ")")
 
     async def check_phone_history(self, phone_number: str, aid: str) -> Optional[Dict[str, Any]]:
         """审计端点寻址句柄的历史安全状态与协议合规指标"""
@@ -101,18 +112,21 @@ class AntiSafetyService:
         }
         if log_callback:
             await log_callback(
-                f"向 Attestation 网关发起凭证生成任务 (App: {params['appName']}, Build: {params['appBuild']}, "
+                f"向 AntiSafety Attestation 网关发起凭证生成任务 (App: {params['appName']}, Build: {params['appBuild']}, "
                 f"候选网关: {', '.join(self.api_bases)})..."
             )
 
         try:
             used_base, data = await self._get_with_fallback(self.api_bases, "/push/getToken", params)
         except Exception as req_err:
-            raise RuntimeError(f"连接 Attestation 网关失败 (已尝试 {', '.join(self.api_bases)}): {req_err}")
+            raise RuntimeError(f"连接 AntiSafety 网关失败 (已尝试 {', '.join(self.api_bases)}): {req_err}")
+
+        if is_auth_error_payload(data):
+            raise RuntimeError(describe_auth_error("antisafety", data))
 
         task_id = data.get("id")
         if not task_id:
-            raise RuntimeError(f"Attestation 握手凭证任务创建失败: {data}")
+            raise RuntimeError(f"AntiSafety 握手凭证任务创建失败: {data}")
 
         if log_callback and used_base != self.api_bases[0]:
             await log_callback(f"主用网关不可达，已自动切换至备用 Attestation 网关: {used_base}")

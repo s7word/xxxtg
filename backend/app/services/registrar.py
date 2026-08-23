@@ -25,6 +25,10 @@ from backend.app.config import ConfigManager, SESSIONS_DIR
 from backend.app.services.device_profile import DeviceProfileManager
 from backend.app.services.vaksms import VakSmsService
 from backend.app.services.attestation_gateway import AttestationGatewayService
+from backend.app.services.recaptcha_check import (
+    RecaptchaChallengeError,
+    parse_recaptcha_check,
+)
 
 logger = logging.getLogger("NodeProvisioningOrchestrator")
 
@@ -109,6 +113,141 @@ class RegistrationOrchestrator:
         return random.choice(pool["first"]), random.choice(pool["last"])
 
     @classmethod
+    async def _refund_and_revoke_channel(
+        cls,
+        sms_svc: VakSmsService,
+        act_id: Optional[str],
+        task_id: str,
+        manager: RegistrationTaskManager,
+        reason: str,
+    ) -> None:
+        """失败路径统一走 Vak-SMS setStatus=bad，触发取消与自动退款。"""
+        if not act_id:
+            return
+        result = await sms_svc.cancel(act_id)
+        if result.get("skipped"):
+            return
+        if result.get("success"):
+            await manager.append_log(
+                task_id,
+                f"[自动退订/撤销信道句柄完成] act_id={act_id} (Vak-SMS status=bad, 原因: {reason})"
+            )
+            return
+        detail = result.get("error") or result.get("data") or "unknown"
+        await manager.append_log(
+            task_id,
+            f"⚠️ 自动退订/撤销信道句柄未成功 (act_id={act_id}, 原因: {reason}): {detail}"
+        )
+
+    @classmethod
+    async def _resolve_proxy_seller_auto(
+        cls,
+        config,
+        target_country: str,
+        task_id: str,
+        manager: RegistrationTaskManager,
+    ) -> Optional[Dict[str, Any]]:
+        """当 use_proxy_seller_auto 开启时，按目标国家自动匹配并测活 Proxy-Seller 区域代理。
+
+        选中的动态代理会同时注入 MTProto 通道、Attestation 网关以及 RecaptchaMobile 解题通道，
+        以保证手机号国家、语言、时区与出口 IP 拓扑对齐。
+        """
+        from backend.app.services.proxyseller import (
+            ProxySellerService,
+            format_proxy_endpoint,
+            is_static_residential,
+        )
+
+        await manager.append_log(
+            task_id,
+            f"[多径中继网关] 正在检索 {target_country.upper()} 区域代理（API + 内置静态住宅池）..."
+        )
+        ps_svc = ProxySellerService(config.proxy_seller_key)
+        try:
+            regional = await ps_svc.get_proxy_list(country=target_country, refresh=True)
+            if regional:
+                selection = await ps_svc.select_best_proxy(
+                    target_country=target_country,
+                    probe=True,
+                    allow_fallback=False,
+                    refresh=False,
+                    max_probes=min(3, len(regional)),
+                )
+                chosen = selection.get("proxy")
+                if chosen:
+                    endpoint = format_proxy_endpoint(chosen)
+                    origin = (
+                        "内置静态住宅代理池"
+                        if is_static_residential(chosen)
+                        else "Proxy-Seller API"
+                    )
+                    await manager.append_log(
+                        task_id,
+                        f"[多径中继网关] 成功从 {origin} 自动匹配到 {target_country.upper()} "
+                        f"区域代理: {endpoint}"
+                    )
+                    if chosen.get("egress_ip") or chosen.get("egress_country"):
+                        await manager.append_log(
+                            task_id,
+                            f"[多径中继网关] 出口拓扑对齐: IP={chosen.get('egress_ip') or '-'} "
+                            f"国家={chosen.get('egress_country') or chosen.get('country') or target_country.upper()} "
+                            f"(手机号区域/语言/时区将按 {target_country.upper()} 对齐)"
+                        )
+                    return chosen
+                await manager.append_log(
+                    task_id,
+                    f"[多径中继网关] 已检索到 {len(regional)} 个 {target_country.upper()} "
+                    f"节点但未能完成测活选择，回退至列表首个节点"
+                )
+                first = regional[0]
+                origin = (
+                    "内置静态住宅代理池"
+                    if is_static_residential(first)
+                    else "Proxy-Seller API"
+                )
+                await manager.append_log(
+                    task_id,
+                    f"[多径中继网关] 成功从 {origin} 自动匹配到 {target_country.upper()} "
+                    f"区域代理: {format_proxy_endpoint(first)}"
+                )
+                return first
+
+            await manager.append_log(
+                task_id,
+                f"[多径中继网关] 目标区域 {target_country.upper()} 暂无可用 Proxy-Seller 代理，"
+                "尝试智能兜底到账户内其它活跃区域..."
+            )
+            fallback_sel = await ps_svc.select_best_proxy(
+                target_country=target_country,
+                probe=False,
+                allow_fallback=True,
+                refresh=False,
+            )
+            chosen = fallback_sel.get("proxy")
+            if chosen and fallback_sel.get("fallback_used"):
+                other = (chosen.get("country_code") or chosen.get("country") or "UNKNOWN").upper()
+                await manager.append_log(
+                    task_id,
+                    f"[多径中继网关] {target_country.upper()} 无匹配节点，已智能兜底至 {other} "
+                    f"区域代理: {format_proxy_endpoint(chosen)}"
+                )
+                return chosen
+            await manager.append_log(
+                task_id,
+                fallback_sel.get("hint")
+                or f"[多径中继网关] Proxy-Seller 未返回可用节点，将回退至静态后备中继"
+            )
+            return None
+        except Exception as exc:
+            await manager.append_log(
+                task_id,
+                f"[多径中继网关] 动态分配未成功 ({exc})，回退至静态后备中继"
+            )
+            return None
+        finally:
+            await ps_svc.close()
+
+    @classmethod
     async def perform_handshake(cls, client: TelegramClient, profile: Dict[str, Any], task_id: str, manager: RegistrationTaskManager):
         """执行标准端点握手序列与协议状态对齐"""
         await manager.append_log(task_id, "开始执行协议端点初始化握手序列...")
@@ -133,6 +272,79 @@ class RegistrationOrchestrator:
         await asyncio.sleep(jitter)
 
     @classmethod
+    async def _send_code_with_recaptcha(
+        cls,
+        client: TelegramClient,
+        phone: str,
+        profile: Dict[str, Any],
+        code_settings,
+        bypass_svc: AttestationGatewayService,
+        active_proxy: Optional[Dict[str, Any]],
+        task_id: str,
+        manager: RegistrationTaskManager,
+    ):
+        """发送 auth.sendCode；若触发 RECAPTCHA_CHECK_* 则自动解题并 invokeWithReCaptcha 重发。"""
+        send_req = functions.auth.SendCodeRequest(
+            phone_number=phone,
+            api_id=profile["api_id"],
+            api_hash=profile["api_hash"],
+            settings=code_settings,
+        )
+        try:
+            return await client(send_req)
+        except Exception as send_err:
+            parsed = parse_recaptcha_check(send_err)
+            if not parsed:
+                raise
+            action, site_key = parsed
+            await manager.append_log(
+                task_id,
+                f"检测到 Telegram RECAPTCHA_CHECK 人机挑战 "
+                f"(action={action}, site_key={site_key})，正在通过 REGHelp RecaptchaMobile 自动解题..."
+            )
+            try:
+                token = await bypass_svc.get_recaptcha_mobile_token(
+                    site_key=site_key,
+                    action=action,
+                    profile=profile,
+                    proxy=active_proxy,
+                    log_callback=lambda msg: manager.append_log(task_id, msg),
+                )
+            except Exception as solve_err:
+                raise RecaptchaChallengeError(
+                    f"REGHelp RecaptchaMobile 解题失败: {solve_err}",
+                    action=action,
+                    site_key=site_key,
+                ) from solve_err
+
+            if not token:
+                raise RecaptchaChallengeError(
+                    "REGHelp RecaptchaMobile 未返回 token",
+                    action=action,
+                    site_key=site_key,
+                )
+
+            await manager.append_log(
+                task_id,
+                "已获得 Recaptcha token，通过 invokeWithReCaptcha 重发 auth.sendCode..."
+            )
+            try:
+                return await client(functions.InvokeWithReCaptchaRequest(
+                    token=token,
+                    query=send_req,
+                ))
+            except Exception as retry_err:
+                retry_parsed = parse_recaptcha_check(retry_err)
+                detail = str(retry_err)
+                if retry_parsed:
+                    detail = f"{detail} (仍为 RECAPTCHA_CHECK_{retry_parsed[0]}__{retry_parsed[1]})"
+                raise RecaptchaChallengeError(
+                    f"附带 Recaptcha token 重发 SendCodeRequest 仍失败: {detail}",
+                    action=action,
+                    site_key=site_key,
+                ) from retry_err
+
+    @classmethod
     async def run_registration(
         cls,
         task_id: str,
@@ -150,23 +362,23 @@ class RegistrationOrchestrator:
 
         sms_svc = VakSmsService(config.vak_sms_api_key)
 
-        # 动态出口中继网关调度
+        # 动态出口中继网关调度：优先按手机号国家 target_country 从 Proxy-Seller 自动匹配
         active_proxy = proxy_override
         if not active_proxy and config.use_proxy_seller_auto and config.proxy_seller_key:
-            try:
-                await manager.append_log(task_id, f"尝试通过多径中继网关自动租借 {target_country.upper()} 出口跳点...")
-                from backend.app.services.proxyseller import ProxySellerService
-                ps_svc = ProxySellerService(config.proxy_seller_key)
-                fetched_proxies = await ps_svc.get_proxy_list(country=target_country)
-                if fetched_proxies:
-                    active_proxy = fetched_proxies[0]
-                    await manager.append_log(task_id, f"已动态分配中继跳点: {active_proxy['addr']}:{active_proxy['port']}")
-                await ps_svc.close()
-            except Exception as e:
-                await manager.append_log(task_id, f"中继网关动态分配未成功 ({e})，回退至静态后备中继")
+            active_proxy = await cls._resolve_proxy_seller_auto(
+                config=config,
+                target_country=target_country,
+                task_id=task_id,
+                manager=manager,
+            )
 
         if not active_proxy:
             active_proxy = config.fallback_proxy.model_dump()
+            await manager.append_log(
+                task_id,
+                f"[多径中继网关] 使用静态后备中继 {active_proxy.get('proxy_type', 'socks5')}://"
+                f"{active_proxy.get('addr')}:{active_proxy.get('port')}"
+            )
 
         # 统一 Attestation / Push 凭证高可用网关：按 config.attestation_provider_mode 策略
         # 在 REGHelp 与 AntiSafety 两个独立提供源之间自动选择主备顺序并容灾切换
@@ -178,6 +390,7 @@ class RegistrationOrchestrator:
         act_id = None
         check_id = None
         client = None
+        phone = None
 
         try:
             await manager.append_log(task_id, f"选定端点模板: {profile['name']} (AID: {aid})")
@@ -197,7 +410,7 @@ class RegistrationOrchestrator:
                 check_id = check_data.get("id")
                 if "BANNED" in check_data.get("statuses", []):
                     await manager.append_log(task_id, "检测到该通信句柄存在服务端历史异常记录，触发主动退避与信道撤销！")
-                    await sms_svc.cancel(act_id)
+                    await cls._refund_and_revoke_channel(sms_svc, act_id, task_id, manager, "PHONE_PREAUDIT_BANNED")
                     await bypass_svc.report_result(check_id, aid, "REJECTED")
                     manager.update_task_status(task_id, "failed", error="Endpoint handle pre-audit rejected")
                     return
@@ -292,12 +505,16 @@ class RegistrationOrchestrator:
             )
 
             await manager.append_log(task_id, "调用 auth.sendCode 触发服务端瞬时握手挑战分发...")
-            sent_code = await client(functions.auth.SendCodeRequest(
-                phone_number=phone,
-                api_id=profile["api_id"],
-                api_hash=profile["api_hash"],
-                settings=code_settings
-            ))
+            sent_code = await cls._send_code_with_recaptcha(
+                client=client,
+                phone=phone,
+                profile=profile,
+                code_settings=code_settings,
+                bypass_svc=bypass_svc,
+                active_proxy=active_proxy,
+                task_id=task_id,
+                manager=manager,
+            )
             phone_code_hash = sent_code.phone_code_hash
             await manager.append_log(task_id, f"挑战已由服务端下发! 分发通道类型: {type(sent_code.type).__name__}")
 
@@ -397,38 +614,53 @@ class RegistrationOrchestrator:
         except PhoneNumberBannedError:
             err = f"通信句柄 {phone} 处于服务端拒绝服务状态 (PHONE_NUMBER_BANNED)"
             await manager.append_log(task_id, f"❌ {err}")
-            if act_id: await sms_svc.cancel(act_id)
+            await cls._refund_and_revoke_channel(sms_svc, act_id, task_id, manager, "PHONE_NUMBER_BANNED")
             if check_id: await bypass_svc.report_result(check_id, aid, "BANNED")
             manager.update_task_status(task_id, "failed", error=err)
         except ApiIdPublishedFloodError:
             err = (
                 f"当前 api_id={profile.get('api_id')} 已被 Telegram 判定为公开泄露 ID，"
                 "在缺少合法 Push Token 的情况下触发 API_ID_PUBLISHED_FLOOD (SendCodeRequest)。"
-                "请在「全局参数拓扑」中配置自建开发者 api_id/api_hash "
-                "(https://my.telegram.org/apps 申请) 并将 api_credential_mode 设为 auto 或 custom，"
+                "请在「🔐 凭证库 / 开发者 API」用已有账号申请专属 api_id/api_hash，"
+                "或在「全局参数拓扑」填入自建 custom_api_id / custom_api_hash "
+                "并将 api_credential_mode 设为 auto 或 custom，"
                 "或修复 Attestation 网关连通性以获取合法 Push Token 后重试"
             )
             await manager.append_log(task_id, f"❌ {err}")
-            if act_id: await sms_svc.cancel(act_id)
+            await cls._refund_and_revoke_channel(sms_svc, act_id, task_id, manager, "API_ID_PUBLISHED_FLOOD")
             if check_id: await bypass_svc.report_result(check_id, aid, "API_ID_PUBLISHED_FLOOD")
             manager.update_task_status(task_id, "failed", error=err)
         except (PhoneNumberFloodError, FloodWaitError) as e:
             sec = getattr(e, 'seconds', 0)
             err = f"触发协议频控与退避限流，需等待 {sec} 秒 (FLOOD_WAIT)"
             await manager.append_log(task_id, f"❌ {err}")
-            if act_id: await sms_svc.cancel(act_id)
+            await cls._refund_and_revoke_channel(sms_svc, act_id, task_id, manager, "FLOOD_WAIT")
             if check_id: await bypass_svc.report_result(check_id, aid, "FLOOD_WAIT")
             manager.update_task_status(task_id, "failed", error=err)
-        except (PhoneCodeInvalidError, PhoneCodeExpiredError) as e:
+        except (PhoneCodeInvalidError, PhoneCodeExpiredError, PhoneCodeEmptyError) as e:
             err = f"带外挑战证明校验失败或已过期: {str(e)}"
             await manager.append_log(task_id, f"❌ {err}")
-            if act_id: await sms_svc.cancel(act_id)
+            await cls._refund_and_revoke_channel(sms_svc, act_id, task_id, manager, "WRONG_CODE")
             if check_id: await bypass_svc.report_result(check_id, aid, "WRONG_CODE")
             manager.update_task_status(task_id, "failed", error=err)
+        except TimeoutError as ex:
+            err = f"等待带外挑战证明超时 (NO_CODE): {str(ex) or repr(ex)}"
+            await manager.append_log(task_id, f"❌ {err}")
+            await cls._refund_and_revoke_channel(sms_svc, act_id, task_id, manager, "NO_CODE")
+            if check_id: await bypass_svc.report_result(check_id, aid, "NO_CODE")
+            manager.update_task_status(task_id, "failed", error=err)
+        except RecaptchaChallengeError as ex:
+            err = f"RECAPTCHA_CHECK 人机挑战未能突破: {str(ex) or repr(ex)}"
+            await manager.append_log(task_id, f"❌ {err}")
+            await cls._refund_and_revoke_channel(sms_svc, act_id, task_id, manager, "RECAPTCHA_CHECK")
+            if check_id: await bypass_svc.report_result(check_id, aid, "RECAPTCHA_CHECK")
+            manager.update_task_status(task_id, "failed", error=err)
         except Exception as ex:
+            parsed = parse_recaptcha_check(ex)
+            reason = "RECAPTCHA_CHECK" if parsed else "EXCEPTION"
             err = f"状态机引导流程异常: {str(ex) or repr(ex)}"
             await manager.append_log(task_id, f"❌ {err}")
-            if act_id: await sms_svc.cancel(act_id)
+            await cls._refund_and_revoke_channel(sms_svc, act_id, task_id, manager, reason)
             if check_id: await bypass_svc.report_result(check_id, aid, "NO_CODE")
             manager.update_task_status(task_id, "failed", error=err)
         finally:
