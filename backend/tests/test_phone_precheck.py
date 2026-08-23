@@ -55,11 +55,13 @@ class DummyResponse:
 
 class FakeAccount:
     def __init__(self, phone="+918310013712", has_session=True, app_id=4, app_hash="hash"):
+        self.account_id = f"probe-{phone}"
         self.phone = phone
         self.phone_raw = phone.lstrip("+")
         self.has_session = has_session
         self.app_id = app_id
         self.app_hash = app_hash
+        self.is_probe_active = True
         self.device_model = "Samsung SM-G950F"
         self.system_version = "SDK 33"
         self.app_version = "12.7.3"
