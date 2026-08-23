@@ -374,7 +374,7 @@ class RegistrationOrchestrator:
         manager: RegistrationTaskManager,
     ) -> Optional[Dict[str, Any]]:
         """优先从用户自建代理池按目标国家匹配节点。"""
-        from backend.app.services.proxy_manager import custom_pool_summary, select_custom_proxy
+        from backend.app.services.proxy_manager import custom_pool_summary, select_proxy_for_registration
         from backend.app.services.proxyseller import format_proxy_endpoint
 
         if not getattr(config, "custom_proxies", None):
@@ -382,18 +382,20 @@ class RegistrationOrchestrator:
         summary = custom_pool_summary(target_country)
         if not summary.get("total"):
             return None
-        chosen = select_custom_proxy(target_country)
+        chosen = select_proxy_for_registration(target_country)
         if not chosen:
             await manager.append_log(
                 task_id,
                 f"[自建代理池] 已载入 {summary['total']} 条自定义代理，"
-                f"但没有匹配 {target_country.upper()} 的节点"
-                + (f"（池内区域: {', '.join(summary.get('countries') or [])}）" if summary.get("countries") else "")
+                f"但没有可用于注册的节点（角色 registration/all，绑定 {target_country.upper()} 或全球通用）"
+                + (f"；池内区域: {', '.join(summary.get('countries') or [])}" if summary.get("countries") else "")
             )
             return None
         await manager.append_log(
             task_id,
-            f"[自建代理池] 成功匹配 {target_country.upper()} 区域代理: {format_proxy_endpoint(chosen)}"
+            f"[自建代理池] 成功匹配 {target_country.upper()} 注册通道: {format_proxy_endpoint(chosen)}"
+            + f" 角色={chosen.get('role') or 'all'}"
+            + (f" 绑定={chosen.get('assigned_country')}" if chosen.get("assigned_country") else " 绑定=全球")
             + (f" 延迟={chosen.get('latency_ms')}ms" if chosen.get("latency_ms") is not None else "")
         )
         if chosen.get("egress_ip") or chosen.get("egress_country") or chosen.get("country"):
@@ -857,6 +859,8 @@ class RegistrationOrchestrator:
         app_type: Optional[str] = None,
         proxy_override: Optional[Dict[str, Any]] = None,
         set_2fa: Optional[bool] = None,
+        proxy_id: Optional[str] = None,
+        proxy_mode: str = "custom_pool",
     ):
         """执行单次边缘虚拟节点引导全流程"""
         manager = RegistrationTaskManager.get_instance()
@@ -868,16 +872,55 @@ class RegistrationOrchestrator:
 
         sms_svc = VakSmsService(config.vak_sms_api_key)
 
-        # 动态出口中继网关调度：自建池按国家优先，再走 Proxy-Seller API / 内置静态住宅
+        from backend.app.models.schemas import normalize_proxy_mode
+        from backend.app.services.proxy_manager import find_custom_proxy
+        from backend.app.services.proxyseller import format_proxy_endpoint
+
+        mode = normalize_proxy_mode(proxy_mode)
+        if proxy_id and mode == "custom_pool":
+            mode = "explicit"
+
+        # 使用者决定配对关系：explicit 100% 遵从指定节点，不施加隐式国家约束
         active_proxy = proxy_override
-        if not active_proxy:
+        if not active_proxy and (proxy_id or mode == "explicit"):
+            if proxy_id:
+                found = find_custom_proxy(proxy_id=proxy_id)
+                if found:
+                    active_proxy = found
+                    await manager.append_log(
+                        task_id,
+                        f"[代理配对] 100% 遵从用户指定节点 {format_proxy_endpoint(found)}，"
+                        "不施加隐式国家约束"
+                    )
+                else:
+                    await manager.append_log(
+                        task_id,
+                        f"[代理配对] 未找到显式指定代理 {proxy_id}，回退自建池轮换"
+                    )
+                    mode = "custom_pool"
+            elif mode == "explicit":
+                await manager.append_log(task_id, "[代理配对] 已选显式模式但未提供 proxy_id，回退自建池轮换")
+                mode = "custom_pool"
+
+        if not active_proxy and mode in {"custom_pool", "explicit"}:
             active_proxy = await cls._resolve_custom_proxy(
                 config=config,
                 target_country=target_country,
                 task_id=task_id,
                 manager=manager,
             )
-        if not active_proxy and config.use_proxy_seller_auto:
+        if not active_proxy and mode == "auto":
+            active_proxy = await cls._resolve_proxy_seller_auto(
+                config=config,
+                target_country=target_country,
+                task_id=task_id,
+                manager=manager,
+            )
+        if (
+            not active_proxy
+            and mode == "custom_pool"
+            and config.use_proxy_seller_auto
+        ):
             active_proxy = await cls._resolve_proxy_seller_auto(
                 config=config,
                 target_country=target_country,
@@ -891,6 +934,7 @@ class RegistrationOrchestrator:
                 task_id,
                 f"[多径中继网关] 使用静态后备中继 {active_proxy.get('proxy_type', 'socks5')}://"
                 f"{active_proxy.get('addr')}:{active_proxy.get('port')}"
+                + (f"（策略={mode}）" if mode == "fallback" else "")
             )
 
         # 统一 Attestation / Push 凭证高可用网关：按 config.attestation_provider_mode 策略
@@ -1258,6 +1302,8 @@ class RegistrationOrchestrator:
         proxy_override: Optional[Dict[str, Any]] = None,
         set_2fa: Optional[bool] = None,
         concurrency: int = 3,
+        proxy_id: Optional[str] = None,
+        proxy_mode: str = "custom_pool",
     ) -> None:
         """使用 Semaphore 异步并行调度一批虚拟节点引导任务。"""
         manager = RegistrationTaskManager.get_instance()
@@ -1280,6 +1326,8 @@ class RegistrationOrchestrator:
                     app_type=app_type,
                     proxy_override=proxy_override,
                     set_2fa=set_2fa,
+                    proxy_id=proxy_id,
+                    proxy_mode=proxy_mode,
                 )
 
         await asyncio.gather(*[_run_one(tid) for tid in task_ids], return_exceptions=True)

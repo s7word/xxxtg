@@ -11,6 +11,10 @@ from urllib.parse import unquote, urlparse
 
 from backend.app.services.net_utils import format_httpx_proxy_url as _format_httpx_proxy_url
 
+from backend.app.models.schemas import (
+    PROXY_ROLES,
+    normalize_proxy_role,
+)
 from backend.app.services.proxyseller import (
     ProxySellerService,
     _norm,
@@ -23,6 +27,9 @@ from backend.app.services.proxyseller import (
     normalize_custom_proxy_item,
     proxy_identity,
 )
+
+REGISTRATION_ROLES = ("registration", "all")
+PRECHECK_ROLES = ("precheck", "all")
 
 logger = logging.getLogger("CustomProxyPool")
 
@@ -216,13 +223,68 @@ def _looks_like_hostport(token: str) -> bool:
     return bool(host) and _as_port(port) is not None
 
 
+def split_proxy_role_tag(line: str) -> Tuple[str, str, Optional[str]]:
+    """从文本末尾解析 #registration / #precheck / #all[:country]。
+
+    仅当 # 后的 token 是已知用途角色时才剥离，避免误伤密码中的 #。
+    支持 ``#registration``、``#precheck:cl``、``#all@in``。
+    """
+    raw = str(line or "")
+    if "#" not in raw:
+        return raw, "all", None
+    base, tag = raw.rsplit("#", 1)
+    tag = tag.strip()
+    if not tag:
+        return raw, "all", None
+    role_part = tag
+    country = None
+    for sep in (":", "@", "/", "="):
+        if sep in tag:
+            role_part, rest = tag.split(sep, 1)
+            country = _norm(rest) or None
+            break
+    role = normalize_proxy_role(role_part)
+    if normalize_proxy_role(role_part) != _norm(role_part) and _norm(role_part) not in PROXY_ROLES:
+        return raw, "all", None
+    if _norm(role_part) not in PROXY_ROLES:
+        return raw, "all", None
+    return base.strip(), role, country
+
+
+def proxy_role_of(item: Optional[Dict[str, Any]]) -> str:
+    return normalize_proxy_role((item or {}).get("role"))
+
+
+def proxy_assigned_country(item: Optional[Dict[str, Any]]) -> Optional[str]:
+    return _norm((item or {}).get("assigned_country")) or None
+
+
+def filter_proxies_by_role(
+    items: Iterable[Dict[str, Any]],
+    roles: Iterable[str],
+) -> List[Dict[str, Any]]:
+    allowed = {normalize_proxy_role(role) for role in roles}
+    return [item for item in items or [] if proxy_role_of(item) in allowed]
+
+
+def match_assigned_country(item: Dict[str, Any], country: Optional[str]) -> bool:
+    assigned = proxy_assigned_country(item)
+    if not assigned or not country:
+        return False
+    return match_proxy_country({"country_code": assigned, "country": assigned}, country)
+
+
 def parse_proxy_line(
     raw: str,
     default_scheme: str = "socks5",
     default_country: Optional[str] = None,
+    default_role: str = "all",
 ) -> Optional[Dict[str, Any]]:
     """解析单行代理文本。无法识别时返回 None。"""
     line = _clean_line(raw)
+    if not line:
+        return None
+    line, tagged_role, tagged_country = split_proxy_role_tag(line)
     if not line:
         return None
     scheme = _normalize_scheme(default_scheme)
@@ -237,11 +299,19 @@ def parse_proxy_line(
         item = _parse_delimited(line, ":", scheme)
     if not item:
         return None
+    role = tagged_role if tagged_role != "all" else normalize_proxy_role(default_role)
+    item["role"] = role
+    assigned = tagged_country or (_norm(default_country) or None)
+    item["assigned_country"] = assigned
     if default_country:
         token = _norm(default_country)
         item["country_code"] = token
         item["country"] = token.upper()
         item["country_alpha3"] = country_alpha3(token)
+    elif tagged_country:
+        item.setdefault("country_code", tagged_country)
+        item.setdefault("country", tagged_country.upper())
+        item.setdefault("country_alpha3", country_alpha3(tagged_country))
     return item
 
 
@@ -249,6 +319,7 @@ def parse_proxy_text(
     text: str,
     default_scheme: str = "socks5",
     default_country: Optional[str] = None,
+    default_role: str = "all",
 ) -> Dict[str, Any]:
     """批量解析多行代理文本，自动跳过空行、注释，并按 identity 去重。"""
     parsed: List[Dict[str, Any]] = []
@@ -258,7 +329,12 @@ def parse_proxy_text(
         original = raw.strip()
         if not _clean_line(original):
             continue
-        item = parse_proxy_line(original, default_scheme=default_scheme, default_country=default_country)
+        item = parse_proxy_line(
+            original,
+            default_scheme=default_scheme,
+            default_country=default_country,
+            default_role=default_role,
+        )
         if not item:
             skipped.append(original)
             continue
@@ -297,6 +373,8 @@ def to_persist_item(item: Dict[str, Any]) -> Dict[str, Any]:
         "checked_at": normalized.get("checked_at"),
         "source": "custom",
         "raw_line": _blank_to_none(normalized.get("raw_line")),
+        "role": proxy_role_of(normalized),
+        "assigned_country": proxy_assigned_country(normalized),
     }
 
 
@@ -345,6 +423,15 @@ def merge_imported_proxies(
                     "password": item.get("password"),
                     "raw_line": item.get("raw_line") or previous.get("raw_line"),
                 })
+                incoming_role = proxy_role_of(item)
+                if incoming_role != "all" or not previous.get("role"):
+                    merged_item["role"] = incoming_role
+                else:
+                    merged_item["role"] = proxy_role_of(previous)
+                if item.get("assigned_country"):
+                    merged_item["assigned_country"] = proxy_assigned_country(item)
+                elif previous.get("assigned_country"):
+                    merged_item["assigned_country"] = proxy_assigned_country(previous)
                 if item.get("country_code") and not previous.get("country_code"):
                     merged_item["country_code"] = item.get("country_code")
                     merged_item["country"] = item.get("country") or previous.get("country")
@@ -460,9 +547,15 @@ def import_proxy_text(
     replace: bool = False,
     default_scheme: str = "socks5",
     default_country: Optional[str] = None,
+    default_role: str = "all",
     concurrency: int = 4,
 ) -> Dict[str, Any]:
-    parsed = parse_proxy_text(text, default_scheme=default_scheme, default_country=default_country)
+    parsed = parse_proxy_text(
+        text,
+        default_scheme=default_scheme,
+        default_country=default_country,
+        default_role=default_role,
+    )
     incoming = parsed["proxies"]
     existing = [] if replace else [to_persist_item(item) for item in load_custom_proxy_items()]
     merged, stats = merge_imported_proxies(existing, incoming, replace=replace)
@@ -528,9 +621,15 @@ async def import_proxy_text_async(
     replace: bool = False,
     default_scheme: str = "socks5",
     default_country: Optional[str] = None,
+    default_role: str = "all",
     concurrency: int = 4,
 ) -> Dict[str, Any]:
-    parsed = parse_proxy_text(text, default_scheme=default_scheme, default_country=default_country)
+    parsed = parse_proxy_text(
+        text,
+        default_scheme=default_scheme,
+        default_country=default_country,
+        default_role=default_role,
+    )
     incoming = parsed["proxies"]
     existing = [] if replace else [to_persist_item(item) for item in load_custom_proxy_items()]
     merged, stats = merge_imported_proxies(existing, incoming, replace=replace)
@@ -564,13 +663,38 @@ async def import_proxy_text_async(
     }
 
 
+def _score_proxy_item(item: Dict[str, Any]) -> Tuple[int, float, str]:
+    if item.get("healthy") is True:
+        health_rank = 0
+    elif item.get("healthy") is False:
+        health_rank = 2
+    else:
+        health_rank = 1
+    latency = item.get("latency_ms")
+    latency_rank = float(latency) if isinstance(latency, (int, float)) else 10_000.0
+    return (health_rank, latency_rank, proxy_identity(item))
+
+
+def _pick_scored(items: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if not items:
+        return None
+    chosen = sorted(items, key=_score_proxy_item)[0]
+    return normalize_custom_proxy_item(chosen) or chosen
+
+
 def select_custom_proxy(
     country: Optional[str] = None,
     *,
     allow_unlabeled: bool = False,
+    roles: Optional[Iterable[str]] = None,
 ) -> Optional[Dict[str, Any]]:
-    """按国家从自建池挑选节点：健康优先，其次低延迟。"""
+    """按国家从自建池挑选节点：健康优先，其次低延迟。
+
+    roles 为空时不过滤用途角色（保持历史行为）；传入时仅保留对应角色。
+    """
     items = list_custom_proxies()
+    if roles:
+        items = filter_proxies_by_role(items, roles)
     if not items:
         return None
     regional = [item for item in items if match_proxy_country(item, country)] if country else list(items)
@@ -578,30 +702,119 @@ def select_custom_proxy(
         regional = [item for item in items if not item.get("country_code") and not item.get("country")]
     if not regional:
         return None
+    return _pick_scored(regional)
 
-    def _score(item: Dict[str, Any]) -> Tuple[int, float, str]:
-        if item.get("healthy") is True:
-            health_rank = 0
-        elif item.get("healthy") is False:
-            health_rank = 2
-        else:
-            health_rank = 1
-        latency = item.get("latency_ms")
-        latency_rank = float(latency) if isinstance(latency, (int, float)) else 10_000.0
-        return (health_rank, latency_rank, proxy_identity(item))
 
-    chosen = sorted(regional, key=_score)[0]
-    return normalize_custom_proxy_item(chosen) or chosen
+def select_proxy_for_registration(
+    country: Optional[str] = None,
+    *,
+    proxy_id: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """注册流水线选代理：仅 registration/all，优先用户绑定国家，其次全球通用节点。
+
+    显式 proxy_id 时 100% 遵从用户指定，不施加国家或角色约束。
+    """
+    if proxy_id:
+        found = find_custom_proxy(proxy_id=proxy_id)
+        if found:
+            return normalize_custom_proxy_item(found) or found
+        return None
+    items = filter_proxies_by_role(list_custom_proxies(), REGISTRATION_ROLES)
+    if not items:
+        return None
+    if not country:
+        return _pick_scored(items)
+    bound = [item for item in items if match_assigned_country(item, country)]
+    global_nodes = [item for item in items if not proxy_assigned_country(item)]
+    return _pick_scored(bound or global_nodes)
+
+
+def select_proxy_for_precheck(country: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """预检探测器选代理：仅 precheck/all，与注册专用节点物理隔离。"""
+    items = filter_proxies_by_role(list_custom_proxies(), PRECHECK_ROLES)
+    if not items:
+        return None
+    if country:
+        bound = [item for item in items if match_assigned_country(item, country)]
+        unlabeled = [item for item in items if not proxy_assigned_country(item)]
+        items = bound or unlabeled or items
+    return _pick_scored(items)
+
+
+def update_custom_proxy_item(
+    *,
+    proxy_id: Optional[str] = None,
+    addr: Optional[str] = None,
+    port: Optional[int] = None,
+    username: Optional[str] = None,
+    role: Optional[str] = None,
+    assigned_country: Optional[str] = None,
+    clear_assigned_country: bool = False,
+    proxy_type: Optional[str] = None,
+    country: Optional[str] = None,
+    country_code: Optional[str] = None,
+) -> Dict[str, Any]:
+    """修改单个自建代理的用途角色、绑定国家、协议等属性并持久化。"""
+    current = [to_persist_item(item) for item in load_custom_proxy_items()]
+    target = find_custom_proxy(proxy_id=proxy_id, addr=addr, port=port, username=username)
+    if not target:
+        return {
+            "success": False,
+            "message": "未找到指定的自建代理",
+            "proxy": None,
+            "proxies": [normalize_custom_proxy_item(item) or item for item in current],
+        }
+    ident = proxy_identity(target)
+    updated = None
+    merged: List[Dict[str, Any]] = []
+    for item in current:
+        if proxy_identity(item) != ident:
+            merged.append(item)
+            continue
+        view = dict(item)
+        if role is not None:
+            view["role"] = normalize_proxy_role(role)
+        if clear_assigned_country:
+            view["assigned_country"] = None
+        elif assigned_country is not None:
+            view["assigned_country"] = _norm(assigned_country) or None
+        if proxy_type:
+            view["proxy_type"] = _normalize_scheme(proxy_type)
+        if country is not None:
+            view["country"] = _blank_to_none(country)
+        if country_code is not None:
+            token = _norm(country_code) or None
+            view["country_code"] = token
+            view["country_alpha3"] = country_alpha3(token)
+        view = to_persist_item(view)
+        updated = view
+        merged.append(view)
+    persist_custom_proxies(merged)
+    proxies = list_custom_proxies()
+    normalized = normalize_custom_proxy_item(updated) if updated else updated
+    return {
+        "success": True,
+        "message": (
+            f"已更新 {format_proxy_endpoint(normalized or target)}："
+            f"角色={proxy_role_of(normalized or updated)} "
+            f"绑定国家={proxy_assigned_country(normalized or updated) or '全球'}"
+        ),
+        "proxy": normalized or updated,
+        "proxies": proxies,
+    }
 
 
 def custom_pool_summary(country: Optional[str] = None) -> Dict[str, Any]:
     items = list_custom_proxies()
     regional = [item for item in items if match_proxy_country(item, country)] if country else items
     countries = sorted({
-        (item.get("country_code") or item.get("country") or "").upper()
+        (item.get("country_code") or item.get("country") or item.get("assigned_country") or "").upper()
         for item in items
-        if item.get("country_code") or item.get("country")
+        if item.get("country_code") or item.get("country") or item.get("assigned_country")
     })
+    role_counts = {role: 0 for role in PROXY_ROLES}
+    for item in items:
+        role_counts[proxy_role_of(item)] = role_counts.get(proxy_role_of(item), 0) + 1
     return {
         "total": len(items),
         "regional": len(regional),
@@ -610,13 +823,17 @@ def custom_pool_summary(country: Optional[str] = None) -> Dict[str, Any]:
         "pending": sum(1 for item in items if item.get("healthy") is None),
         "countries": [code for code in countries if code],
         "country": country,
+        "roles": role_counts,
     }
 
 
 __all__ = [
+    "PRECHECK_ROLES",
+    "REGISTRATION_ROLES",
     "apply_probe_result",
     "custom_pool_summary",
     "delete_custom_proxies",
+    "filter_proxies_by_role",
     "find_custom_proxy",
     "import_proxy_text",
     "import_proxy_text_async",
@@ -629,6 +846,12 @@ __all__ = [
     "parse_proxy_text",
     "persist_custom_proxies",
     "probe_custom_proxies",
+    "proxy_assigned_country",
+    "proxy_role_of",
     "select_custom_proxy",
+    "select_proxy_for_precheck",
+    "select_proxy_for_registration",
+    "split_proxy_role_tag",
     "to_persist_item",
+    "update_custom_proxy_item",
 ]

@@ -39,6 +39,10 @@ from backend.app.models.schemas import (
     CustomProxySetFallbackResponse,
     CustomProxyDeleteRequest,
     CustomProxyDeleteResponse,
+    CustomProxyUpdateItemRequest,
+    CustomProxyUpdateItemResponse,
+    ToggleVaultProbeRequest,
+    ToggleVaultProbeResponse,
 )
 from backend.app.services.device_profile import DeviceProfileManager
 from backend.app.services.vaksms import VakSmsService
@@ -53,6 +57,7 @@ from backend.app.services.proxy_manager import (
     import_proxy_text_async,
     list_custom_proxies,
     probe_custom_proxies,
+    update_custom_proxy_item,
 )
 from backend.app.services.registrar import RegistrationTaskManager, RegistrationOrchestrator
 from backend.app.services.phone_precheck import PhonePrecheckService
@@ -371,6 +376,7 @@ async def list_custom_proxy_pool(country: Optional[str] = None):
         countries=summary.get("countries") or [],
         proxies=items,
         fallback_proxy=config.fallback_proxy,
+        role_counts=summary.get("roles") or {},
     )
 
 
@@ -385,6 +391,7 @@ async def import_custom_proxy_text(req: CustomProxyImportRequest):
             replace=req.replace,
             default_scheme=req.default_protocol or "socks5",
             default_country=req.default_country,
+            default_role=req.default_role or "all",
             concurrency=req.concurrency,
         )
         return CustomProxyImportResponse(**result)
@@ -434,6 +441,25 @@ async def set_custom_proxy_fallback(req: CustomProxySetFallbackRequest):
     )
 
 
+@router.post("/proxy/update-item", response_model=CustomProxyUpdateItemResponse, summary="修改单个自建代理的角色、绑定国家与协议")
+async def update_custom_proxy(req: CustomProxyUpdateItemRequest):
+    if not req.proxy_id and not (req.addr and req.port):
+        return CustomProxyUpdateItemResponse(success=False, message="请指定 proxy_id 或 addr+port")
+    result = update_custom_proxy_item(
+        proxy_id=req.proxy_id,
+        addr=req.addr,
+        port=req.port,
+        username=req.username,
+        role=req.role,
+        assigned_country=req.assigned_country,
+        clear_assigned_country=req.clear_assigned_country,
+        proxy_type=req.proxy_type,
+        country=req.country,
+        country_code=req.country_code,
+    )
+    return CustomProxyUpdateItemResponse(**result)
+
+
 @router.delete("/proxy/delete", response_model=CustomProxyDeleteResponse, summary="删除指定自建代理或清空自建代理池")
 async def delete_custom_proxy(req: CustomProxyDeleteRequest):
     if not req.clear_all and not req.proxy_id and not (req.addr and req.port):
@@ -463,6 +489,8 @@ async def start_registration(req: RegisterTaskRequest, background_tasks: Backgro
         app_type=req.app_type,
         proxy_override=proxy_dict,
         set_2fa=req.set_2fa,
+        proxy_id=req.proxy_id,
+        proxy_mode=req.proxy_mode,
     )
 
     return RegisterTaskResponse(
@@ -491,6 +519,8 @@ async def start_batch_registration(req: BatchRegisterRequest, background_tasks: 
         proxy_override=proxy_dict,
         set_2fa=req.set_2fa,
         concurrency=req.concurrency,
+        proxy_id=req.proxy_id,
+        proxy_mode=req.proxy_mode,
     )
     return BatchRegisterResponse(
         batch_id=batch_id,
@@ -600,6 +630,18 @@ async def apply_vault_account_credentials(req: ApplyVaultCredentialsRequest):
         req.account_id,
         set_mode_custom=req.set_mode_custom,
     )
+    if not result.success:
+        raise HTTPException(status_code=400, detail=result.message)
+    return result
+
+
+@router.post(
+    "/vault/accounts/toggle-probe",
+    response_model=ToggleVaultProbeResponse,
+    summary="开启或停用某个凭证库账号作为预检探测源",
+)
+async def toggle_vault_probe(req: ToggleVaultProbeRequest):
+    result = AccountVaultService.toggle_probe(req.account_id, req.active)
     if not result.success:
         raise HTTPException(status_code=400, detail=result.message)
     return result

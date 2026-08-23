@@ -20,6 +20,20 @@ class EgressRelayConfig(BaseModel):
 ProxyConfig = EgressRelayConfig
 
 
+PROXY_ROLES = ("all", "registration", "precheck")
+PROXY_MODES = ("explicit", "custom_pool", "auto", "fallback")
+
+
+def normalize_proxy_role(value: Any) -> str:
+    token = str(value or "all").strip().lower()
+    return token if token in PROXY_ROLES else "all"
+
+
+def normalize_proxy_mode(value: Any) -> str:
+    token = str(value or "custom_pool").strip().lower()
+    return token if token in PROXY_MODES else "custom_pool"
+
+
 class CustomProxyItem(BaseModel):
     """用户手动粘贴并持久化的自建代理节点"""
     id: Optional[str] = None
@@ -39,6 +53,27 @@ class CustomProxyItem(BaseModel):
     checked_at: Optional[float] = None
     source: str = "custom"
     raw_line: Optional[str] = None
+    role: str = Field(
+        default="all",
+        description="用途角色: all 通用 / registration 注册引导与发码 / precheck 号码预检专用",
+    )
+    assigned_country: Optional[str] = Field(
+        default=None,
+        description="用户手动绑定的国家代码 (如 cl / in / id)；为空表示全球/全池可用",
+    )
+
+    @field_validator("role", mode="before")
+    @classmethod
+    def _normalize_role(cls, value):
+        return normalize_proxy_role(value)
+
+    @field_validator("assigned_country", mode="before")
+    @classmethod
+    def _normalize_assigned_country(cls, value):
+        if value is None:
+            return None
+        token = str(value).strip().lower()
+        return token or None
 
 
 class AppConfigModel(BaseModel):
@@ -173,6 +208,17 @@ class AppConfigModel(BaseModel):
             "用 lod_user 已授权 session 查询该号是否已在 Telegram 注册，拦截二手号以免消耗 Push Token"
         )
     )
+    active_precheck_probe_ids: List[str] = Field(
+        default_factory=list,
+        description="被用户激活为号码预检探测源的凭证库 account_id 列表",
+    )
+    precheck_probes_configured: bool = Field(
+        default=False,
+        description=(
+            "是否已由用户显式配置预检探针名单。"
+            "未配置时默认激活所有具备 session 的账号；配置后严格只使用 active_precheck_probe_ids"
+        ),
+    )
 
     @field_validator("antisafety_base_urls", mode="before")
     @classmethod
@@ -233,6 +279,14 @@ class PhonePrecheckStatusResponse(BaseModel):
     probe_phones: List[str] = Field(default_factory=list)
     degraded: bool = False
     message: str = ""
+    active_probes: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="已激活探针明细：账号、健康度、session 状态",
+    )
+    precheck_proxy: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="当前预检通道绑定的专用/通用代理出口信息",
+    )
 
 
 class RegisterTaskRequest(BaseModel):
@@ -242,6 +296,22 @@ class RegisterTaskRequest(BaseModel):
     session_name: Optional[str] = Field(default=None, description="自定义密码学上下文快照命名")
     proxy: Optional[EgressRelayConfig] = Field(default=None, description="自定义覆盖中继网关")
     set_2fa: Optional[bool] = Field(default=None, description="覆盖二级保护凭证设定")
+    proxy_id: Optional[str] = Field(
+        default=None,
+        description="显式指定使用的自建/静态代理 ID；与 proxy_mode=explicit 配合，100% 遵从用户指定",
+    )
+    proxy_mode: str = Field(
+        default="custom_pool",
+        description=(
+            "代理配对策略: explicit 显式指定 / custom_pool 自建池优先轮换 / "
+            "auto API 动态分配 / fallback 全局后备"
+        ),
+    )
+
+    @field_validator("proxy_mode", mode="before")
+    @classmethod
+    def _normalize_proxy_mode(cls, value):
+        return normalize_proxy_mode(value)
 
 # 学术化别名
 NodeProvisioningRequest = RegisterTaskRequest
@@ -354,6 +424,10 @@ class VaultAccountItem(BaseModel):
     json_path: Optional[str] = Field(default=None, description="相对仓库的 JSON 路径")
     session_path: Optional[str] = Field(default=None, description="相对仓库的 .session 路径")
     filename: Optional[str] = Field(default=None)
+    is_probe_active: bool = Field(
+        default=False,
+        description="是否被用户激活为号码预检探测源",
+    )
 
 
 class VaultAccountListResponse(BaseModel):
@@ -371,6 +445,11 @@ class VaultAccountListResponse(BaseModel):
         default=None,
         description="如何用 lod_user 已有账号申请全新 api_id/api_hash 的操作说明"
     )
+    active_probe_count: int = Field(default=0, description="当前已激活的预检探针数量")
+    precheck_probes_configured: bool = Field(
+        default=False,
+        description="用户是否已显式配置预检探针名单",
+    )
 
 
 class VaultUploadResponse(BaseModel):
@@ -386,6 +465,23 @@ class VaultUploadResponse(BaseModel):
     imported_count: int = 0
     total: int = 0
     paired_count: int = 0
+
+
+class ToggleVaultProbeRequest(BaseModel):
+    """开启或停用某个凭证库账号作为预检探测源"""
+    account_id: str
+    active: bool = True
+
+
+class ToggleVaultProbeResponse(BaseModel):
+    success: bool
+    message: str
+    account_id: Optional[str] = None
+    active: bool = False
+    is_probe_active: bool = False
+    active_precheck_probe_ids: List[str] = Field(default_factory=list)
+    active_probe_count: int = 0
+    precheck_probes_configured: bool = False
 
 
 class ApplyVaultCredentialsRequest(BaseModel):
@@ -562,6 +658,10 @@ class CustomProxyListResponse(BaseModel):
     countries: List[str] = Field(default_factory=list)
     proxies: List[Dict[str, Any]] = Field(default_factory=list)
     fallback_proxy: Optional[EgressRelayConfig] = None
+    role_counts: Dict[str, int] = Field(
+        default_factory=dict,
+        description="用途角色统计: all / registration / precheck",
+    )
 
 
 class CustomProxyImportRequest(BaseModel):
@@ -570,7 +670,13 @@ class CustomProxyImportRequest(BaseModel):
     replace: bool = Field(default=False, description="是否用本次解析结果整表替换自建池")
     default_protocol: str = Field(default="socks5", description="无协议前缀时的默认协议")
     default_country: Optional[str] = Field(default=None, description="可选：为本批未测活节点预标注国家 ISO-2")
+    default_role: str = Field(default="all", description="无 #role 后缀时的默认用途角色")
     concurrency: int = Field(default=4, ge=1, le=16)
+
+    @field_validator("default_role", mode="before")
+    @classmethod
+    def _normalize_default_role(cls, value):
+        return normalize_proxy_role(value)
 
 
 class CustomProxyImportResponse(BaseModel):
@@ -612,6 +718,42 @@ class CustomProxySetFallbackResponse(BaseModel):
     message: str
     proxy: Optional[Dict[str, Any]] = None
     fallback_proxy: Optional[EgressRelayConfig] = None
+
+
+class CustomProxyUpdateItemRequest(BaseModel):
+    """修改单个自建代理的用途角色、绑定国家、协议等属性"""
+    proxy_id: Optional[str] = None
+    addr: Optional[str] = None
+    port: Optional[int] = None
+    username: Optional[str] = None
+    role: Optional[str] = Field(default=None, description="all / registration / precheck")
+    assigned_country: Optional[str] = Field(default=None, description="绑定国家 ISO-2；空字符串表示清除绑定")
+    proxy_type: Optional[str] = None
+    country: Optional[str] = None
+    country_code: Optional[str] = None
+    clear_assigned_country: bool = Field(default=False, description="显式清除绑定国家")
+
+    @field_validator("role", mode="before")
+    @classmethod
+    def _normalize_update_role(cls, value):
+        if value is None or str(value).strip() == "":
+            return None
+        return normalize_proxy_role(value)
+
+    @field_validator("assigned_country", mode="before")
+    @classmethod
+    def _normalize_update_assigned(cls, value):
+        if value is None:
+            return None
+        token = str(value).strip().lower()
+        return token or None
+
+
+class CustomProxyUpdateItemResponse(BaseModel):
+    success: bool
+    message: str
+    proxy: Optional[Dict[str, Any]] = None
+    proxies: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 class CustomProxyDeleteRequest(BaseModel):

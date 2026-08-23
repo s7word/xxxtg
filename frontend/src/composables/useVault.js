@@ -10,12 +10,17 @@ const vaultMeta = reactive({
   lod_user_dir: '',
   sessions_dir: '',
   published_api_id_count: 0,
-  missing_session_count: 0
+  missing_session_count: 0,
+  active_probe_count: 0
 })
 const vaultSelectedId = ref('')
 const vaultApplyingId = ref('')
 const vaultApplyResult = ref(null)
 const vaultGuidance = ref('')
+const vaultProbeTogglingId = ref('')
+const activeProbeCount = computed(
+  () => vaultAccounts.value.filter((acc) => acc.is_probe_active).length
+)
 const vaultFileInput = ref(null)
 const vaultUploading = ref(false)
 const vaultUploadDragging = ref(false)
@@ -113,6 +118,7 @@ export const fetchVaultAccounts = async () => {
     vaultMeta.sessions_dir = data.sessions_dir || ''
     vaultMeta.published_api_id_count = data.published_api_id_count || 0
     vaultMeta.missing_session_count = data.missing_session_count || 0
+    vaultMeta.active_probe_count = data.active_probe_count || activeProbeCount.value
     vaultGuidance.value = data.guidance || ''
     if (data.applied_api_id) config.custom_api_id = data.applied_api_id
     if (data.applied_api_hash) config.custom_api_hash = data.applied_api_hash
@@ -125,6 +131,40 @@ export const fetchVaultAccounts = async () => {
     pushToast('danger', `扫描凭证库失败: ${e.message}`)
   } finally {
     vaultLoading.value = false
+  }
+}
+
+export const toggleVaultProbe = async (acc, nextActive) => {
+  if (!acc?.account_id) return
+  if (!acc.has_session) {
+    pushToast('danger', '该账号没有可用 .session，无法作为预检探针')
+    return
+  }
+  const active = typeof nextActive === 'boolean' ? nextActive : !acc.is_probe_active
+  vaultProbeTogglingId.value = acc.account_id
+  try {
+    const res = await fetch('/api/vault/accounts/toggle-probe', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ account_id: acc.account_id, active })
+    })
+    const data = await res.json()
+    if (!res.ok || !data.success) {
+      pushToast('danger', data.detail || data.message || '切换预检探针失败')
+      return
+    }
+    acc.is_probe_active = data.is_probe_active
+    vaultAccounts.value = vaultAccounts.value.map((item) => (
+      item.account_id === acc.account_id
+        ? { ...item, is_probe_active: data.is_probe_active }
+        : item
+    ))
+    pushToast('ok', data.message || (active ? '已激活预检探针' : '已停用预检探针'))
+    await fetchVaultAccounts()
+  } catch (e) {
+    pushToast('danger', e.message)
+  } finally {
+    vaultProbeTogglingId.value = ''
   }
 }
 
@@ -288,6 +328,8 @@ export const useVault = () => ({
   vaultApplyingId,
   vaultApplyResult,
   vaultGuidance,
+  vaultProbeTogglingId,
+  activeProbeCount,
   vaultFileInput,
   vaultUploading,
   vaultUploadDragging,
@@ -303,6 +345,7 @@ export const useVault = () => ({
   onVaultFilePicked,
   onVaultFileDrop,
   fetchVaultAccounts,
+  toggleVaultProbe,
   applyVaultCredentials,
   pollAppsJob,
   stopAppsPoll,

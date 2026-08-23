@@ -505,6 +505,12 @@ def normalize_custom_proxy_item(item: Optional[Dict[str, Any]]) -> Optional[Dict
     normalized["last_error"] = item.get("last_error") or item.get("error")
     normalized["checked_at"] = item.get("checked_at")
     normalized["raw_line"] = item.get("raw_line")
+    role = _norm(item.get("role")) or "all"
+    if role not in {"all", "registration", "precheck"}:
+        role = "all"
+    normalized["role"] = role
+    assigned = _norm(item.get("assigned_country")) or None
+    normalized["assigned_country"] = assigned
     normalized.pop("raw", None)
     return normalized
 

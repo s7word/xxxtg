@@ -21,6 +21,26 @@
           </select>
         </div>
 
+        <div>
+          <label class="ce-label">代理配对策略（使用者决定）</label>
+          <select v-model="form.proxy_mode" class="ce-select">
+            <option value="explicit">特定代理节点 (Explicit)</option>
+            <option value="custom_pool">自建池智能轮换 (Custom Pool)</option>
+            <option value="auto">API 动态分配 (Auto)</option>
+            <option value="fallback">全局后备代理 (Fallback)</option>
+          </select>
+        </div>
+        <div v-if="form.proxy_mode === 'explicit'">
+          <label class="ce-label">指定自建/静态代理节点</label>
+          <select v-model="form.proxy_id" class="ce-select">
+            <option value="">请选择节点...</option>
+            <option v-for="p in registrationProxies" :key="p.id" :value="p.id">
+              {{ roleLabel(p.role) }} · {{ p.addr }}:{{ p.port }} · {{ (p.assigned_country || p.country_code || '全球').toString().toUpperCase() }}
+            </option>
+          </select>
+          <p class="ce-tiny">显式指定后 100% 遵从该节点，不施加隐式国家约束。</p>
+        </div>
+
         <div v-if="config.use_proxy_seller_auto" class="ce-alert is-info stack">
           <div class="between">
             <div>
@@ -120,6 +140,11 @@
           <div v-if="phonePrecheckStatus.probe_count" class="mono ce-muted">
             探测源 {{ phonePrecheckStatus.probe_count }} 个
             <span v-if="phonePrecheckStatus.probe_phones?.length"> · {{ phonePrecheckStatus.probe_phones.join(' / ') }}</span>
+          </div>
+          <div v-if="phonePrecheckStatus.precheck_proxy?.addr" class="ce-tiny" style="margin-top:6px">
+            预检出口
+            <span class="mono">{{ phonePrecheckStatus.precheck_proxy.proxy_type }}://{{ phonePrecheckStatus.precheck_proxy.addr }}:{{ phonePrecheckStatus.precheck_proxy.port }}</span>
+            <span class="ce-badge is-warn">{{ phonePrecheckStatus.precheck_proxy.role || 'all' }}</span>
           </div>
         </div>
 
@@ -295,7 +320,7 @@ import { useUi } from '../../composables/useUi'
 const { config, form } = useConfig()
 const {
   matchedProxy, proxyPool, customProxiesForCountry, customProxySummaryText,
-  testing: proxyTesting, refreshProxyPool, previewAutoSelect
+  registrationProxies, roleLabel, testing: proxyTesting, refreshProxyPool, previewAutoSelect
 } = useProxy()
 const {
   batchMode, batchCount, batchConcurrency, currentBatch, taskFilter, selectedTaskIds, mergedLogView,

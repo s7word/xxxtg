@@ -153,6 +153,7 @@
         <div class="row">
           <h3>🗃️ 已导入账号网格</h3>
           <span class="ce-badge is-info">{{ vaultAccounts.length }} accounts</span>
+          <span class="ce-chip" :class="activeProbeCount ? 'is-ok' : 'is-warn'">活跃预检探针 {{ activeProbeCount }} 个</span>
         </div>
         <div class="ce-muted mono">
           {{ vaultMeta.lod_user_dir }} · {{ vaultMeta.sessions_dir }}
@@ -171,17 +172,18 @@
               <th>UID</th>
               <th>app_id / hash</th>
               <th>Session</th>
+              <th>预检探针</th>
               <th>操作</th>
             </tr>
           </thead>
           <tbody>
             <tr v-if="vaultAccounts.length === 0">
-              <td colspan="8" class="ce-muted" style="text-align:center;padding:24px">未扫描到账号。请上传或放入 lod_user/ 后刷新。</td>
+              <td colspan="9" class="ce-muted" style="text-align:center;padding:24px">未扫描到账号。请上传或放入 lod_user/ 后刷新。</td>
             </tr>
             <tr
               v-for="acc in vaultAccounts"
               :key="acc.account_id"
-              :class="{ 'is-on': vaultSelectedId === acc.account_id }"
+              :class="{ 'is-on': vaultSelectedId === acc.account_id, 'is-probe': acc.is_probe_active }"
               @click="vaultSelectedId = acc.account_id"
             >
               <td class="mono">{{ acc.phone || acc.phone_raw || '-' }}</td>
@@ -200,6 +202,21 @@
               <td>
                 <span v-if="acc.has_session" class="ce-badge is-success">.session</span>
                 <span v-else class="ce-badge is-warn">仅 JSON</span>
+              </td>
+              <td @click.stop>
+                <label
+                  class="ce-switch"
+                  :class="{ 'is-on': acc.is_probe_active }"
+                  :title="acc.has_session ? '点击切换预检探针' : '缺少 .session，无法作为探针'"
+                >
+                  <input
+                    type="checkbox"
+                    :checked="acc.is_probe_active"
+                    :disabled="!acc.has_session || vaultProbeTogglingId === acc.account_id"
+                    @change="toggleVaultProbe(acc, $event.target.checked)"
+                  />
+                  <span>⚡ {{ acc.is_probe_active ? '已激活' : '预检探针' }}</span>
+                </label>
               </td>
               <td class="row-wrap">
                 <button
@@ -236,7 +253,8 @@ const {
   vaultLoading, vaultAccounts, vaultMeta, vaultSelectedId, vaultApplyingId, vaultApplyResult,
   vaultGuidance, vaultFileInput, vaultUploading, vaultUploadDragging, vaultUploadProgress,
   vaultUploadResult, selectedVaultAccount, appsStarting, appsJob, appsShortname, appsPhone,
-  appsManualCode, onVaultFilePicked, onVaultFileDrop, fetchVaultAccounts, applyVaultCredentials,
-  startAppsJob, selectAndStartApps, submitAppsCode, applyAppsJob
+  appsManualCode, vaultProbeTogglingId, activeProbeCount, onVaultFilePicked, onVaultFileDrop,
+  fetchVaultAccounts, toggleVaultProbe, applyVaultCredentials, startAppsJob, selectAndStartApps,
+  submitAppsCode, applyAppsJob
 } = useVault()
 </script>

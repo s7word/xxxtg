@@ -342,7 +342,7 @@ class TestRegistrarCustomMatch(unittest.IsolatedAsyncioTestCase):
             "egress_ip": "103.24.1.9",
         }
         config = SimpleNamespace(custom_proxies=[custom])
-        with patch("backend.app.services.proxy_manager.select_custom_proxy", return_value=custom), \
+        with patch("backend.app.services.proxy_manager.select_proxy_for_registration", return_value=custom), \
              patch("backend.app.services.proxy_manager.custom_pool_summary", return_value={
                  "total": 1, "regional": 1, "healthy": 1, "countries": ["ID"],
              }):
@@ -351,7 +351,7 @@ class TestRegistrarCustomMatch(unittest.IsolatedAsyncioTestCase):
             )
         self.assertEqual(resolved["addr"], "10.8.0.21")
         logs = "\n".join(manager.get_task(task_id)["logs"])
-        self.assertIn("[自建代理池] 成功匹配 ID 区域代理: socks5://10.8.0.21:41080", logs)
+        self.assertIn("[自建代理池] 成功匹配 ID 注册通道: socks5://10.8.0.21:41080", logs)
 
 
 class TestCustomProxySchemas(unittest.TestCase):

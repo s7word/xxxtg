@@ -51,6 +51,30 @@ export const customProxySummaryText = computed(() => {
   return `${total} 条 / ${healthy} 通 / ${pending} 待测`
 })
 
+export const customProxyRoleCounts = computed(() => {
+  const counts = { all: 0, registration: 0, precheck: 0 }
+  for (const item of customProxies.value) {
+    const role = item.role || 'all'
+    counts[role] = (counts[role] || 0) + 1
+  }
+  return counts
+})
+
+export const registrationProxies = computed(() =>
+  customProxies.value.filter((item) => ['all', 'registration', '', undefined, null].includes(item.role))
+)
+
+export const ROLE_OPTIONS = [
+  { value: 'all', label: '通用' },
+  { value: 'registration', label: '注册专用' },
+  { value: 'precheck', label: '预检专用' }
+]
+
+export const roleLabel = (role) => {
+  const found = ROLE_OPTIONS.find((item) => item.value === role)
+  return found ? found.label : '通用'
+}
+
 export const applyCustomProxyPayload = (data) => {
   if (!data) return
   if (Array.isArray(data.proxies)) customProxies.value = data.proxies
@@ -160,7 +184,8 @@ export const importCustomProxyText = async () => {
         probe: customProxyImportProbe.value,
         replace: false,
         default_protocol: 'socks5',
-        default_country: customProxyImportCountry.value || undefined
+        default_country: customProxyImportCountry.value || undefined,
+        default_role: 'all'
       })
     })
     const data = await res.json()
@@ -218,6 +243,38 @@ export const setCustomProxyAsFallback = async (proxy) => {
   }
 }
 
+export const updateCustomProxyItem = async (proxy, patch = {}) => {
+  try {
+    const body = {
+      proxy_id: proxy.id,
+      addr: proxy.addr,
+      port: proxy.port,
+      username: proxy.username,
+      ...patch
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, 'assigned_country') && !patch.assigned_country) {
+      body.clear_assigned_country = true
+      body.assigned_country = null
+    }
+    const res = await fetch('/api/proxy/update-item', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    })
+    const data = await res.json()
+    if (!data.success) {
+      pushToast('danger', data.message || '更新代理失败')
+      return data
+    }
+    applyCustomProxyPayload(data)
+    await fetchCustomProxyList()
+    return data
+  } catch (e) {
+    pushToast('danger', `更新代理失败: ${e.message}`)
+    return { success: false, message: e.message }
+  }
+}
+
 export const deleteCustomProxy = async (proxy) => {
   if (!confirm(`删除自建代理 ${proxy.addr}:${proxy.port} ?`)) return
   try {
@@ -269,6 +326,10 @@ export const useProxy = () => ({
   customProxyMeta,
   customProxiesForCountry,
   customProxySummaryText,
+  customProxyRoleCounts,
+  registrationProxies,
+  ROLE_OPTIONS,
+  roleLabel,
   testing,
   applyCustomProxyPayload,
   fetchCustomProxyList,
@@ -278,6 +339,7 @@ export const useProxy = () => ({
   importCustomProxyText,
   testAllCustomProxies,
   setCustomProxyAsFallback,
+  updateCustomProxyItem,
   deleteCustomProxy,
   clearCustomProxyPool
 })

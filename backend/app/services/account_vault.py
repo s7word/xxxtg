@@ -21,6 +21,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from backend.app.config import ConfigManager, LOD_USER_DIR, SESSIONS_DIR
 from backend.app.models.schemas import (
     ApplyVaultCredentialsResponse,
+    ToggleVaultProbeResponse,
     VaultAccountItem,
     VaultAccountListResponse,
     VaultUploadResponse,
@@ -336,6 +337,27 @@ def extract_zip_safely(content: bytes, dest_dir: Path) -> Tuple[List[str], List[
     return imported, skipped
 
 
+def _probe_policy(config=None) -> Tuple[bool, set]:
+    """返回 (是否已显式配置探针名单, 已激活 account_id 集合)。"""
+    try:
+        cfg = config if config is not None else ConfigManager.get_instance().config
+    except Exception:
+        return False, set()
+    configured = bool(getattr(cfg, "precheck_probes_configured", False))
+    active_ids = {str(item) for item in (getattr(cfg, "active_precheck_probe_ids", None) or [])}
+    return configured, active_ids
+
+
+def is_account_probe_active(account_id: Optional[str], has_session: bool, config=None) -> bool:
+    """未显式配置时，默认激活所有具备 session 的账号。"""
+    if not has_session:
+        return False
+    configured, active_ids = _probe_policy(config)
+    if not configured:
+        return True
+    return bool(account_id and account_id in active_ids)
+
+
 class AccountVaultService:
     """扫描、解析与应用已有账号凭证。"""
 
@@ -416,6 +438,7 @@ class AccountVaultService:
                     json_path=_rel_to_repo(json_path),
                     session_path=_rel_to_repo(session_path) if session_path else None,
                     filename=json_path.name,
+                    is_probe_active=is_account_probe_active(account_id, has_session),
                 )
                 merged[account_id] = item
 
@@ -477,6 +500,7 @@ class AccountVaultService:
                     json_path=_rel_to_repo(sibling_json) if sibling_json else None,
                     session_path=_rel_to_repo(session_path),
                     filename=session_path.name,
+                    is_probe_active=is_account_probe_active(account_id, True),
                 )
 
         accounts = list(merged.values())
@@ -636,6 +660,56 @@ class AccountVaultService:
             published_api_id_count=sum(1 for acc in accounts if acc.is_published_api_id),
             missing_session_count=sum(1 for acc in accounts if acc.session_missing_for_auto_code),
             guidance=VAULT_GUIDANCE,
+            active_probe_count=sum(1 for acc in accounts if acc.is_probe_active),
+            precheck_probes_configured=bool(getattr(config, "precheck_probes_configured", False)),
+        )
+
+    @classmethod
+    def toggle_probe(cls, account_id: str, active: bool) -> ToggleVaultProbeResponse:
+        """开启或停用某个已有账号作为预检探测源，并持久化到 config.json。"""
+        account = cls.get_account(account_id)
+        if not account:
+            return ToggleVaultProbeResponse(
+                success=False,
+                message=f"未找到账号 {account_id}，请先刷新凭证库",
+                account_id=account_id,
+                active=False,
+            )
+        if active and not account.has_session:
+            return ToggleVaultProbeResponse(
+                success=False,
+                message="该账号没有可用 .session，无法作为预检探测源",
+                account_id=account_id,
+                active=False,
+            )
+
+        manager = ConfigManager.get_instance()
+        config = manager.config.model_copy(deep=True)
+        current_ids = list(getattr(config, "active_precheck_probe_ids", None) or [])
+        if not getattr(config, "precheck_probes_configured", False):
+            current_ids = [acc.account_id for acc in cls.scan_accounts() if acc.has_session]
+
+        ids = set(current_ids)
+        if active:
+            ids.add(account_id)
+        else:
+            ids.discard(account_id)
+        config.active_precheck_probe_ids = sorted(ids)
+        config.precheck_probes_configured = True
+        manager.save_config(config)
+
+        return ToggleVaultProbeResponse(
+            success=True,
+            message=(
+                f"已{'激活' if active else '停用'}预检探针 "
+                f"{account.phone or account.filename or account_id}"
+            ),
+            account_id=account_id,
+            active=bool(active),
+            is_probe_active=bool(active),
+            active_precheck_probe_ids=config.active_precheck_probe_ids,
+            active_probe_count=len(config.active_precheck_probe_ids),
+            precheck_probes_configured=True,
         )
 
     @classmethod

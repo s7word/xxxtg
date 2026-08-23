@@ -42,7 +42,9 @@ const config = reactive({
 
 const form = reactive({
   country: 'cl',
-  app_type: 'telegram_android'
+  app_type: 'telegram_android',
+  proxy_mode: 'custom_pool',
+  proxy_id: ''
 })
 
 const antisafetyBaseUrlsText = ref('')

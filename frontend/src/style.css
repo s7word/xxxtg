@@ -225,6 +225,71 @@ code, pre, .mono, .font-mono {
   color: #fecaca;
 }
 
+.ce-chip.is-info {
+  border-color: rgba(34, 211, 238, 0.4);
+  color: #a5f3fc;
+  box-shadow: var(--glow-cyan);
+}
+
+.ce-select-xs {
+  width: auto;
+  min-width: 108px;
+  padding: 5px 8px;
+  font-size: 12px;
+}
+
+.ce-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.ce-switch input {
+  appearance: none;
+  width: 36px;
+  height: 20px;
+  border-radius: 999px;
+  background: rgba(107, 133, 120, 0.35);
+  border: 1px solid var(--border);
+  position: relative;
+  cursor: pointer;
+  transition: 0.2s ease;
+  flex: 0 0 auto;
+}
+.ce-switch input::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #c7ddd2;
+  transition: 0.2s ease;
+}
+.ce-switch input:checked {
+  background: rgba(16, 185, 129, 0.55);
+  border-color: rgba(52, 211, 153, 0.7);
+  box-shadow: var(--glow-em);
+}
+.ce-switch input:checked::after {
+  left: 18px;
+  background: #ecfdf5;
+}
+.ce-switch input:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.ce-switch.is-on {
+  color: var(--mint-light);
+}
+.ce-table tr.is-probe td:first-child {
+  box-shadow: inset 3px 0 0 var(--mint);
+}
+
 .ce-dot {
   width: 8px;
   height: 8px;

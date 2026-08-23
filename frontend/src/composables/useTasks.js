@@ -172,7 +172,11 @@ export const startRegistrationTask = async () => {
     const endpoint = useBatch ? '/api/register/batch' : '/api/register/start'
     const payload = {
       country: form.country,
-      app_type: form.app_type
+      app_type: form.app_type,
+      proxy_mode: form.proxy_mode || 'custom_pool'
+    }
+    if (form.proxy_mode === 'explicit' && form.proxy_id) {
+      payload.proxy_id = form.proxy_id
     }
     if (useBatch) {
       payload.count = Number(batchCount.value)

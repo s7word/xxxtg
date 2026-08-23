@@ -13,6 +13,11 @@
           <h3>📋 自定义代理池 / 手动批量粘贴导入</h3>
           <span class="ce-badge is-info">{{ customProxies.length }} 条</span>
         </div>
+        <div class="ce-chips">
+          <span class="ce-chip is-ok">通用 {{ customProxyRoleCounts.all }} 条</span>
+          <span class="ce-chip is-info">注册专用 {{ customProxyRoleCounts.registration }} 条</span>
+          <span class="ce-chip is-warn">预检专用 {{ customProxyRoleCounts.precheck }} 条</span>
+        </div>
         <div class="row-wrap">
           <button class="ce-btn-ghost" :disabled="testing.customimport" @click="importCustomProxyText">
             {{ testing.customimport ? '导入中...' : '批量解析并导入' }}
@@ -27,13 +32,14 @@
       </div>
       <p class="ce-tiny">
         支持一次粘贴多行。自动去除空行与 <code>#</code> / <code>//</code> 注释，默认协议 <code>socks5</code>。
-        调度需要 <code>cl / in / id</code> 等国家时，会优先匹配本池中已标注或已测活的对应节点。
+        行末可加 <code>#registration</code> / <code>#precheck</code> / <code>#all:cl</code> 指定用途角色与绑定国家。
+        注册流水线只拿注册/通用节点，预检只走预检/通用通道。
       </p>
       <textarea
         v-model="customProxyText"
         rows="7"
         class="ce-textarea"
-        placeholder="host;port;user;pass&#10;host:port:user:pass&#10;host:port&#10;user:pass@host:port&#10;socks5://user:pass@host:port&#10;http://user:pass@host:port"
+        placeholder="host;port;user;pass&#10;host:port:user:pass#registration&#10;host:port:user:pass#precheck:cl&#10;user:pass@host:port#all&#10;socks5://user:pass@host:port"
       ></textarea>
       <div class="row-wrap">
         <label class="ce-check">
@@ -49,10 +55,10 @@
         <span v-if="customProxyMeta.countries?.length" class="ce-muted"> 已识别区域: {{ customProxyMeta.countries.join(', ') }}</span>
       </div>
       <div v-if="customProxies.length" class="ce-list" style="max-height:320px">
-        <div v-for="(p, idx) in customProxies" :key="p.id || (p.addr + ':' + p.port + idx)" class="ce-item">
+        <div v-for="(p, idx) in customProxies" :key="p.id || (p.addr + ':' + p.port + idx)" class="ce-item ce-item-wrap">
           <div class="row grow">
-            <span>{{ countryFlag(p.country_code) }}</span>
-            <span class="ce-badge is-info">{{ (p.country_code || p.country || '?').toString().toUpperCase() }}</span>
+            <span>{{ countryFlag(p.assigned_country || p.country_code) }}</span>
+            <span class="ce-badge" :class="roleBadgeClass(p.role)">{{ roleLabel(p.role) }}</span>
             <span class="mono">{{ p.addr }}:{{ p.port }}</span>
             <span class="ce-muted">{{ (p.proxy_type || 'socks5').toUpperCase() }}</span>
             <span :class="p.healthy === true ? 'ce-badge is-success' : (p.healthy === false ? 'ce-badge is-danger' : 'ce-muted')">
@@ -61,7 +67,20 @@
             <span v-if="p.latency_ms != null" class="ce-latency" :title="p.latency_ms + 'ms'"><i :style="{ width: latencyWidth(p.latency_ms) + '%' }"></i></span>
             <span v-if="p.egress_ip" class="ce-muted">出口 {{ p.egress_ip }}{{ p.city ? ' / ' + p.city : '' }}</span>
           </div>
-          <div class="row">
+          <div class="row-wrap">
+            <select
+              class="ce-select ce-select-xs"
+              :value="p.role || 'all'"
+              @change="updateCustomProxyItem(p, { role: $event.target.value })"
+            >
+              <option v-for="opt in ROLE_OPTIONS" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+            </select>
+            <input
+              class="ce-input w-sm mono"
+              :value="p.assigned_country || ''"
+              placeholder="绑定国家 cl/in"
+              @change="updateCustomProxyItem(p, { assigned_country: $event.target.value.trim() || null })"
+            />
             <button class="ce-link" @click="setCustomProxyAsFallback(p)">设为当前后备</button>
             <button class="ce-link is-danger" @click="deleteCustomProxy(p)">删除</button>
           </div>
@@ -174,9 +193,16 @@ import { useProbes } from '../../composables/useProbes'
 const { config } = useConfig()
 const {
   proxyPool, proxyPoolMeta, matchedProxy, customProxies, customProxyText, customProxyImportProbe,
-  customProxyImportCountry, customProxyMeta, testing, refreshProxyPool, previewAutoSelect,
+  customProxyImportCountry, customProxyMeta, customProxyRoleCounts, ROLE_OPTIONS, roleLabel,
+  testing, refreshProxyPool, previewAutoSelect,
   setProxyAsFallback, importCustomProxyText, testAllCustomProxies, setCustomProxyAsFallback,
-  deleteCustomProxy, clearCustomProxyPool
+  updateCustomProxyItem, deleteCustomProxy, clearCustomProxyPool
 } = useProxy()
 const { testResults, testProxySeller, testAllProxySeller, testProxyConnectivity } = useProbes()
+
+const roleBadgeClass = (role) => {
+  if (role === 'registration') return 'is-info'
+  if (role === 'precheck') return 'is-warn'
+  return 'is-success'
+}
 </script>

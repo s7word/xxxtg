@@ -82,6 +82,8 @@ class PhonePrecheckStatus:
     probe_phones: List[str] = field(default_factory=list)
     degraded: bool = False
     message: str = ""
+    active_probes: List[Dict[str, Any]] = field(default_factory=list)
+    precheck_proxy: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -125,12 +127,32 @@ class PhonePrecheckService:
         return bool(getattr(cfg, "phone_precheck_enabled", True))
 
     @classmethod
-    def list_probe_accounts(cls, accounts=None) -> List[Any]:
-        """筛选具备 .session + api_id/api_hash 的探测账号。"""
+    def _account_is_probe_active(cls, acc, config=None) -> bool:
+        explicit = getattr(acc, "is_probe_active", None)
+        if explicit is False:
+            return False
+        if explicit is True:
+            return True
+        try:
+            from backend.app.services.account_vault import is_account_probe_active
+
+            return is_account_probe_active(
+                getattr(acc, "account_id", None),
+                bool(getattr(acc, "has_session", False)),
+                config=config,
+            )
+        except Exception:
+            return True
+
+    @classmethod
+    def list_probe_accounts(cls, accounts=None, config=None) -> List[Any]:
+        """仅使用已激活且具备 .session 的探测账号。"""
         items = list(accounts) if accounts is not None else AccountVaultService.scan_accounts()
         probes = []
         for acc in items:
             if not getattr(acc, "has_session", False):
+                continue
+            if not cls._account_is_probe_active(acc, config=config):
                 continue
             if not getattr(acc, "app_id", None) or not getattr(acc, "app_hash", None):
                 continue
@@ -140,10 +162,49 @@ class PhonePrecheckService:
         return probes[:MAX_PROBE_ACCOUNTS]
 
     @classmethod
+    def resolve_precheck_proxy(cls, country: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        try:
+            from backend.app.services.proxy_manager import select_proxy_for_precheck
+
+            return select_proxy_for_precheck(country)
+        except Exception as exc:
+            logger.debug("选择预检专用代理失败: %s", exc)
+            return None
+
+    @classmethod
+    def _summarize_proxy(cls, proxy: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        if not proxy:
+            return None
+        return {
+            "id": proxy.get("id"),
+            "addr": proxy.get("addr"),
+            "port": proxy.get("port"),
+            "proxy_type": proxy.get("proxy_type") or "socks5",
+            "role": proxy.get("role") or "all",
+            "assigned_country": proxy.get("assigned_country"),
+            "country_code": proxy.get("country_code") or proxy.get("assigned_country"),
+            "egress_ip": proxy.get("egress_ip"),
+            "healthy": proxy.get("healthy"),
+            "username": proxy.get("username"),
+        }
+
+    @classmethod
     def describe_status(cls, config=None, accounts=None) -> PhonePrecheckStatus:
         enabled = cls.is_enabled(config)
-        probes = cls.list_probe_accounts(accounts)
+        probes = cls.list_probe_accounts(accounts, config=config)
         phones = [_mask_phone(getattr(acc, "phone", None) or getattr(acc, "phone_raw", None)) for acc in probes]
+        active_probes = []
+        for acc in probes:
+            active_probes.append({
+                "account_id": getattr(acc, "account_id", None),
+                "phone": _mask_phone(getattr(acc, "phone", None) or getattr(acc, "phone_raw", None)),
+                "has_session": bool(getattr(acc, "has_session", False)),
+                "is_probe_active": True,
+                "has_credentials": bool(getattr(acc, "app_id", None) and getattr(acc, "app_hash", None)),
+                "healthy": True,
+                "source": getattr(acc, "source", None),
+            })
+        precheck_proxy = cls._summarize_proxy(cls.resolve_precheck_proxy())
         if not enabled:
             return PhonePrecheckStatus(
                 enabled=False,
@@ -152,6 +213,8 @@ class PhonePrecheckService:
                 probe_phones=phones,
                 degraded=True,
                 message="号码白号预检探测器已关闭，将走现有 sendCode 流程",
+                active_probes=active_probes,
+                precheck_proxy=precheck_proxy,
             )
         if not probes:
             return PhonePrecheckStatus(
@@ -160,7 +223,16 @@ class PhonePrecheckService:
                 probe_count=0,
                 probe_phones=[],
                 degraded=True,
-                message="本地暂无可用于预检的 session 探测器，将优雅降级走现有流程",
+                message="本地暂无已激活的预检 session 探测器，将优雅降级走现有流程",
+                active_probes=[],
+                precheck_proxy=precheck_proxy,
+            )
+        proxy_hint = ""
+        if precheck_proxy and precheck_proxy.get("addr"):
+            proxy_hint = (
+                f"；预检出口 {precheck_proxy.get('proxy_type')}://"
+                f"{precheck_proxy.get('addr')}:{precheck_proxy.get('port')}"
+                f" [{(precheck_proxy.get('role') or 'all')}]"
             )
         return PhonePrecheckStatus(
             enabled=True,
@@ -168,7 +240,9 @@ class PhonePrecheckService:
             probe_count=len(probes),
             probe_phones=phones,
             degraded=False,
-            message=f"号码白号预检探测器已激活（{len(probes)} 个授权 session）",
+            message=f"号码白号预检探测器已激活（{len(probes)} 个授权 session）{proxy_hint}",
+            active_probes=active_probes,
+            precheck_proxy=precheck_proxy,
         )
 
     @classmethod
@@ -266,7 +340,11 @@ class PhonePrecheckService:
         if probe_client is not None:
             return await cls._query_with_client(probe_client, normalized)
 
-        probes = cls.list_probe_accounts(accounts)
+        dedicated = cls.resolve_precheck_proxy()
+        if dedicated:
+            proxy = dedicated
+
+        probes = cls.list_probe_accounts(accounts, config=config)
         if not probes:
             if log_callback:
                 await log_callback(DEGRADE_LOG_TEMPLATE)
