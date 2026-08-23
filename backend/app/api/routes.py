@@ -9,6 +9,7 @@ from backend.app.models.schemas import (
     AppConfigModel,
     TestApiResponse,
     PhonePrecheckStatusResponse,
+    BannedPhonesCacheStatusResponse,
     RegisterTaskRequest,
     RegisterTaskResponse,
     BatchRegisterRequest,
@@ -68,6 +69,7 @@ from backend.app.services.proxy_manager import (
 )
 from backend.app.services.registrar import RegistrationTaskManager, RegistrationOrchestrator
 from backend.app.services.phone_precheck import PhonePrecheckService
+from backend.app.services.banned_phones import BannedPhonesCache
 from backend.app.services.account_vault import AccountVaultService
 from backend.app.services.telegram_apps import TelegramAppsHelper, TelegramAppsJobManager
 
@@ -703,6 +705,15 @@ async def get_task_status(task_id: str):
 )
 async def phone_precheck_status():
     return PhonePrecheckService.describe_status().to_dict()
+
+
+@router.get(
+    "/banned-phones/status",
+    response_model=BannedPhonesCacheStatusResponse,
+    summary="本地封禁号缓存与号段画像",
+)
+async def banned_phones_status():
+    return BannedPhonesCache.describe_status().to_dict()
 
 # ==================== 4. 密码学上下文快照与节点资产 ====================
 @router.get("/sessions", summary="获取已持久化的密码学上下文快照列表")

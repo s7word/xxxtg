@@ -271,6 +271,16 @@ class TestApiResponse(BaseModel):
     data: Optional[Dict[str, Any]] = None
 
 
+class BannedPhonesCacheStatusResponse(BaseModel):
+    """本地已确认封禁号缓存状态与号段画像"""
+    enabled: bool = True
+    size: int = 0
+    path: str = ""
+    message: str = ""
+    prefixes: List[Dict[str, Any]] = Field(default_factory=list)
+    countries: List[Dict[str, Any]] = Field(default_factory=list)
+
+
 class PhonePrecheckStatusResponse(BaseModel):
     """号码白号预检探测器就绪状态"""
     enabled: bool
@@ -376,6 +386,7 @@ class TaskStatusResponse(BaseModel):
     needs_signup: Optional[bool] = None
     precheck_intercepted: bool = Field(default=False, description="是否被号码注册状态预检拦截")
     precheck_user_id: Optional[int] = Field(default=None, description="预检解析出的已注册 Telegram UID")
+    banned_cache_hit: bool = Field(default=False, description="是否被本地封禁号缓存拦截")
     no_number: bool = Field(default=False, description="接码平台对该区域返回 noNumber")
     created_at: str
     updated_at: str

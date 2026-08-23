@@ -15,6 +15,8 @@ frontend/.vite/
 
 # Session & Runtime Artifacts
 data/sessions/
+data/banned_phones_cache.json
+data/banned_phones_cache.json.tmp
 data/device_dbs/*.db
 data/device_dbs/files/
 data/device_dbs/catalog.json

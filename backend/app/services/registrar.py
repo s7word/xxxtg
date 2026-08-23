@@ -26,6 +26,12 @@ from backend.app.config import ConfigManager, SESSIONS_DIR
 from backend.app.services.device_profile import DeviceProfileManager
 from backend.app.services.vaksms import NoNumberAvailableError, VakSmsService, format_no_number_message
 from backend.app.services.attestation_gateway import AttestationGatewayService
+from backend.app.services.banned_phones import (
+    LOCAL_BANNED_REASON,
+    SOURCE_ANTISAFETY,
+    SOURCE_TELEGRAM_RPC,
+    BannedPhonesCache,
+)
 from backend.app.services.phone_precheck import (
     CLEAN_LOG_TEMPLATE,
     DEGRADE_LOG_TEMPLATE,
@@ -138,6 +144,7 @@ class RegistrationTaskManager:
                 "batch_id": batch_id,
                 "precheck_intercepted": False,
                 "precheck_user_id": None,
+                "banned_cache_hit": False,
                 "no_number": False,
                 "created_at": now,
                 "updated_at": now
@@ -169,6 +176,7 @@ class RegistrationTaskManager:
                     "batch_id": batch_id,
                     "precheck_intercepted": False,
                     "precheck_user_id": None,
+                    "banned_cache_hit": False,
                     "no_number": False,
                     "created_at": now,
                     "updated_at": now,
@@ -313,6 +321,40 @@ class RegistrationOrchestrator:
             task_id,
             f"⚠️ 自动退订/撤销信道句柄未成功 (act_id={act_id}, 原因: {reason}): {detail}"
         )
+
+    @classmethod
+    async def _apply_banned_cache_gate(
+        cls,
+        phone: str,
+        act_id: Optional[str],
+        sms_svc: VakSmsService,
+        task_id: str,
+        manager: RegistrationTaskManager,
+        cache=None,
+    ) -> bool:
+        """租号后最先检查本地已确认封禁库。命中则立即退订，不消耗 Push Token。
+
+        返回 True 表示可以继续；False 表示已拦截并退订，调用方必须立即 return。
+        """
+        service = cache or BannedPhonesCache
+        record = service.lookup(phone)
+        if not record:
+            return True
+        await manager.append_log(
+            task_id,
+            f"[本地封禁库拦截] 通信句柄 {phone} 已在 banned_phones_cache 中 "
+            f"(原因={record.reason}, 来源={record.source}, 命中={record.hits}次)，"
+            "跳过白号预检 / Push Token / auth.sendCode，直接撤销退订换号",
+        )
+        await cls._refund_and_revoke_channel(sms_svc, act_id, task_id, manager, LOCAL_BANNED_REASON)
+        manager.update_task_status(
+            task_id,
+            "filtered",
+            error=f"{LOCAL_BANNED_REASON}: 号码 {phone} 已被本机确认为 {record.reason}",
+            phone=phone,
+            banned_cache_hit=True,
+        )
+        return False
 
     @classmethod
     async def _apply_phone_precheck(
@@ -973,6 +1015,16 @@ class RegistrationOrchestrator:
             manager.update_task_status(task_id, "running", phone=phone)
             await manager.append_log(task_id, f"成功获取端点通信句柄: {phone} (Session Handle ID: {act_id})")
 
+            # 1.4 本地封禁号缓存：接码回收号复用时零成本拦截
+            if not await cls._apply_banned_cache_gate(
+                phone=phone,
+                act_id=act_id,
+                sms_svc=sms_svc,
+                task_id=task_id,
+                manager=manager,
+            ):
+                return
+
             # 1.5 号码注册状态预检：必须在 Push Token / auth.sendCode 之前完成
             if not await cls._apply_phone_precheck(
                 phone=phone,
@@ -992,6 +1044,12 @@ class RegistrationOrchestrator:
                 check_id = check_data.get("id")
                 if "BANNED" in check_data.get("statuses", []):
                     await manager.append_log(task_id, "检测到该通信句柄存在服务端历史异常记录，触发主动退避与信道撤销！")
+                    BannedPhonesCache.remember(
+                        phone,
+                        reason="PHONE_PREAUDIT_BANNED",
+                        source=SOURCE_ANTISAFETY,
+                        country=target_country,
+                    )
                     await cls._refund_and_revoke_channel(sms_svc, act_id, task_id, manager, "PHONE_PREAUDIT_BANNED")
                     await bypass_svc.report_result(check_id, aid, "REJECTED")
                     manager.update_task_status(task_id, "failed", error="Endpoint handle pre-audit rejected")
@@ -1246,6 +1304,13 @@ class RegistrationOrchestrator:
         except PhoneNumberBannedError:
             err = f"通信句柄 {phone} 处于服务端拒绝服务状态 (PHONE_NUMBER_BANNED)"
             await manager.append_log(task_id, f"❌ {err}")
+            if phone:
+                BannedPhonesCache.remember(
+                    phone,
+                    reason="PHONE_NUMBER_BANNED",
+                    source=SOURCE_TELEGRAM_RPC,
+                    country=target_country,
+                )
             await cls._refund_and_revoke_channel(sms_svc, act_id, task_id, manager, "PHONE_NUMBER_BANNED")
             if check_id: await bypass_svc.report_result(check_id, aid, "BANNED")
             manager.update_task_status(task_id, "failed", error=err)
