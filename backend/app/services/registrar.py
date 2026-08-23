@@ -24,8 +24,15 @@ from telethon.errors import (
 
 from backend.app.config import ConfigManager, SESSIONS_DIR
 from backend.app.services.device_profile import DeviceProfileManager
-from backend.app.services.vaksms import VakSmsService
+from backend.app.services.vaksms import NoNumberAvailableError, VakSmsService, format_no_number_message
 from backend.app.services.attestation_gateway import AttestationGatewayService
+from backend.app.services.phone_precheck import (
+    CLEAN_LOG_TEMPLATE,
+    DEGRADE_LOG_TEMPLATE,
+    PRECHECK_ALREADY_REGISTERED,
+    PhonePrecheckService,
+    format_precheck_intercept_log,
+)
 from backend.app.services.recaptcha_check import (
     RecaptchaChallengeError,
     parse_recaptcha_check,
@@ -55,7 +62,7 @@ GEO_NAME_POOLS = SYNTHETIC_IDENTITY_POOLS
 
 CONNECT_TIMEOUT_SECONDS = 25.0
 MAX_RETAINED_TASKS = 200
-TERMINAL_TASK_STATUSES = frozenset({"success", "failed"})
+TERMINAL_TASK_STATUSES = frozenset({"success", "failed", "filtered"})
 MAX_RESEND_WAIT_SECONDS = 90.0
 DEFAULT_SMS_POLL_ATTEMPTS = 30
 FAST_FAIL_SMS_POLL_ATTEMPTS = 3
@@ -129,6 +136,9 @@ class RegistrationTaskManager:
                 "error": None,
                 "logs": [],
                 "batch_id": batch_id,
+                "precheck_intercepted": False,
+                "precheck_user_id": None,
+                "no_number": False,
                 "created_at": now,
                 "updated_at": now
             }
@@ -157,6 +167,9 @@ class RegistrationTaskManager:
                     "error": None,
                     "logs": [],
                     "batch_id": batch_id,
+                    "precheck_intercepted": False,
+                    "precheck_user_id": None,
+                    "no_number": False,
                     "created_at": now,
                     "updated_at": now,
                 }
@@ -182,6 +195,8 @@ class RegistrationTaskManager:
         task_ids = list(batch.get("task_ids") or [])
         statuses: List[str] = []
         success = running = failed = pending = 0
+        precheck_intercepted = 0
+        no_number = 0
         for tid in task_ids:
             task = self.tasks.get(tid) or {}
             status = task.get("status") or "pending"
@@ -190,10 +205,18 @@ class RegistrationTaskManager:
                 success += 1
             elif status == "failed":
                 failed += 1
+            elif status == "filtered":
+                failed += 1
             elif status == "running":
                 running += 1
             else:
                 pending += 1
+            if task.get("precheck_intercepted") or (
+                "PRECHECK_PHONE_ALREADY_REGISTERED" in str(task.get("error") or "")
+            ):
+                precheck_intercepted += 1
+            if task.get("no_number"):
+                no_number += 1
         if task_ids and all(s == "success" for s in statuses):
             agg = "success"
         elif task_ids and all(s in TERMINAL_TASK_STATUSES for s in statuses):
@@ -209,6 +232,8 @@ class RegistrationTaskManager:
             "failed": failed,
             "running": running,
             "pending": pending,
+            "precheck_intercepted": precheck_intercepted,
+            "no_number": no_number,
         })
         return enriched
 
@@ -288,6 +313,57 @@ class RegistrationOrchestrator:
             task_id,
             f"⚠️ 自动退订/撤销信道句柄未成功 (act_id={act_id}, 原因: {reason}): {detail}"
         )
+
+    @classmethod
+    async def _apply_phone_precheck(
+        cls,
+        phone: str,
+        act_id: Optional[str],
+        sms_svc: VakSmsService,
+        task_id: str,
+        manager: RegistrationTaskManager,
+        proxy: Optional[Dict[str, Any]] = None,
+        precheck_svc=None,
+        config=None,
+    ) -> bool:
+        """租号后、申请 Push Token 之前做白号预检。
+
+        返回 True 表示可以继续注册流水线；False 表示已拦截并退订，调用方必须立即 return。
+        """
+        service = precheck_svc or PhonePrecheckService
+        await manager.append_log(task_id, f"正在对通信句柄 {phone} 执行 Telegram 号码注册状态预检探测...")
+        result = await service.check_phone(
+            phone,
+            proxy=proxy,
+            log_callback=lambda msg: manager.append_log(task_id, msg),
+            config=config,
+        )
+        if result.intercept or result.is_registered is True:
+            intercept_log = format_precheck_intercept_log(phone, result.user_id)
+            await manager.append_log(task_id, intercept_log)
+            await cls._refund_and_revoke_channel(
+                sms_svc, act_id, task_id, manager, PRECHECK_ALREADY_REGISTERED
+            )
+            manager.update_task_status(
+                task_id,
+                "filtered",
+                error=f"{PRECHECK_ALREADY_REGISTERED}: 号码 {phone} 已在 Telegram 注册 (uid={result.user_id})",
+                phone=phone,
+                precheck_intercepted=True,
+                precheck_user_id=result.user_id,
+            )
+            return False
+        if result.degraded or result.is_registered is None:
+            if result.reason in {"PRECHECK_NO_PROBE_SESSION", "PRECHECK_DISABLED", ""}:
+                degrade_msg = DEGRADE_LOG_TEMPLATE
+            else:
+                degrade_msg = f"⚠️ 预检未得到明确结论 ({result.reason})，优雅降级走现有流程"
+            await manager.append_log(task_id, degrade_msg)
+            manager.update_task_status(task_id, "running", precheck_intercepted=False)
+            return True
+        await manager.append_log(task_id, CLEAN_LOG_TEMPLATE.format(phone=phone))
+        manager.update_task_status(task_id, "running", precheck_intercepted=False)
+        return True
 
     @classmethod
     async def _resolve_custom_proxy(
@@ -840,6 +916,18 @@ class RegistrationOrchestrator:
             manager.update_task_status(task_id, "running", phone=phone)
             await manager.append_log(task_id, f"成功获取端点通信句柄: {phone} (Session Handle ID: {act_id})")
 
+            # 1.5 号码注册状态预检：必须在 Push Token / auth.sendCode 之前完成
+            if not await cls._apply_phone_precheck(
+                phone=phone,
+                act_id=act_id,
+                sms_svc=sms_svc,
+                task_id=task_id,
+                manager=manager,
+                proxy=active_proxy,
+                config=config,
+            ):
+                return
+
             # 2. 端点信誉预检
             await manager.append_log(task_id, "正在对通信句柄进行历史安全状态审计...")
             check_data = await bypass_svc.check_phone_history(phone, aid)
@@ -1094,6 +1182,10 @@ class RegistrationOrchestrator:
 
             manager.update_task_status(task_id, "success", phone=phone, user_id=user_id)
 
+        except NoNumberAvailableError as ex:
+            err = str(ex) or format_no_number_message(target_country)
+            await manager.append_log(task_id, err)
+            manager.update_task_status(task_id, "failed", error=err, no_number=True)
         except PhoneNumberBannedError:
             err = f"通信句柄 {phone} 处于服务端拒绝服务状态 (PHONE_NUMBER_BANNED)"
             await manager.append_log(task_id, f"❌ {err}")

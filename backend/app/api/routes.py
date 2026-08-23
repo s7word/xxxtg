@@ -8,6 +8,7 @@ from backend.app.config import ConfigManager, SESSIONS_DIR
 from backend.app.models.schemas import (
     AppConfigModel,
     TestApiResponse,
+    PhonePrecheckStatusResponse,
     RegisterTaskRequest,
     RegisterTaskResponse,
     BatchRegisterRequest,
@@ -54,6 +55,7 @@ from backend.app.services.proxy_manager import (
     probe_custom_proxies,
 )
 from backend.app.services.registrar import RegistrationTaskManager, RegistrationOrchestrator
+from backend.app.services.phone_precheck import PhonePrecheckService
 from backend.app.services.account_vault import AccountVaultService
 from backend.app.services.telegram_apps import TelegramAppsHelper, TelegramAppsJobManager
 
@@ -85,13 +87,18 @@ async def test_vaksms(payload: Dict[str, Any] = None):
 
     svc = VakSmsService(api_key)
     try:
+        from backend.app.services.vaksms import format_no_number_message
+
         balance = await svc.get_balance()
         stock = await svc.get_stock_count(country=country, service="tg")
+        message = "带外遥测通道鉴权与通信正常"
+        if int(stock or 0) <= 0:
+            message = format_no_number_message(country)
         return TestApiResponse(
-            success=True,
+            success=int(stock or 0) > 0,
             service="OOB-Telemetry",
-            message="带外遥测通道鉴权与通信正常",
-            data={"balance": balance, "country": country, "telegram_stock": stock}
+            message=message,
+            data={"balance": balance, "country": country, "telegram_stock": stock, "no_number": int(stock or 0) <= 0}
         )
     except Exception as e:
         return TestApiResponse(
@@ -524,6 +531,15 @@ async def get_task_status(task_id: str):
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
     return task
+
+
+@router.get(
+    "/phone-precheck/status",
+    response_model=PhonePrecheckStatusResponse,
+    summary="号码注册状态预检探测器就绪状态",
+)
+async def phone_precheck_status():
+    return PhonePrecheckService.describe_status().to_dict()
 
 # ==================== 4. 密码学上下文快照与节点资产 ====================
 @router.get("/sessions", summary="获取已持久化的密码学上下文快照列表")

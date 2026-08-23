@@ -166,6 +166,13 @@ class AppConfigModel(BaseModel):
             "reghelp_only (仅使用 REGHelp) / antisafety_only (仅使用 AntiSafety)"
         )
     )
+    phone_precheck_enabled: bool = Field(
+        default=True,
+        description=(
+            "是否启用号码注册状态预检探测器：租号后、申请 Push Token / auth.sendCode 之前，"
+            "用 lod_user 已授权 session 查询该号是否已在 Telegram 注册，拦截二手号以免消耗 Push Token"
+        )
+    )
 
     @field_validator("antisafety_base_urls", mode="before")
     @classmethod
@@ -216,6 +223,16 @@ class TestApiResponse(BaseModel):
     service: str
     message: str
     data: Optional[Dict[str, Any]] = None
+
+
+class PhonePrecheckStatusResponse(BaseModel):
+    """号码白号预检探测器就绪状态"""
+    enabled: bool
+    active: bool
+    probe_count: int = 0
+    probe_phones: List[str] = Field(default_factory=list)
+    degraded: bool = False
+    message: str = ""
 
 
 class RegisterTaskRequest(BaseModel):
@@ -270,6 +287,8 @@ class BatchStatusResponse(BaseModel):
     failed: int = 0
     running: int = 0
     pending: int = 0
+    precheck_intercepted: int = 0
+    no_number: int = 0
     created_at: str
     updated_at: str
 
@@ -277,7 +296,7 @@ class BatchStatusResponse(BaseModel):
 class TaskStatusResponse(BaseModel):
     """节点状态机生命周期与审计追踪响应"""
     task_id: str
-    status: str  # pending, running, success, failed
+    status: str  # pending, running, success, failed, filtered
     phone: Optional[str] = Field(default=None, description="绑定的端点通信句柄")
     user_id: Optional[int] = Field(default=None, description="协商确认的分布式节点 UID")
     error: Optional[str] = None
@@ -285,6 +304,9 @@ class TaskStatusResponse(BaseModel):
     batch_id: Optional[str] = Field(default=None, description="所属并发批次 ID")
     account_kind: Optional[str] = None
     needs_signup: Optional[bool] = None
+    precheck_intercepted: bool = Field(default=False, description="是否被号码注册状态预检拦截")
+    precheck_user_id: Optional[int] = Field(default=None, description="预检解析出的已注册 Telegram UID")
+    no_number: bool = Field(default=False, description="接码平台对该区域返回 noNumber")
     created_at: str
     updated_at: str
 

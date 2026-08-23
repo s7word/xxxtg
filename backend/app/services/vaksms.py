@@ -5,6 +5,45 @@ import httpx
 
 logger = logging.getLogger("OOBTelemetryService")
 
+NO_NUMBER_ERROR_ALIASES = frozenset({
+    "nonumber",
+    "no_number",
+    "no number",
+    "no numbers",
+    "no_numbers",
+})
+
+STOCK_HINT_REGIONS = "ID 印尼、KZ 哈萨克斯坦、RU 等"
+
+
+def format_no_number_message(country: str) -> str:
+    """接码平台无库存时的友好告警文案。"""
+    code = (country or "?").strip().upper() or "?"
+    return (
+        f"⚠️ 当前拓扑区域 {code} 在接码平台暂无可分配库存 (noNumber)，"
+        f"建议在控制台切换至库存充沛的区域（如 {STOCK_HINT_REGIONS}）"
+    )
+
+
+def is_no_number_error(error: Any) -> bool:
+    text = str(error or "").strip().lower()
+    if not text:
+        return False
+    if text in NO_NUMBER_ERROR_ALIASES:
+        return True
+    compact = text.replace(" ", "").replace("_", "")
+    return compact == "nonumber" or "nonumber" in compact
+
+
+class NoNumberAvailableError(RuntimeError):
+    """Vak-SMS 返回 noNumber：目标国家当前无可租号码。"""
+
+    def __init__(self, country: str, raw: Any = None):
+        self.country = (country or "").strip().lower()
+        self.raw = raw
+        super().__init__(format_no_number_message(self.country))
+
+
 class VakSmsService:
     """异步带外挑战响应遥测提供者 (Out-of-Band Challenge & Telemetry Provider)"""
     BASE_URL = "https://vak-sms.com/api"
@@ -45,8 +84,13 @@ class VakSmsService:
             params["operator"] = operator
         resp = await self.client.get(f"{self.BASE_URL}/getNumber/", params=params)
         data = resp.json()
-        if "error" in data:
-            raise RuntimeError(f"申请带外通信句柄失败: {data.get('error')}")
+        if isinstance(data, dict) and "error" in data:
+            error = data.get("error")
+            if is_no_number_error(error):
+                raise NoNumberAvailableError(country, data)
+            raise RuntimeError(f"申请带外通信句柄失败: {error}")
+        if isinstance(data, str) and is_no_number_error(data):
+            raise NoNumberAvailableError(country, data)
         if "tel" in data and "idNum" in data:
             phone = str(data["tel"])
             if not phone.startswith("+"):

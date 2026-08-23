@@ -203,8 +203,38 @@
                   </div>
                 </div>
                 <p class="text-[11px] text-zinc-500 leading-relaxed">
-                  等待 OTP 期间可并行验证多个号码。若服务端返回 <code class="font-mono">SentCodeTypeApp</code> 会自动探测 <code class="font-mono">ResendCode</code> 并快速换号，避免空等 120 秒。
+                  等待 OTP 期间可并行验证多个号码。租号后先做白号预检；已注册号直接退订换号，不消耗 Push Token。若服务端仍返回 <code class="font-mono">SentCodeTypeApp</code> 会自动探测 <code class="font-mono">ResendCode</code> 并快速换号。
                 </p>
+              </div>
+            </div>
+
+            <!-- 号码注册状态预检探测器 -->
+            <div class="p-2.5 rounded-lg border space-y-1.5"
+              :class="phonePrecheckStatus.active
+                ? 'bg-emerald-950/30 border-emerald-800/50'
+                : (phonePrecheckStatus.degraded ? 'bg-amber-950/30 border-amber-800/50' : 'bg-zinc-900/80 border-zinc-800')"
+            >
+              <div class="flex items-center justify-between gap-2">
+                <div class="flex items-center gap-2">
+                  <span class="text-sm">🛰️</span>
+                  <span class="text-xs font-medium text-zinc-200">号码注册状态预检探测</span>
+                </div>
+                <span
+                  :class="phonePrecheckStatus.active ? 'badge badge-success text-[10px]' : 'badge badge-warning text-[10px]'"
+                >
+                  {{ phonePrecheckStatus.active ? '已激活' : (phonePrecheckStatus.enabled === false ? '已关闭' : '降级') }}
+                </span>
+              </div>
+              <p class="text-[11px] leading-relaxed"
+                :class="phonePrecheckStatus.active ? 'text-emerald-200' : 'text-amber-100'"
+              >
+                {{ phonePrecheckStatus.message || '正在探测本地授权 session…' }}
+              </p>
+              <div v-if="phonePrecheckStatus.probe_count" class="text-[10px] text-zinc-500 font-mono">
+                探测源 {{ phonePrecheckStatus.probe_count }} 个
+                <span v-if="phonePrecheckStatus.probe_phones?.length">
+                  · {{ phonePrecheckStatus.probe_phones.join(' / ') }}
+                </span>
               </div>
             </div>
 
@@ -260,6 +290,8 @@
               <span class="text-[11px] text-cyan-400">运行 {{ batchStats.running }}</span>
               <span class="text-[11px] text-red-400">失败 {{ batchStats.failed }}</span>
               <span class="text-[11px] text-zinc-500">等待 {{ batchStats.pending }}</span>
+              <span v-if="batchStats.precheck" class="text-[11px] text-amber-300">预检拦截 {{ batchStats.precheck }}</span>
+              <span v-if="batchStats.noNumber" class="text-[11px] text-orange-300">无库存 {{ batchStats.noNumber }}</span>
               <button
                 v-for="tid in currentBatch.task_ids"
                 :key="tid"
@@ -284,8 +316,10 @@
                 :class="[
                   'leading-relaxed break-all',
                   log.includes('🎉') || log.includes('成功') ? 'text-green-400 font-bold' : (
-                    log.includes('❌') || log.includes('失败') || log.includes('异常') ? 'text-red-400 font-bold' : (
-                      log.includes('[*]') || log.includes('探测') ? 'text-cyan-400' : 'text-zinc-300'
+                    log.includes('❌') || log.includes('失败') || log.includes('异常') || log.includes('noNumber') ? 'text-red-400 font-bold' : (
+                      log.includes('预检拦截') ? 'text-amber-300 font-bold' : (
+                        log.includes('[*]') || log.includes('探测') || log.includes('预检') ? 'text-cyan-400' : 'text-zinc-300'
+                      )
                     )
                   )
                 ]"
@@ -362,6 +396,7 @@
                     <td class="font-mono text-zinc-500">{{ t.batch_id || '-' }}</td>
                     <td>
                       <span :class="getStatusBadgeClass(t.status)">{{ t.status }}</span>
+                      <span v-if="t.precheck_intercepted" class="ml-1 badge badge-warning text-[10px]">预检拦截</span>
                     </td>
                     <td class="font-mono text-zinc-300">{{ t.phone || '-' }}</td>
                     <td class="font-mono text-zinc-300">{{ t.user_id || '-' }}</td>
@@ -785,6 +820,13 @@
                 <option value="antisafety_only">antisafety_only（仅使用 AntiSafety）</option>
               </select>
               <p class="text-[11px] text-zinc-500 mt-1">节点引导时按此顺序依次尝试各提供源，任一失败/超时自动切换至下一候选，无需人工干预。</p>
+            </div>
+
+            <div class="flex items-center gap-2 p-2.5 rounded-lg bg-zinc-900/70 border border-zinc-800">
+              <input type="checkbox" id="phonePrecheckEnabled" v-model="config.phone_precheck_enabled" class="rounded bg-zinc-900 border-zinc-700" />
+              <label for="phonePrecheckEnabled" class="text-xs text-zinc-300">
+                启用号码注册状态预检探测（租号后、申请 Push Token 前拦截已注册二手号）
+              </label>
             </div>
 
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -1268,7 +1310,8 @@ const config = reactive({
   reghelp_enabled: true,
   reghelp_connect_timeout: 6.0,
   reghelp_total_timeout: 20.0,
-  attestation_provider_mode: 'reghelp_primary'
+  attestation_provider_mode: 'reghelp_primary',
+  phone_precheck_enabled: true
 })
 
 // 候选网关地址在界面上以逐行文本编辑，实际持久化为字符串数组
@@ -1395,14 +1438,27 @@ const allVisibleSelected = computed(() => {
   const ids = visibleTaskList.value.map((t) => t.task_id)
   return ids.length > 0 && ids.every((id) => selectedTaskIds.value.includes(id))
 })
+const phonePrecheckStatus = ref({
+  enabled: true,
+  active: false,
+  probe_count: 0,
+  probe_phones: [],
+  degraded: true,
+  message: ''
+})
+
 const batchStats = computed(() => {
   const ids = new Set(currentBatch.value?.task_ids || [])
   const items = taskList.value.filter((t) => ids.has(t.task_id) || (currentBatch.value && t.batch_id === currentBatch.value.batch_id))
   return {
     success: items.filter((t) => t.status === 'success').length,
-    failed: items.filter((t) => t.status === 'failed').length,
+    failed: items.filter((t) => t.status === 'failed' || t.status === 'filtered').length,
     running: items.filter((t) => t.status === 'running').length,
-    pending: items.filter((t) => t.status === 'pending' || !t.status).length
+    pending: items.filter((t) => t.status === 'pending' || !t.status).length,
+    precheck: currentBatch.value?.precheck_intercepted
+      ?? items.filter((t) => t.precheck_intercepted || String(t.error || '').includes('PRECHECK_PHONE_ALREADY_REGISTERED')).length,
+    noNumber: currentBatch.value?.no_number
+      ?? items.filter((t) => t.no_number || String(t.error || '').includes('noNumber')).length
   }
 })
 const displayLogs = computed(() => {
@@ -1537,6 +1593,17 @@ const fetchTasks = async () => {
     })
   } catch (e) {
     console.error('Fetch tasks error:', e)
+  }
+}
+
+const fetchPhonePrecheckStatus = async () => {
+  try {
+    const res = await fetch('/api/phone-precheck/status')
+    if (res.ok) {
+      phonePrecheckStatus.value = await res.json()
+    }
+  } catch (e) {
+    console.error('Fetch phone precheck status error:', e)
   }
 }
 
@@ -2003,6 +2070,7 @@ const getStatusBadgeClass = (status) => {
   if (status === 'success') return 'badge badge-success'
   if (status === 'running') return 'badge badge-info animate-pulse'
   if (status === 'failed') return 'badge badge-danger'
+  if (status === 'filtered') return 'badge badge-warning'
   return 'badge badge-warning'
 }
 
@@ -2255,10 +2323,12 @@ onMounted(() => {
   fetchTasks()
   fetchSessions()
   fetchVaultAccounts()
+  fetchPhonePrecheckStatus()
   refreshProxyPool('', false)
   fetchCustomProxyList()
   pollTimer = setInterval(() => {
     fetchTasks()
+    fetchPhonePrecheckStatus()
   }, 2000)
 })
 
