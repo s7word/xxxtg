@@ -18,10 +18,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY backend/requirements.txt /app/requirements.txt
-# 主用清华 PyPI 镜像加速安装，同时保留官方源作为兜底候选，避免镜像不可达时构建卡死/失败
 RUN pip install --no-cache-dir \
-    --index-url https://pypi.tuna.tsinghua.edu.cn/simple \
-    --extra-index-url https://pypi.org/simple \
     --timeout 120 \
     -r requirements.txt
 

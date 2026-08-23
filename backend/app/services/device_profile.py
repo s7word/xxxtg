@@ -1,7 +1,3 @@
-import os
-import re
-import sqlite3
-import random
 import logging
 from pathlib import Path
 from typing import Dict, Any, List, Optional
@@ -10,18 +6,52 @@ from backend.app.config import ConfigManager, DATA_DIR
 logger = logging.getLogger("NodeTelemetryProfileManager")
 
 COUNTRY_LANG_MAP = {
-    "cl": {"lang_code": "es", "system_lang_code": "es-cl", "tz_offset": -14400},
-    "id": {"lang_code": "id", "system_lang_code": "id-id", "tz_offset": 25200},
-    "ru": {"lang_code": "ru", "system_lang_code": "ru-ru", "tz_offset": 10800},
-    "kz": {"lang_code": "ru", "system_lang_code": "ru-kz", "tz_offset": 18000},
-    "af": {"lang_code": "en", "system_lang_code": "en-af", "tz_offset": 16200},
-    "us": {"lang_code": "en", "system_lang_code": "en-us", "tz_offset": -18000},
-    "gb": {"lang_code": "en", "system_lang_code": "en-gb", "tz_offset": 0},
-    "br": {"lang_code": "pt", "system_lang_code": "pt-br", "tz_offset": -10800},
-    "tr": {"lang_code": "tr", "system_lang_code": "tr-tr", "tz_offset": 10800},
-    "in": {"lang_code": "en", "system_lang_code": "en-in", "tz_offset": 19800}
+    # 美洲
+    "ca": {"lang_code": "en", "system_lang_code": "en-ca", "tz_offset": -18000, "dial": "1",
+           "alt_system_lang_codes": ("fr-ca",), "tz_offset_range": (-28800, -14400)},
+    "us": {"lang_code": "en", "system_lang_code": "en-us", "tz_offset": -18000, "dial": "1",
+           "tz_offset_range": (-28800, -14400)},
+    "mx": {"lang_code": "es", "system_lang_code": "es-mx", "tz_offset": -21600, "dial": "52",
+           "tz_offset_range": (-25200, -18000)},
+    "cl": {"lang_code": "es", "system_lang_code": "es-cl", "tz_offset": -14400, "dial": "56"},
+    "br": {"lang_code": "pt", "system_lang_code": "pt-br", "tz_offset": -10800, "dial": "55"},
+    "co": {"lang_code": "es", "system_lang_code": "es-co", "tz_offset": -18000, "dial": "57"},
+    "pe": {"lang_code": "es", "system_lang_code": "es-pe", "tz_offset": -18000, "dial": "51"},
+    "ar": {"lang_code": "es", "system_lang_code": "es-ar", "tz_offset": -10800, "dial": "54"},
+    # 西欧
+    "gb": {"lang_code": "en", "system_lang_code": "en-gb", "tz_offset": 0, "dial": "44"},
+    "de": {"lang_code": "de", "system_lang_code": "de-de", "tz_offset": 3600, "dial": "49"},
+    "fr": {"lang_code": "fr", "system_lang_code": "fr-fr", "tz_offset": 3600, "dial": "33"},
+    # 东欧 / CIS
+    "ru": {"lang_code": "ru", "system_lang_code": "ru-ru", "tz_offset": 10800, "dial": "7"},
+    "ua": {"lang_code": "uk", "system_lang_code": "uk-ua", "tz_offset": 7200, "dial": "380"},
+    "kz": {"lang_code": "ru", "system_lang_code": "ru-kz", "tz_offset": 18000, "dial": "7"},
+    "uz": {"lang_code": "uz", "system_lang_code": "uz-uz", "tz_offset": 18000, "dial": "998"},
+    # 中东
+    "tr": {"lang_code": "tr", "system_lang_code": "tr-tr", "tz_offset": 10800, "dial": "90"},
+    "ae": {"lang_code": "ar", "system_lang_code": "ar-ae", "tz_offset": 14400, "dial": "971"},
+    "sa": {"lang_code": "ar", "system_lang_code": "ar-sa", "tz_offset": 10800, "dial": "966"},
+    "eg": {"lang_code": "ar", "system_lang_code": "ar-eg", "tz_offset": 7200, "dial": "20"},
+    "af": {"lang_code": "en", "system_lang_code": "en-af", "tz_offset": 16200, "dial": "93"},
+    # 非洲
+    "za": {"lang_code": "en", "system_lang_code": "en-za", "tz_offset": 7200, "dial": "27"},
+    "ng": {"lang_code": "en", "system_lang_code": "en-ng", "tz_offset": 3600, "dial": "234"},
+    "ke": {"lang_code": "en", "system_lang_code": "en-ke", "tz_offset": 10800, "dial": "254"},
+    # 亚太
+    "in": {"lang_code": "en", "system_lang_code": "en-in", "tz_offset": 19800, "dial": "91"},
+    "id": {"lang_code": "id", "system_lang_code": "id-id", "tz_offset": 25200, "dial": "62"},
+    "jp": {"lang_code": "ja", "system_lang_code": "ja-jp", "tz_offset": 32400, "dial": "81"},
+    "kr": {"lang_code": "ko", "system_lang_code": "ko-kr", "tz_offset": 32400, "dial": "82"},
+    "th": {"lang_code": "th", "system_lang_code": "th-th", "tz_offset": 25200, "dial": "66"},
+    "vn": {"lang_code": "vi", "system_lang_code": "vi-vn", "tz_offset": 25200, "dial": "84"},
+    "ph": {"lang_code": "en", "system_lang_code": "en-ph", "tz_offset": 28800, "dial": "63"},
+    "au": {"lang_code": "en", "system_lang_code": "en-au", "tz_offset": 36000, "dial": "61",
+           "tz_offset_range": (28800, 39600)},
 }
 TOPOLOGY_LANG_MAP = COUNTRY_LANG_MAP
+
+# 控制台 / 指纹合成共用的全球拓扑国家全集（ISO-2，小写）
+GLOBAL_TOPOLOGY_COUNTRIES = tuple(COUNTRY_LANG_MAP.keys())
 
 # 已知被公开泄露/广泛传播的官方 api_id 黑名单。
 # 这些 ID 早年随官方 APK/开源客户端反编译泄露，被大量第三方工具复用，
@@ -86,65 +116,60 @@ class DeviceProfileManager:
     _db_loaded = False
 
     @classmethod
+    def _manager(cls):
+        from backend.app.services.device_db_manager import DeviceDbManager
+        return DeviceDbManager
+
+    @classmethod
     def load_sqlite_devices(cls, db_path: Optional[str] = None) -> List[Dict[str, Any]]:
-        """从 SQLite 拓扑指纹数据库 (Base.db) 动态解析高保真硬件遥测样本"""
+        """从已激活的国家指纹包（或显式路径）解析硬件遥测样本。"""
+        if db_path:
+            from backend.app.services.device_db_manager import parse_registrator_db
+            try:
+                return parse_registrator_db(Path(db_path))
+            except Exception as exc:
+                logger.warning("解析指定硬件指纹库失败: %s", exc)
+                return []
+
         if cls._db_loaded and cls._cached_db_devices:
             return cls._cached_db_devices
 
+        manager = cls._manager()
+        manager.ensure_ready()
+        pooled: List[Dict[str, Any]] = []
+        for pack in manager.enabled_packs():
+            pooled.extend(manager.load_rows(str(pack["id"])))
+        if pooled:
+            cls._cached_db_devices = pooled
+            cls._db_loaded = True
+            logger.info("已从 %s 个已激活指纹包载入 %s 组终端遥测特征", len(manager.enabled_packs()), len(pooled))
+            return pooled
+
+        # 兼容尚未迁入 catalog 的遗留单文件 Base.db
         search_paths = [
-            db_path,
             Path("./2026-08-23_07-06-02_Base.db"),
             Path("/Users/mac/Downloads/tg_auto/2026-08-23_07-06-02_Base.db"),
-            DATA_DIR / "Base.db"
+            DATA_DIR / "Base.db",
         ]
+        for candidate in search_paths:
+            if candidate.exists():
+                try:
+                    from backend.app.services.device_db_manager import parse_registrator_db
+                    parsed = parse_registrator_db(candidate)
+                except Exception as exc:
+                    logger.warning("解析遗留硬件指纹库 %s 失败: %s", candidate, exc)
+                    continue
+                cls._cached_db_devices = parsed
+                cls._db_loaded = True
+                logger.info("成功从遗留硬件数据库 %s 载入 %s 组特征", candidate.name, len(parsed))
+                return parsed
+        return []
 
-        target_file = None
-        for p in search_paths:
-            if p and Path(p).exists():
-                target_file = Path(p)
-                break
-
-        if not target_file:
-            return []
-
-        try:
-            conn = sqlite3.connect(target_file)
-            cursor = conn.cursor()
-            cursor.execute("SELECT APP_ID, APP_HASH, SDK, DEVICE, APP_VERSION, LANG_CODE, SYSTEM_LANG_CODE, LANG_PACK, TZ_OFFSET, PERF_CAT FROM REGISTRATOR")
-            rows = cursor.fetchall()
-
-            parsed = []
-            for r in rows:
-                app_ver_str = str(r[4])
-                pure_ver = app_ver_str
-                build_code = "69792"
-                m = re.search(r'([\d\.]+)\s*\((\d+)\)', app_ver_str)
-                if m:
-                    pure_ver = m.group(1)
-                    build_code = m.group(2)
-
-                parsed.append({
-                    "api_id": int(r[0]),
-                    "api_hash": str(r[1]),
-                    "system_version": str(r[2]),
-                    "device_model": str(r[3]),
-                    "app_version": app_ver_str,
-                    "app_version_pure": pure_ver,
-                    "app_build": build_code,
-                    "lang_code": str(r[5]),
-                    "system_lang_code": str(r[6]),
-                    "lang_pack": str(r[7]),
-                    "tz_offset": int(r[8]),
-                    "perf_cat": int(r[9])
-                })
-
-            cls._cached_db_devices = parsed
-            cls._db_loaded = True
-            logger.info(f"成功从硬件数据库 {target_file.name} 载入 {len(parsed)} 组高保真终端遥测特征")
-            return parsed
-        except Exception as e:
-            logger.warning(f"解析硬件拓扑指纹数据库失败: {e}")
-            return []
+    @classmethod
+    def invalidate_device_cache(cls) -> None:
+        cls._cached_db_devices = []
+        cls._db_loaded = False
+        cls._manager().invalidate_cache()
 
     @classmethod
     def get_all_profiles(cls) -> List[Dict[str, Any]]:
@@ -160,7 +185,7 @@ class DeviceProfileManager:
             if config.api_credential_mode == "custom" and config.custom_api_id and config.custom_api_hash:
                 item["api_id"] = config.custom_api_id
                 item["api_hash"] = config.custom_api_hash
-                item["is_published_api_id"] = False
+                item["is_published_api_id"] = int(config.custom_api_id) in PUBLISHED_API_ID_BLOCKLIST
                 item["credential_source"] = "custom"
             result.append(item)
         return result
@@ -195,8 +220,11 @@ class DeviceProfileManager:
             if has_custom:
                 resolved["api_id"] = int(custom_id)
                 resolved["api_hash"] = custom_hash
-                resolved["is_published_api_id"] = False
+                custom_published = int(custom_id) in PUBLISHED_API_ID_BLOCKLIST
+                resolved["is_published_api_id"] = custom_published
                 resolved["credential_source"] = "custom"
+                if custom_published and not has_push_token:
+                    resolved["credential_risk"] = "published_id_without_push_token"
             else:
                 # 用户强制指定 custom 模式却未填写凭证，明确标注风险而不是静默回退
                 resolved["credential_risk"] = "custom_mode_missing_credentials"
@@ -209,11 +237,18 @@ class DeviceProfileManager:
 
         # mode == "auto" (默认): 有 Push Token 就用官方 ID；没有 Push Token 且 ID 已知泄露，则自动切换自建 ID
         if is_published and not has_push_token:
-            if has_custom:
+            if has_custom and int(custom_id) not in PUBLISHED_API_ID_BLOCKLIST:
                 resolved["api_id"] = int(custom_id)
                 resolved["api_hash"] = custom_hash
                 resolved["is_published_api_id"] = False
                 resolved["credential_source"] = "custom_auto_fallback"
+            elif has_custom and int(custom_id) in PUBLISHED_API_ID_BLOCKLIST:
+                # 自建栏位本身也填了公开泄露 ID（常见于误把 lod_user 的 app_id=4 写进 config）
+                resolved["api_id"] = int(custom_id)
+                resolved["api_hash"] = custom_hash
+                resolved["is_published_api_id"] = True
+                resolved["credential_source"] = "custom_auto_fallback"
+                resolved["credential_risk"] = "published_id_without_push_token"
             else:
                 resolved["credential_risk"] = "published_id_without_push_token"
 
@@ -221,12 +256,39 @@ class DeviceProfileManager:
 
     @classmethod
     def get_db_stats(cls) -> Dict[str, Any]:
-        devices = cls.load_sqlite_devices()
-        return {
-            "total_count": len(devices),
-            "is_loaded": len(devices) > 0,
-            "sample_models": [d["device_model"] for d in devices[:6]] if devices else []
-        }
+        return cls._manager().aggregate_stats()
+
+    @classmethod
+    def infer_locale(cls, country: str) -> Dict[str, Any]:
+        """任意 ISO-2 → 语言 / 时区 / 区号。预设表优先，其余走全球推断引擎。"""
+        code = (country or "").strip().lower()
+        if code == "uk":
+            code = "gb"
+        if code in COUNTRY_LANG_MAP:
+            spec = dict(COUNTRY_LANG_MAP[code])
+            spec["code"] = code
+            spec["locale_inferred"] = False
+            return spec
+        from backend.app.services.geo_catalog import infer_locale as infer_iso_locale
+        return infer_iso_locale(code or country)
+
+    @classmethod
+    def _apply_locale(cls, profile: Dict[str, Any], country: str, sampled: Optional[Dict[str, Any]], match: str) -> None:
+        fallback = cls.infer_locale(country)
+        sampled = sampled or {}
+        keep_sampled_locale = match == "country" and sampled.get("lang_code") and sampled.get("system_lang_code")
+        if keep_sampled_locale:
+            profile["lang_code"] = str(sampled["lang_code"]).lower()
+            profile["system_lang_code"] = str(sampled["system_lang_code"]).lower()
+            profile["tz_offset"] = int(sampled.get("tz_offset") or fallback.get("tz_offset") or 0)
+            profile["locale_source"] = "pack"
+            return
+        profile["lang_code"] = fallback.get("lang_code") or "en"
+        profile["system_lang_code"] = fallback.get("system_lang_code") or "en-us"
+        profile["tz_offset"] = int(fallback.get("tz_offset") or 0)
+        profile["locale_source"] = "country_overlay"
+        if fallback.get("locale_inferred"):
+            profile["locale_source"] = "iso_inferred"
 
     @classmethod
     def get_resolved_profile(cls, app_type: str = "telegram_android", country: str = "cl") -> Dict[str, Any]:
@@ -236,15 +298,26 @@ class DeviceProfileManager:
 
         profile = dict(base)
         profile["aid"] = aid
+        profile["device_pack_id"] = None
+        profile["device_pack_alias"] = None
+        profile["device_pack_country"] = None
+        profile["device_pack_match"] = "none"
 
-        # 采样匹配 Base.db 中的高保真硬件参数
-        db_devices = cls.load_sqlite_devices()
-        if db_devices:
-            sampled_dev = random.choice(db_devices)
+        selection = cls._manager().select_sample(country)
+        sampled_dev = None
+        match = "none"
+        if selection:
+            sampled_dev = selection["row"]
+            pack = selection["pack"]
+            match = selection.get("match") or "none"
             profile["device_model"] = sampled_dev["device_model"]
             profile["system_version"] = sampled_dev["system_version"]
-            profile["tz_offset"] = sampled_dev.get("tz_offset", -14400)
-
+            profile["perf_cat"] = sampled_dev.get("perf_cat", 2)
+            profile["lang_pack"] = sampled_dev.get("lang_pack") or profile.get("lang_pack") or "android"
+            profile["device_pack_id"] = pack.get("id")
+            profile["device_pack_alias"] = pack.get("alias")
+            profile["device_pack_country"] = pack.get("country")
+            profile["device_pack_match"] = match
             if app_type == "telegram_android":
                 profile["app_version"] = sampled_dev["app_version"]
                 profile["app_version_pure"] = sampled_dev["app_version_pure"]
@@ -252,11 +325,7 @@ class DeviceProfileManager:
                 profile["api_id"] = sampled_dev.get("api_id", base["api_id"])
                 profile["api_hash"] = sampled_dev.get("api_hash", base["api_hash"])
 
-        # 动态对齐地理拓扑与语言环境
-        lang_info = COUNTRY_LANG_MAP.get(country.lower(), {"lang_code": "es", "system_lang_code": "es-CL", "tz_offset": -14400})
-        profile["lang_code"] = lang_info["lang_code"]
-        profile["system_lang_code"] = lang_info["system_lang_code"]
-
+        cls._apply_locale(profile, country, sampled_dev, match)
         return profile
 
 # 学术规范别名
