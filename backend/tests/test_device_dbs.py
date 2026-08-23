@@ -195,24 +195,11 @@ class TestResolvedProfileCountryMatch(unittest.TestCase):
             )
             DeviceDbManager.update_pack(chile["id"], enabled=False, root=root)
 
-            def _select(country, root=None):
-                return DeviceDbManager.select_sample(country, root=root)
-
-            with patch.object(DeviceProfileManager, "_manager", return_value=DeviceDbManager), \
-                 patch.object(DeviceDbManager, "select_sample", side_effect=lambda country, root=None: _select(country, root=root)):
-                # Force select_sample to use our temp catalog.
-                with patch(
-                    "backend.app.services.device_profile.DeviceProfileManager._manager",
-                    return_value=type("M", (), {
-                        "select_sample": staticmethod(lambda country: DeviceDbManager.select_sample(country, root=root)),
-                        "ensure_ready": staticmethod(lambda: DeviceDbManager.ensure_ready(root)),
-                        "enabled_packs": staticmethod(lambda country=None: DeviceDbManager.enabled_packs(country, root)),
-                        "aggregate_stats": staticmethod(lambda: DeviceDbManager.aggregate_stats(root)),
-                        "invalidate_cache": staticmethod(DeviceDbManager.invalidate_cache),
-                        "load_rows": staticmethod(lambda pack_id: DeviceDbManager.load_rows(pack_id, root)),
-                    })(),
-                ):
-                    profile = DeviceProfileManager.get_resolved_profile("telegram_android", "id")
+            stub = type("CatalogStub", (), {
+                "select_sample": staticmethod(lambda country: DeviceDbManager.select_sample(country, root=root)),
+            })()
+            with patch.object(DeviceProfileManager, "_manager", return_value=stub):
+                profile = DeviceProfileManager.get_resolved_profile("telegram_android", "id")
             self.assertEqual(profile["device_pack_id"], indo["id"])
             self.assertEqual(profile["device_pack_match"], "country")
             self.assertEqual(profile["lang_code"], "id")
