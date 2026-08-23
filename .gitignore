@@ -15,9 +15,15 @@ frontend/.vite/
 
 # Session & Runtime Artifacts
 data/sessions/
+data/device_dbs/*.db
+data/device_dbs/files/
+data/device_dbs/catalog.json
+!data/device_dbs/.gitkeep
 *.session
 *.session-journal
 *.csv
+lod_user/**/CREDENTIALS.txt
+lod_user/imports/
 
 # OS & Editor
 .DS_Store
