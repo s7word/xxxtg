@@ -9,27 +9,34 @@
   "vak_sms_api_key": "16aa4499a3954317aaf002a55e354eed",
   "target_country": "cl",
   "proxy_seller_key": "q8WKCvB4QNUF",
-  "use_proxy_seller_auto": false,
+  "use_proxy_seller_auto": true,
   "fallback_proxy": {
     "proxy_type": "socks5",
-    "addr": "127.0.0.1",
-    "port": 7897,
-    "username": null,
-    "password": null
+    "addr": "res.proxy-seller.com",
+    "port": 10003,
+    "username": "2c131619348a4a7c",
+    "password": "aU9dcl6IekEYLmtv"
   },
+  "custom_proxies": [],
   "default_2fa_password": "Password@2026!Sec",
   "auto_set_2fa": true,
   "custom_device_profiles": [],
-  "api_credential_mode": "auto",
-  "custom_api_id": null,
-  "custom_api_hash": null,
-  "antisafety_base_urls": ["https://api.antisafety.net"],
-  "antisafety_reporting_base_urls": ["https://reporting.antisafety.net"],
+  "api_credential_mode": "custom",
+  "custom_api_id": 35337905,
+  "custom_api_hash": "e51cce64cafa6e4b84b89adb247e01e6",
+  "antisafety_base_urls": [
+    "https://api.antisafety.net"
+  ],
+  "antisafety_reporting_base_urls": [
+    "https://reporting.antisafety.net"
+  ],
   "antisafety_connect_timeout": 6.0,
   "antisafety_total_timeout": 20.0,
   "antisafety_enabled": true,
   "reghelp_api_key": "w9vcrhw7pOK0WKBtQLhdjH62eYtRSFbR",
-  "reghelp_base_urls": ["https://api.reghelp.net"],
+  "reghelp_base_urls": [
+    "https://api.reghelp.net"
+  ],
   "reghelp_enabled": true,
   "reghelp_connect_timeout": 6.0,
   "reghelp_total_timeout": 20.0,

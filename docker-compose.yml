@@ -9,15 +9,17 @@ services:
       - "8000:8000"
     volumes:
       - ./data:/app/data
-      - ./2026-08-23_07-06-02_Base.db:/app/2026-08-23_07-06-02_Base.db:ro
+      - ./lod_user:/app/lod_user
     environment:
       - DATA_DIR=/app/data
+      - DEVICE_DBS_DIR=/app/data/device_dbs
+      - LOD_USER_DIR=/app/lod_user
       - FRONTEND_DIST=/app/frontend/dist
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/api/health"]
-      interval: 30s
+      interval: 15s
       timeout: 5s
-      start_period: 15s
+      start_period: 10s
       retries: 3
     networks:
       - edgenode-mesh
@@ -33,6 +35,12 @@ services:
     depends_on:
       backend:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:80/"]
+      interval: 15s
+      timeout: 5s
+      start_period: 5s
+      retries: 3
     networks:
       - edgenode-mesh
 
