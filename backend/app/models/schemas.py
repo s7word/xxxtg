@@ -524,7 +524,7 @@ class BatchStatusResponse(BaseModel):
 class TaskStatusResponse(BaseModel):
     """节点状态机生命周期与审计追踪响应"""
     task_id: str
-    status: str  # pending, running, success, failed, filtered
+    status: str  # pending, running, waiting_code, logging_in, success, failed, filtered, canceled
     phone: Optional[str] = Field(default=None, description="绑定的端点通信句柄")
     user_id: Optional[int] = Field(default=None, description="协商确认的分布式节点 UID")
     error: Optional[str] = None
@@ -536,10 +536,85 @@ class TaskStatusResponse(BaseModel):
     precheck_user_id: Optional[int] = Field(default=None, description="预检解析出的已注册 Telegram UID")
     banned_cache_hit: bool = Field(default=False, description="是否被本地封禁号缓存拦截")
     no_number: bool = Field(default=False, description="接码平台对该区域返回 noNumber")
+    mode: Optional[str] = Field(default=None, description="任务模式: auto / manual")
+    phone_code_hash: Optional[str] = Field(default=None, description="auth.sendCode 返回的 phone_code_hash")
+    delivery_type: Optional[str] = Field(default=None, description="验证码分发通道类型")
+    session_file: Optional[str] = Field(default=None, description="成功后写入的 .session 文件名")
+    expires_at: Optional[str] = Field(default=None, description="手动等待验证码的截止时间")
     created_at: str
     updated_at: str
 
 NodeTaskStatusResponse = TaskStatusResponse
+
+
+# ==================== 手动单号注册调试控制台 ====================
+
+class ManualRegisterStartRequest(BaseModel):
+    """手动发码：跳过接码平台租号，直接对用户填写的手机号调用 auth.sendCode。"""
+    phone: str = Field(..., min_length=8, max_length=32, description="国际格式手机号，支持 + 或纯数字")
+    country: Optional[str] = Field(default=None, description="目标拓扑区域；为空则从手机号推断")
+    app_type: Optional[str] = Field(default=None, description="指定端点架构模板")
+    proxy: Optional[EgressRelayConfig] = Field(default=None, description="自定义覆盖中继网关")
+    set_2fa: Optional[bool] = Field(default=None, description="覆盖二级保护凭证设定")
+    proxy_id: Optional[str] = Field(default=None, description="显式指定自建/静态代理 ID")
+    proxy_mode: str = Field(
+        default="custom_pool",
+        description="代理配对策略: explicit / custom_pool / auto / fallback",
+    )
+    first_name: Optional[str] = Field(default=None, description="新号 SignUp 时使用的名")
+    last_name: Optional[str] = Field(default=None, description="新号 SignUp 时使用的姓")
+
+    @field_validator("proxy_mode", mode="before")
+    @classmethod
+    def _normalize_manual_proxy_mode(cls, value):
+        return normalize_proxy_mode(value)
+
+
+class ManualRegisterStartResponse(BaseModel):
+    """发码阶段响应：成功后进入 waiting_code 等待人工输入验证码。"""
+    task_id: str
+    status: str = Field(description='waiting_code / running / failed')
+    phone: Optional[str] = None
+    phone_code_hash: Optional[str] = None
+    delivery_type: Optional[str] = None
+    message: str
+    logs: List[str] = Field(default_factory=list)
+    country: Optional[str] = None
+    expires_at: Optional[str] = None
+    error: Optional[str] = None
+
+
+class ManualRegisterSubmitCodeRequest(BaseModel):
+    """提交短信/客户端验证码，完成 auth.signIn / auth.signUp。"""
+    task_id: str
+    code: str = Field(..., min_length=3, max_length=12, description="短信或客户端验证码")
+    password: Optional[str] = Field(default=None, description="已有账号 2FA 口令")
+    first_name: Optional[str] = Field(default=None, description="新号 SignUp 覆盖名")
+    last_name: Optional[str] = Field(default=None, description="新号 SignUp 覆盖姓")
+
+
+class ManualRegisterSubmitCodeResponse(BaseModel):
+    """验证码提交后的终态响应。"""
+    task_id: str
+    status: str = Field(description="success / failed / waiting_code")
+    phone: Optional[str] = None
+    user_id: Optional[int] = None
+    message: str
+    session_file: Optional[str] = None
+    account_kind: Optional[str] = None
+    logs: List[str] = Field(default_factory=list)
+    error: Optional[str] = None
+
+
+class ManualRegisterCancelRequest(BaseModel):
+    task_id: str
+
+
+class ManualRegisterCancelResponse(BaseModel):
+    task_id: str
+    status: str = "canceled"
+    message: str
+    logs: List[str] = Field(default_factory=list)
 
 
 # ==================== Account Vault & Telegram Apps Helper ====================

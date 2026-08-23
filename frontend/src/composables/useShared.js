@@ -109,8 +109,10 @@ export const latencyWidth = (ms) => {
 
 export const getStatusBadgeClass = (status) => {
   if (status === 'success') return 'ce-badge is-success'
-  if (status === 'running') return 'ce-badge is-info is-pulse'
+  if (status === 'running' || status === 'logging_in') return 'ce-badge is-info is-pulse'
+  if (status === 'waiting_code') return 'ce-badge is-info is-pulse'
   if (status === 'failed') return 'ce-badge is-danger'
+  if (status === 'canceled') return 'ce-badge is-warn'
   if (status === 'filtered') return 'ce-badge is-warn'
   return 'ce-badge is-warn'
 }

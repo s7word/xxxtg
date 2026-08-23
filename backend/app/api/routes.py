@@ -16,6 +16,12 @@ from backend.app.models.schemas import (
     BatchRegisterResponse,
     BatchStatusResponse,
     TaskStatusResponse,
+    ManualRegisterStartRequest,
+    ManualRegisterStartResponse,
+    ManualRegisterSubmitCodeRequest,
+    ManualRegisterSubmitCodeResponse,
+    ManualRegisterCancelRequest,
+    ManualRegisterCancelResponse,
     EgressRelayConfig,
     VaultAccountListResponse,
     VaultUploadResponse,
@@ -85,6 +91,10 @@ from backend.app.services.proxy_manager import (
     update_custom_proxy_item,
 )
 from backend.app.services.registrar import RegistrationTaskManager, RegistrationOrchestrator
+from backend.app.services.manual_registrar import (
+    ManualRegisterError,
+    ManualRegistrationOrchestrator,
+)
 from backend.app.services.phone_precheck import PhonePrecheckService
 from backend.app.services.banned_phones import BannedPhonesCache
 from backend.app.services.account_vault import AccountVaultService
@@ -881,6 +891,74 @@ async def get_task_status(task_id: str):
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
     return task
+
+
+@router.post(
+    "/register/manual/start",
+    response_model=ManualRegisterStartResponse,
+    summary="手动单号发码：跳过接码平台租号，对指定手机号调用 auth.sendCode",
+)
+@router.post(
+    "/provision/manual/start",
+    response_model=ManualRegisterStartResponse,
+    summary="手动单号发码 (学术规范路径)",
+)
+async def start_manual_registration(req: ManualRegisterStartRequest):
+    proxy_dict = req.proxy.model_dump() if req.proxy else None
+    try:
+        return await ManualRegistrationOrchestrator.start(
+            phone=req.phone,
+            country=req.country,
+            app_type=req.app_type,
+            proxy_override=proxy_dict,
+            set_2fa=req.set_2fa,
+            proxy_id=req.proxy_id,
+            proxy_mode=req.proxy_mode,
+            first_name=req.first_name,
+            last_name=req.last_name,
+        )
+    except ManualRegisterError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+
+@router.post(
+    "/register/manual/submit-code",
+    response_model=ManualRegisterSubmitCodeResponse,
+    summary="提交手动验证码，完成 auth.signIn / auth.signUp 并落盘凭证",
+)
+@router.post(
+    "/provision/manual/submit-code",
+    response_model=ManualRegisterSubmitCodeResponse,
+    summary="提交手动验证码 (学术规范路径)",
+)
+async def submit_manual_registration_code(req: ManualRegisterSubmitCodeRequest):
+    try:
+        return await ManualRegistrationOrchestrator.submit_code(
+            task_id=req.task_id,
+            code=req.code,
+            password=req.password,
+            first_name=req.first_name,
+            last_name=req.last_name,
+        )
+    except ManualRegisterError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+
+@router.post(
+    "/register/manual/cancel",
+    response_model=ManualRegisterCancelResponse,
+    summary="取消未完成的手动注册任务并释放 MTProto 连接",
+)
+@router.post(
+    "/provision/manual/cancel",
+    response_model=ManualRegisterCancelResponse,
+    summary="取消手动注册任务 (学术规范路径)",
+)
+async def cancel_manual_registration(req: ManualRegisterCancelRequest):
+    try:
+        return await ManualRegistrationOrchestrator.cancel(req.task_id)
+    except ManualRegisterError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
 
 @router.get(

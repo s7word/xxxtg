@@ -3,11 +3,42 @@
     <div class="grid-launch">
       <div class="ce-panel stack">
         <div class="ce-panel-head">
-          <h3>⚡ 发起边缘节点引导</h3>
-          <span class="ce-muted">全球国家拓扑矩阵</span>
+          <h3>⚡ 状态机编排与控制台</h3>
+          <span class="ce-muted">{{ launchMode === 'manual' ? '手动单号核验' : '全球国家拓扑矩阵' }}</span>
         </div>
 
-        <LiveStockCountryPicker v-model="form.country" :provider="form.sms_provider" />
+        <div class="ce-seg ce-mode-tabs">
+          <button :class="{ 'is-on': launchMode === 'auto' }" @click="launchMode = 'auto'">
+            ⚡ 接码平台全自动引导
+          </button>
+          <button :class="{ 'is-on': launchMode === 'manual' }" @click="launchMode = 'manual'">
+            🛠️ 手动单号调试控制台
+          </button>
+        </div>
+
+        <LiveStockCountryPicker v-if="launchMode === 'auto'" v-model="form.country" :provider="form.sms_provider" />
+
+        <div v-if="launchMode === 'manual'" class="stack">
+          <div>
+            <label class="ce-label">手动填写手机号（跳过接码平台租号）</label>
+            <input
+              v-model="manualPhone"
+              class="ce-input mono"
+              placeholder="+9647706110434  /  +628123456789"
+              autocomplete="off"
+            />
+            <p class="ce-tiny">支持 <code>+</code> 前缀或纯数字。设备指纹、代理、Attestation 与 MTProto 握手与全自动模式一致。</p>
+          </div>
+          <div>
+            <label class="ce-label">目标国家（可留空，由号码自动推断）</label>
+            <select v-model="manualCountry" class="ce-select">
+              <option value="">🌐 自动从手机号推断国家与真机指纹</option>
+              <optgroup v-for="group in COUNTRY_GROUPS" :key="group.id" :label="group.label">
+                <option v-for="opt in group.options" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+              </optgroup>
+            </select>
+          </div>
+        </div>
 
         <div>
           <label class="ce-label">端点协议模板与 Attestation 凭证</label>
@@ -16,7 +47,7 @@
           </select>
         </div>
 
-        <div>
+        <div v-if="launchMode === 'auto'">
           <label class="ce-label">本次接码平台源（可临时覆盖）</label>
           <select v-model="form.sms_provider" class="ce-select">
             <option value="fivesim">5SIM (推荐) · 5sim.net</option>
@@ -29,7 +60,7 @@
           </p>
         </div>
 
-        <div class="ce-alert" :class="effectiveMaxPrice ? 'is-ok' : 'is-warn'">
+        <div v-if="launchMode === 'auto'" class="ce-alert" :class="effectiveMaxPrice ? 'is-ok' : 'is-warn'">
           <div class="between">
             <strong>📈 动态最高出价上限 (Max Price / Bidding)</strong>
             <span :class="effectiveMaxPrice ? 'ce-badge is-success' : 'ce-badge is-warn'">
@@ -130,7 +161,7 @@
           </div>
         </div>
 
-        <div class="ce-panel" style="padding:12px">
+        <div v-if="launchMode === 'auto'" class="ce-panel" style="padding:12px">
           <div class="between">
             <label class="ce-check">
               <input type="checkbox" v-model="batchMode" />
@@ -162,7 +193,7 @@
           </div>
         </div>
 
-        <div class="ce-alert" :class="phonePrecheckStatus.active ? 'is-ok' : (phonePrecheckStatus.degraded ? 'is-warn' : '')">
+        <div v-if="launchMode === 'auto'" class="ce-alert" :class="phonePrecheckStatus.active ? 'is-ok' : (phonePrecheckStatus.degraded ? 'is-warn' : '')">
           <div class="between">
             <strong>🛰️ 号码注册状态预检探测</strong>
             <span :class="phonePrecheckStatus.active ? 'ce-badge is-success' : 'ce-badge is-warn'">
@@ -181,12 +212,82 @@
           </div>
         </div>
 
-        <button class="ce-btn" style="width:100%;padding:11px" :disabled="isStartingTask" @click="startRegistrationTask">
+        <button
+          v-if="launchMode === 'auto'"
+          class="ce-btn"
+          style="width:100%;padding:11px"
+          :disabled="isStartingTask"
+          @click="startRegistrationTask"
+        >
           <span v-if="isStartingTask">正在调度状态机编排流水线...</span>
           <span v-else-if="batchMode">并发启动 {{ batchCount }} 个引导任务</span>
           <span v-else>启动虚拟节点引导仿真</span>
         </button>
-        <div v-if="startError" class="ce-alert is-danger">{{ startError }}</div>
+        <div v-if="launchMode === 'auto' && startError" class="ce-alert is-danger">{{ startError }}</div>
+
+        <div v-if="launchMode === 'manual'" class="stack">
+          <button
+            class="ce-btn"
+            style="width:100%;padding:11px"
+            :disabled="isSendingCode || !String(manualPhone || '').trim() || isManualWaiting"
+            @click="startManualRegistration"
+          >
+            <span v-if="isSendingCode">正在握手并发码...</span>
+            <span v-else>🚀 发送登录/注册验证码</span>
+          </button>
+
+          <div v-if="isManualWaiting && manualSession" class="ce-alert ce-code-card stack">
+            <div class="between">
+              <strong>验证码输入与核验</strong>
+              <span :class="deliveryBadgeClass">{{ manualSession.delivery_type || '等待分发' }}</span>
+            </div>
+            <div class="ce-tiny">
+              当前号码 <span class="mono">{{ manualSession.phone }}</span>
+              <span v-if="manualSession.expires_at"> · 有效至 {{ formatTime(manualSession.expires_at) }}</span>
+            </div>
+            <div>
+              <label class="ce-label">短信 / 客户端验证码</label>
+              <input
+                v-model="manualCode"
+                class="ce-input mono"
+                placeholder="输入验证码后回车提交"
+                autocomplete="one-time-code"
+                @keydown="onManualCodeKeydown"
+              />
+            </div>
+            <div>
+              <label class="ce-label">已有账号 2FA 口令（可选）</label>
+              <input
+                v-model="manualPassword"
+                class="ce-input mono"
+                type="password"
+                placeholder="旧号已开 2FA 时填写"
+              />
+            </div>
+            <div class="row-wrap">
+              <button
+                class="ce-btn"
+                :disabled="isSubmittingCode || !String(manualCode || '').trim()"
+                @click="submitManualCode"
+              >
+                {{ isSubmittingCode ? '正在提交...' : '🟢 提交验证码完成注册' }}
+              </button>
+              <button class="ce-btn-danger" :disabled="isCancelingManual" @click="cancelManualTask">
+                {{ isCancelingManual ? '取消中...' : '❌ 取消任务' }}
+              </button>
+            </div>
+          </div>
+
+          <div v-if="manualSuccess" class="ce-alert is-ok ce-success-card stack">
+            <strong>手动注册成功</strong>
+            <div class="ce-stat"><span>UID</span><span class="mono">{{ manualSuccess.user_id || '-' }}</span></div>
+            <div class="ce-stat"><span>号码</span><span class="mono">{{ manualSuccess.phone || '-' }}</span></div>
+            <div class="ce-stat"><span>Session</span><span class="mono">{{ manualSuccess.session_file || '-' }}</span></div>
+            <div class="ce-stat"><span>账号类型</span><span>{{ manualSuccess.account_kind || '-' }}</span></div>
+            <button class="ce-link" @click="goVaultFromManual">跳转凭证库查看</button>
+          </div>
+        </div>
+        <div v-if="launchMode === 'manual' && manualError" class="ce-alert is-danger">{{ manualError }}</div>
 
         <div v-if="!config.custom_api_id" class="ce-alert is-warn">
           尚未配置专属 <code>custom_api_id</code>。本地 lod_user 只有 JSON、没有 .session，不能直接当开发者凭证。
@@ -285,6 +386,7 @@
                 <td class="mono ce-muted">{{ t.batch_id || '-' }}</td>
                 <td>
                   <span :class="getStatusBadgeClass(t.status)">{{ t.status }}</span>
+                  <span v-if="t.mode === 'manual'" class="ce-badge is-info">手动</span>
                   <span v-if="t.precheck_intercepted" class="ce-badge is-warn">预检拦截</span>
                 </td>
                 <td class="mono">{{ t.phone || '-' }}</td>
@@ -327,11 +429,13 @@
         </div>
         <div class="row-wrap">
           <span :class="getStatusBadgeClass(detailTask.status)">{{ detailTask.status }}</span>
-          <span class="ce-badge is-info">{{ detailTask.batch_id || '单次任务' }}</span>
+          <span class="ce-badge is-info">{{ detailTask.batch_id || (detailTask.mode === 'manual' ? '手动单号' : '单次任务') }}</span>
+          <span v-if="detailTask.delivery_type" class="ce-badge is-info">{{ detailTask.delivery_type }}</span>
           <span v-if="detailTask.precheck_intercepted" class="ce-badge is-warn">预检拦截</span>
         </div>
         <div class="ce-stat"><span>通信句柄</span><span>{{ detailTask.phone || '-' }}</span></div>
         <div class="ce-stat"><span>节点 UID</span><span>{{ detailTask.user_id || '-' }}</span></div>
+        <div v-if="detailTask.session_file" class="ce-stat"><span>Session</span><span>{{ detailTask.session_file }}</span></div>
         <div class="ce-stat"><span>预检 UID</span><span>{{ detailTask.precheck_user_id || '-' }}</span></div>
         <div class="ce-stat"><span>创建 / 更新</span><span>{{ formatTime(detailTask.created_at) }} · {{ formatDuration(detailTask.created_at, detailTask.updated_at) }}</span></div>
         <div v-if="detailTask.error" class="ce-alert is-danger">{{ detailTask.error }}</div>
@@ -345,12 +449,13 @@
 
 <script setup>
 import { computed } from 'vue'
-import { APP_TYPE_OPTIONS, countryFlag, classifyLogLine, getStatusBadgeClass, formatDuration, formatTime } from '../../composables/useShared'
+import { APP_TYPE_OPTIONS, COUNTRY_GROUPS, countryFlag, classifyLogLine, getStatusBadgeClass, formatDuration, formatTime } from '../../composables/useShared'
 import LiveStockCountryPicker from './LiveStockCountryPicker.vue'
 import { useConfig } from '../../composables/useConfig'
 import { useProxy } from '../../composables/useProxy'
 import { useTasks } from '../../composables/useTasks'
 import { useUi } from '../../composables/useUi'
+import { useManualRegister } from '../../composables/useManualRegister'
 
 const { config, form, smsProviderLabel } = useConfig()
 const {
@@ -365,6 +470,13 @@ const {
   toggleSelectVisibleTasks, viewSelectedLogs, focusBatchTask, clearActiveLogs, retryTask, openTaskDetail
 } = useTasks()
 const { terminalExpanded, detailTask, goTab } = useUi()
+const {
+  launchMode, manualPhone, manualCountry, manualCode, manualPassword,
+  isSendingCode, isSubmittingCode, isCancelingManual, manualError,
+  manualSession, manualSuccess, isManualWaiting, deliveryBadgeClass,
+  startManualRegistration, submitManualCode, cancelManualTask,
+  goVaultFromManual, onManualCodeKeydown
+} = useManualRegister()
 
 const effectiveMaxPrice = computed(() => {
   const taskBid = Number(form.max_price)

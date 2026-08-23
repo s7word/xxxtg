@@ -182,7 +182,7 @@ GEO_NAME_POOLS = SYNTHETIC_IDENTITY_POOLS
 
 CONNECT_TIMEOUT_SECONDS = 25.0
 MAX_RETAINED_TASKS = 200
-TERMINAL_TASK_STATUSES = frozenset({"success", "failed", "filtered"})
+TERMINAL_TASK_STATUSES = frozenset({"success", "failed", "filtered", "canceled"})
 MAX_RESEND_WAIT_SECONDS = 90.0
 DEFAULT_SMS_POLL_ATTEMPTS = 30
 FAST_FAIL_SMS_POLL_ATTEMPTS = 3
@@ -350,7 +350,9 @@ class RegistrationTaskManager:
                 failed += 1
             elif status == "filtered":
                 failed += 1
-            elif status == "running":
+            elif status == "canceled":
+                failed += 1
+            elif status in {"running", "waiting_code", "logging_in"}:
                 running += 1
             else:
                 pending += 1
@@ -596,6 +598,94 @@ class RegistrationOrchestrator:
         await manager.append_log(task_id, CLEAN_LOG_TEMPLATE.format(phone=phone))
         manager.update_task_status(task_id, "running", precheck_intercepted=False)
         return True
+
+    @classmethod
+    async def resolve_active_proxy(
+        cls,
+        config,
+        target_country: str,
+        task_id: str,
+        manager: RegistrationTaskManager,
+        proxy_override: Optional[Dict[str, Any]] = None,
+        proxy_id: Optional[str] = None,
+        proxy_mode: str = "custom_pool",
+    ) -> Dict[str, Any]:
+        """按用户策略解析本次任务实际使用的出口代理（显式 / 自建池 / API / 后备）。"""
+        from backend.app.models.schemas import normalize_proxy_mode
+        from backend.app.services.proxy_manager import find_custom_proxy
+        from backend.app.services.proxyseller import format_proxy_endpoint
+
+        mode = normalize_proxy_mode(proxy_mode)
+        if proxy_id and mode == "custom_pool":
+            mode = "explicit"
+
+        # 使用者决定配对关系：explicit 100% 遵从指定节点，不施加隐式国家约束
+        active_proxy = proxy_override
+        if not active_proxy and (proxy_id or mode == "explicit"):
+            if proxy_id:
+                found = find_custom_proxy(proxy_id=proxy_id)
+                if found:
+                    active_proxy = found
+                    await manager.append_log(
+                        task_id,
+                        f"[代理配对] 100% 遵从用户指定节点 {format_proxy_endpoint(found)}，"
+                        "不施加隐式国家约束"
+                    )
+                else:
+                    await manager.append_log(
+                        task_id,
+                        f"[代理配对] 未找到显式指定代理 {proxy_id}，回退自建池轮换"
+                    )
+                    mode = "custom_pool"
+            elif mode == "explicit":
+                await manager.append_log(task_id, "[代理配对] 已选显式模式但未提供 proxy_id，回退自建池轮换")
+                mode = "custom_pool"
+
+        if not active_proxy and mode in {"custom_pool", "explicit"}:
+            active_proxy = await cls._resolve_custom_proxy(
+                config=config,
+                target_country=target_country,
+                task_id=task_id,
+                manager=manager,
+            )
+        if not active_proxy and mode == "auto":
+            active_proxy = await cls._resolve_proxy_seller_auto(
+                config=config,
+                target_country=target_country,
+                task_id=task_id,
+                manager=manager,
+            )
+        if (
+            not active_proxy
+            and mode == "custom_pool"
+            and getattr(config, "use_proxy_seller_auto", False)
+        ):
+            active_proxy = await cls._resolve_proxy_seller_auto(
+                config=config,
+                target_country=target_country,
+                task_id=task_id,
+                manager=manager,
+            )
+
+        if not active_proxy:
+            fallback = getattr(config, "fallback_proxy", None)
+            if hasattr(fallback, "model_dump"):
+                active_proxy = fallback.model_dump()
+            elif isinstance(fallback, dict):
+                active_proxy = dict(fallback)
+            else:
+                active_proxy = {
+                    "proxy_type": "socks5",
+                    "addr": "127.0.0.1",
+                    "port": 10808,
+                }
+            await manager.append_log(
+                task_id,
+                f"[多径中继网关] 使用静态后备中继 {active_proxy.get('proxy_type', 'socks5')}://"
+                f"{active_proxy.get('addr')}:{active_proxy.get('port')}"
+                + (f"（策略={mode}）" if mode == "fallback" else "")
+            )
+        return active_proxy
 
     @classmethod
     async def _resolve_custom_proxy(
@@ -1108,70 +1198,15 @@ class RegistrationOrchestrator:
         sms_svc = cls._create_sms_service(config, resolved_sms_provider)
         lease_max_price = cls.resolve_sms_max_price(config, max_price)
 
-        from backend.app.models.schemas import normalize_proxy_mode
-        from backend.app.services.proxy_manager import find_custom_proxy
-        from backend.app.services.proxyseller import format_proxy_endpoint
-
-        mode = normalize_proxy_mode(proxy_mode)
-        if proxy_id and mode == "custom_pool":
-            mode = "explicit"
-
-        # 使用者决定配对关系：explicit 100% 遵从指定节点，不施加隐式国家约束
-        active_proxy = proxy_override
-        if not active_proxy and (proxy_id or mode == "explicit"):
-            if proxy_id:
-                found = find_custom_proxy(proxy_id=proxy_id)
-                if found:
-                    active_proxy = found
-                    await manager.append_log(
-                        task_id,
-                        f"[代理配对] 100% 遵从用户指定节点 {format_proxy_endpoint(found)}，"
-                        "不施加隐式国家约束"
-                    )
-                else:
-                    await manager.append_log(
-                        task_id,
-                        f"[代理配对] 未找到显式指定代理 {proxy_id}，回退自建池轮换"
-                    )
-                    mode = "custom_pool"
-            elif mode == "explicit":
-                await manager.append_log(task_id, "[代理配对] 已选显式模式但未提供 proxy_id，回退自建池轮换")
-                mode = "custom_pool"
-
-        if not active_proxy and mode in {"custom_pool", "explicit"}:
-            active_proxy = await cls._resolve_custom_proxy(
-                config=config,
-                target_country=target_country,
-                task_id=task_id,
-                manager=manager,
-            )
-        if not active_proxy and mode == "auto":
-            active_proxy = await cls._resolve_proxy_seller_auto(
-                config=config,
-                target_country=target_country,
-                task_id=task_id,
-                manager=manager,
-            )
-        if (
-            not active_proxy
-            and mode == "custom_pool"
-            and config.use_proxy_seller_auto
-        ):
-            active_proxy = await cls._resolve_proxy_seller_auto(
-                config=config,
-                target_country=target_country,
-                task_id=task_id,
-                manager=manager,
-            )
-
-        if not active_proxy:
-            active_proxy = config.fallback_proxy.model_dump()
-            await manager.append_log(
-                task_id,
-                f"[多径中继网关] 使用静态后备中继 {active_proxy.get('proxy_type', 'socks5')}://"
-                f"{active_proxy.get('addr')}:{active_proxy.get('port')}"
-                + (f"（策略={mode}）" if mode == "fallback" else "")
-            )
+        active_proxy = await cls.resolve_active_proxy(
+            config=config,
+            target_country=target_country,
+            task_id=task_id,
+            manager=manager,
+            proxy_override=proxy_override,
+            proxy_id=proxy_id,
+            proxy_mode=proxy_mode,
+        )
 
         # 统一 Attestation / Push 凭证高可用网关：按 config.attestation_provider_mode 策略
         # 在 REGHelp 与 AntiSafety 两个独立提供源之间自动选择主备顺序并容灾切换
