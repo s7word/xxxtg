@@ -15,6 +15,8 @@ import datetime
 import logging
 import random
 import re
+import shutil
+import tempfile
 import time
 import uuid
 from pathlib import Path
@@ -553,6 +555,59 @@ class TelegramAppsHelper:
         return parsed
 
     @classmethod
+    def _telethon_client_kwargs(cls, account) -> Dict[str, Any]:
+        lang = (account.system_lang_code or "en").replace("_", "-")
+        return {
+            "device_model": account.device_model or "Samsung SM-G950F",
+            "system_version": account.system_version or "SDK 33",
+            "app_version": (account.app_version or "12.7.3").split()[0],
+            "lang_code": lang.split("-")[0] or "en",
+            "system_lang_code": lang,
+        }
+
+    @classmethod
+    def _copy_session_workspace(cls, session_path: Path) -> Path:
+        """复制 .session 到临时目录，避免 Telethon 回写破坏 vault 原件。"""
+        tmp = Path(tempfile.mkdtemp(prefix="tg_apps_sess_"))
+        dest = tmp / session_path.name
+        shutil.copy2(session_path, dest)
+        journal = Path(str(session_path) + "-journal")
+        if journal.exists():
+            shutil.copy2(journal, tmp / journal.name)
+        return dest
+
+    @classmethod
+    async def _assert_session_authorized(cls, account, proxy: Optional[Dict[str, Any]] = None) -> None:
+        session_path = AccountVaultService.resolve_session_file(account)
+        if not session_path:
+            raise RuntimeError("未找到 Telethon .session 文件")
+        if not account.app_id or not account.app_hash:
+            raise RuntimeError("该账号缺少创建 session 时使用的 app_id/app_hash")
+        from telethon import TelegramClient
+
+        bound = to_telethon_proxy(proxy if proxy is not None else _proxy_dict_from_config())
+        work_session = cls._copy_session_workspace(session_path)
+        client = TelegramClient(
+            session=_telethon_session_base(work_session),
+            api_id=int(account.app_id),
+            api_hash=account.app_hash,
+            proxy=bound,
+            **cls._telethon_client_kwargs(account),
+        )
+        try:
+            await client.connect()
+            me = await client.get_me()
+            if not me:
+                raise RuntimeError("Telethon session 未授权（get_me 为空）")
+        finally:
+            try:
+                if client.is_connected():
+                    await client.disconnect()
+            except Exception:
+                pass
+            shutil.rmtree(work_session.parent, ignore_errors=True)
+
+    @classmethod
     async def _read_code_via_telethon(
         cls,
         account,
@@ -569,18 +624,21 @@ class TelegramAppsHelper:
         from telethon import TelegramClient, events
 
         bound = to_telethon_proxy(proxy if proxy is not None else _proxy_dict_from_config())
+        work_session = cls._copy_session_workspace(session_path)
         client = TelegramClient(
-            session=_telethon_session_base(session_path),
+            session=_telethon_session_base(work_session),
             api_id=int(account.app_id),
             api_hash=account.app_hash,
             proxy=bound,
+            **cls._telethon_client_kwargs(account),
         )
         deadline = datetime.datetime.now(datetime.timezone.utc)
         since = since or (deadline - datetime.timedelta(seconds=15))
 
         try:
             await client.connect()
-            if not await client.is_user_authorized():
+            me = await client.get_me()
+            if not me or not await client.is_user_authorized():
                 raise RuntimeError("Telethon session 未授权，无法读取官方登录验证码")
 
             async for message in client.iter_messages(TELEGRAM_SYSTEM_USER_ID, limit=8):
@@ -610,6 +668,10 @@ class TelegramAppsHelper:
             try:
                 if client.is_connected():
                     await client.disconnect()
+            except Exception:
+                pass
+            try:
+                shutil.rmtree(work_session.parent, ignore_errors=True)
             except Exception:
                 pass
 
@@ -657,6 +719,15 @@ class TelegramAppsHelper:
             )
         else:
             await manager.append_log(job_id, "未绑定代理，将直连 my.telegram.org（可能因出口 IP 被门户风控）")
+
+        if auto_read_code and account and account.has_session and not (manual_code or "").strip():
+            try:
+                await manager.append_log(job_id, "预检 Telethon session 授权状态（使用临时副本，不回写 vault）")
+                await cls._assert_session_authorized(account, proxy=proxy)
+            except Exception as exc:
+                manager.update(job_id, status="failed", error=str(exc))
+                await manager.append_log(job_id, f"❌ session 预检失败，已跳过发送 Web 登录码: {exc}")
+                return
 
         http = cls._http_client(job.get("cookies") or None, proxy=proxy)
         try:

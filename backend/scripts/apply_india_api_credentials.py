@@ -101,6 +101,21 @@ async def run(phones: list[str], apply_to_config: bool) -> dict:
         if job.get("status") == "failed" and "flood" in str(job.get("error") or "").lower():
             print("flood on this number, trying next", flush=True)
             continue
+        if job.get("status") == "waiting_code":
+            print("needs manual code, trying next", flush=True)
+            continue
+    if not report.get("success"):
+        leftover = [p for p in LEGACY_PHONES if p not in phones]
+        if leftover:
+            print("\n=== fallback to previous +91 batch ===", flush=True)
+            nested = await run(leftover, apply_to_config)
+            report["fallback"] = nested
+            if nested.get("success"):
+                report["success"] = True
+                report["api_id"] = nested.get("api_id")
+                report["api_hash"] = nested.get("api_hash")
+                report["phone"] = nested.get("phone")
+                report["attempts"].extend(nested.get("attempts") or [])
     return report
 
 

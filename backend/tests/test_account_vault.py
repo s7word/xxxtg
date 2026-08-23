@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import sys
 import tempfile
 import unittest
@@ -273,6 +274,23 @@ class TestTelegramAppsParsers(unittest.TestCase):
         parsed = parse_apps_page(SAMPLE_CREATE_HTML)
         self.assertEqual(parsed["create_hash"], "aabbccddeeff00112233445566778899")
         self.assertTrue(parsed["has_create_form"])
+
+    def test_session_copy_and_android_client_kwargs(self):
+        listing = AccountVaultService.list_accounts()
+        target = next(acc for acc in listing.accounts if acc.phone == "+918310013712")
+        kwargs = TelegramAppsHelper._telethon_client_kwargs(target)
+        self.assertTrue(kwargs["device_model"])
+        self.assertTrue(kwargs["app_version"])
+        self.assertIn(kwargs["lang_code"], {"en", "hi"})
+        root = Path(REPO_ROOT) / "lod_user" / "autoc_sessions_20260823_084149_3" / "918310013712.session"
+        if root.exists():
+            copied = TelegramAppsHelper._copy_session_workspace(root)
+            try:
+                self.assertTrue(copied.exists())
+                self.assertNotEqual(copied.resolve(), root.resolve())
+                self.assertEqual(copied.stat().st_size, root.stat().st_size)
+            finally:
+                shutil.rmtree(copied.parent, ignore_errors=True)
 
     def test_telethon_proxy_and_log_for_india_node(self):
         proxy = {
