@@ -11,14 +11,25 @@ from backend.app.models.schemas import (
     RegisterTaskRequest,
     RegisterTaskResponse,
     TaskStatusResponse,
-    EgressRelayConfig
+    EgressRelayConfig,
+    VaultAccountListResponse,
+    ApplyVaultCredentialsRequest,
+    ApplyVaultCredentialsResponse,
+    TelegramAppsStartRequest,
+    TelegramAppsSubmitCodeRequest,
+    TelegramAppsApplyRequest,
+    TelegramAppsJobResponse,
+    TelegramAppsJobListResponse,
 )
 from backend.app.services.device_profile import DeviceProfileManager
 from backend.app.services.vaksms import VakSmsService
 from backend.app.services.antisafety import AntiSafetyService
 from backend.app.services.reghelp import RegHelpService
+from backend.app.services.attestation_urls import sanitize_provider_urls
 from backend.app.services.proxyseller import ProxySellerService
 from backend.app.services.registrar import RegistrationTaskManager, RegistrationOrchestrator
+from backend.app.services.account_vault import AccountVaultService
+from backend.app.services.telegram_apps import TelegramAppsHelper, TelegramAppsJobManager
 
 router = APIRouter(prefix="/api")
 
@@ -73,8 +84,14 @@ async def test_antisafety(payload: Dict[str, Any] = None):
 
     svc = AntiSafetyService(
         api_key,
-        api_bases=(payload or {}).get("base_urls") or config.antisafety_base_urls,
-        reporting_bases=(payload or {}).get("reporting_base_urls") or config.antisafety_reporting_base_urls,
+        api_bases=sanitize_provider_urls(
+            (payload or {}).get("base_urls") or config.antisafety_base_urls,
+            "antisafety",
+        ),
+        reporting_bases=sanitize_provider_urls(
+            (payload or {}).get("reporting_base_urls") or config.antisafety_reporting_base_urls,
+            "antisafety_reporting",
+        ),
         connect_timeout=config.antisafety_connect_timeout,
         total_timeout=config.antisafety_total_timeout
     )
@@ -105,7 +122,10 @@ async def test_antisafety(payload: Dict[str, Any] = None):
 async def test_reghelp(payload: Dict[str, Any] = None):
     config = ConfigManager.get_instance().config
     api_key = (payload or {}).get("api_key") or config.reghelp_api_key
-    base_urls = (payload or {}).get("base_urls") or config.reghelp_base_urls
+    base_urls = sanitize_provider_urls(
+        (payload or {}).get("base_urls") or config.reghelp_base_urls,
+        "reghelp",
+    )
 
     svc = RegHelpService(
         api_key,
@@ -229,3 +249,104 @@ async def list_sessions():
 def datetime_from_timestamp(ts: float) -> str:
     import datetime
     return datetime.datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
+
+
+# ==================== 5. 已有账号凭证库 (Account Vault) ====================
+@router.get(
+    "/vault/accounts",
+    response_model=VaultAccountListResponse,
+    summary="扫描 lod_user/ 与 data/sessions/ 中的已有账号凭证",
+)
+async def list_vault_accounts():
+    return AccountVaultService.list_accounts()
+
+
+@router.post(
+    "/vault/accounts/apply",
+    response_model=ApplyVaultCredentialsResponse,
+    summary="将某个已有账号的 app_id/app_hash 一键写入全局配置",
+)
+async def apply_vault_account_credentials(req: ApplyVaultCredentialsRequest):
+    result = AccountVaultService.apply_account_credentials(
+        req.account_id,
+        set_mode_custom=req.set_mode_custom,
+    )
+    if not result.success:
+        raise HTTPException(status_code=400, detail=result.message)
+    return result
+
+
+# ==================== 6. 开发者凭证申请助手 (my.telegram.org) ====================
+@router.post(
+    "/vault/apps/start",
+    response_model=TelegramAppsJobResponse,
+    summary="对指定已有账号发起 my.telegram.org 登录并申请/读取 api_id/api_hash",
+)
+async def start_telegram_apps_job(req: TelegramAppsStartRequest):
+    return await TelegramAppsHelper.start_job(
+        account_id=req.account_id,
+        auto_read_code=req.auto_read_code,
+        app_title=req.app_title,
+        app_shortname=req.app_shortname,
+        apply_to_config=req.apply_to_config,
+    )
+
+
+@router.post(
+    "/vault/apps/submit-code",
+    response_model=TelegramAppsJobResponse,
+    summary="手动提交 my.telegram.org 登录验证码并继续申请流程",
+)
+async def submit_telegram_apps_code(req: TelegramAppsSubmitCodeRequest):
+    return await TelegramAppsHelper.submit_code(
+        job_id=req.job_id,
+        code=req.code,
+        apply_to_config=req.apply_to_config,
+    )
+
+
+@router.get(
+    "/vault/apps/jobs",
+    response_model=TelegramAppsJobListResponse,
+    summary="列出开发者凭证申请任务",
+)
+async def list_telegram_apps_jobs():
+    manager = TelegramAppsJobManager.get_instance()
+    return TelegramAppsJobListResponse(
+        jobs=[manager.to_response(job) for job in manager.list_jobs()]
+    )
+
+
+@router.get(
+    "/vault/apps/jobs/{job_id}",
+    response_model=TelegramAppsJobResponse,
+    summary="查询指定开发者凭证申请任务状态",
+)
+async def get_telegram_apps_job(job_id: str):
+    manager = TelegramAppsJobManager.get_instance()
+    job = manager.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Apps job not found")
+    return manager.to_response(job)
+
+
+@router.post(
+    "/vault/apps/apply",
+    response_model=ApplyVaultCredentialsResponse,
+    summary="将某次申请任务得到的专属 api_id/api_hash 写入全局配置",
+)
+async def apply_telegram_apps_credentials(req: TelegramAppsApplyRequest):
+    manager = TelegramAppsJobManager.get_instance()
+    job = manager.get_job(req.job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Apps job not found")
+    if not job.get("api_id") or not job.get("api_hash"):
+        raise HTTPException(status_code=400, detail="Job has no api_id/api_hash yet")
+    result = AccountVaultService.apply_raw_credentials(
+        int(job["api_id"]),
+        str(job["api_hash"]),
+        set_mode_custom=req.set_mode_custom,
+    )
+    manager.update(req.job_id, applied_to_config=True)
+    result.account_id = job.get("account_id")
+    return result

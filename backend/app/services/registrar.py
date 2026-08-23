@@ -109,6 +109,33 @@ class RegistrationOrchestrator:
         return random.choice(pool["first"]), random.choice(pool["last"])
 
     @classmethod
+    async def _refund_and_revoke_channel(
+        cls,
+        sms_svc: VakSmsService,
+        act_id: Optional[str],
+        task_id: str,
+        manager: RegistrationTaskManager,
+        reason: str,
+    ) -> None:
+        """失败路径统一走 Vak-SMS setStatus=bad，触发取消与自动退款。"""
+        if not act_id:
+            return
+        result = await sms_svc.cancel(act_id)
+        if result.get("skipped"):
+            return
+        if result.get("success"):
+            await manager.append_log(
+                task_id,
+                f"[自动退订/撤销信道句柄完成] act_id={act_id} (Vak-SMS status=bad, 原因: {reason})"
+            )
+            return
+        detail = result.get("error") or result.get("data") or "unknown"
+        await manager.append_log(
+            task_id,
+            f"⚠️ 自动退订/撤销信道句柄未成功 (act_id={act_id}, 原因: {reason}): {detail}"
+        )
+
+    @classmethod
     async def perform_handshake(cls, client: TelegramClient, profile: Dict[str, Any], task_id: str, manager: RegistrationTaskManager):
         """执行标准端点握手序列与协议状态对齐"""
         await manager.append_log(task_id, "开始执行协议端点初始化握手序列...")
@@ -178,6 +205,7 @@ class RegistrationOrchestrator:
         act_id = None
         check_id = None
         client = None
+        phone = None
 
         try:
             await manager.append_log(task_id, f"选定端点模板: {profile['name']} (AID: {aid})")
@@ -197,7 +225,7 @@ class RegistrationOrchestrator:
                 check_id = check_data.get("id")
                 if "BANNED" in check_data.get("statuses", []):
                     await manager.append_log(task_id, "检测到该通信句柄存在服务端历史异常记录，触发主动退避与信道撤销！")
-                    await sms_svc.cancel(act_id)
+                    await cls._refund_and_revoke_channel(sms_svc, act_id, task_id, manager, "PHONE_PREAUDIT_BANNED")
                     await bypass_svc.report_result(check_id, aid, "REJECTED")
                     manager.update_task_status(task_id, "failed", error="Endpoint handle pre-audit rejected")
                     return
@@ -397,38 +425,45 @@ class RegistrationOrchestrator:
         except PhoneNumberBannedError:
             err = f"通信句柄 {phone} 处于服务端拒绝服务状态 (PHONE_NUMBER_BANNED)"
             await manager.append_log(task_id, f"❌ {err}")
-            if act_id: await sms_svc.cancel(act_id)
+            await cls._refund_and_revoke_channel(sms_svc, act_id, task_id, manager, "PHONE_NUMBER_BANNED")
             if check_id: await bypass_svc.report_result(check_id, aid, "BANNED")
             manager.update_task_status(task_id, "failed", error=err)
         except ApiIdPublishedFloodError:
             err = (
                 f"当前 api_id={profile.get('api_id')} 已被 Telegram 判定为公开泄露 ID，"
                 "在缺少合法 Push Token 的情况下触发 API_ID_PUBLISHED_FLOOD (SendCodeRequest)。"
-                "请在「全局参数拓扑」中配置自建开发者 api_id/api_hash "
-                "(https://my.telegram.org/apps 申请) 并将 api_credential_mode 设为 auto 或 custom，"
+                "请在「🔐 凭证库 / 开发者 API」用已有账号申请专属 api_id/api_hash，"
+                "或在「全局参数拓扑」填入自建 custom_api_id / custom_api_hash "
+                "并将 api_credential_mode 设为 auto 或 custom，"
                 "或修复 Attestation 网关连通性以获取合法 Push Token 后重试"
             )
             await manager.append_log(task_id, f"❌ {err}")
-            if act_id: await sms_svc.cancel(act_id)
+            await cls._refund_and_revoke_channel(sms_svc, act_id, task_id, manager, "API_ID_PUBLISHED_FLOOD")
             if check_id: await bypass_svc.report_result(check_id, aid, "API_ID_PUBLISHED_FLOOD")
             manager.update_task_status(task_id, "failed", error=err)
         except (PhoneNumberFloodError, FloodWaitError) as e:
             sec = getattr(e, 'seconds', 0)
             err = f"触发协议频控与退避限流，需等待 {sec} 秒 (FLOOD_WAIT)"
             await manager.append_log(task_id, f"❌ {err}")
-            if act_id: await sms_svc.cancel(act_id)
+            await cls._refund_and_revoke_channel(sms_svc, act_id, task_id, manager, "FLOOD_WAIT")
             if check_id: await bypass_svc.report_result(check_id, aid, "FLOOD_WAIT")
             manager.update_task_status(task_id, "failed", error=err)
-        except (PhoneCodeInvalidError, PhoneCodeExpiredError) as e:
+        except (PhoneCodeInvalidError, PhoneCodeExpiredError, PhoneCodeEmptyError) as e:
             err = f"带外挑战证明校验失败或已过期: {str(e)}"
             await manager.append_log(task_id, f"❌ {err}")
-            if act_id: await sms_svc.cancel(act_id)
+            await cls._refund_and_revoke_channel(sms_svc, act_id, task_id, manager, "WRONG_CODE")
             if check_id: await bypass_svc.report_result(check_id, aid, "WRONG_CODE")
+            manager.update_task_status(task_id, "failed", error=err)
+        except TimeoutError as ex:
+            err = f"等待带外挑战证明超时 (NO_CODE): {str(ex) or repr(ex)}"
+            await manager.append_log(task_id, f"❌ {err}")
+            await cls._refund_and_revoke_channel(sms_svc, act_id, task_id, manager, "NO_CODE")
+            if check_id: await bypass_svc.report_result(check_id, aid, "NO_CODE")
             manager.update_task_status(task_id, "failed", error=err)
         except Exception as ex:
             err = f"状态机引导流程异常: {str(ex) or repr(ex)}"
             await manager.append_log(task_id, f"❌ {err}")
-            if act_id: await sms_svc.cancel(act_id)
+            await cls._refund_and_revoke_channel(sms_svc, act_id, task_id, manager, "EXCEPTION")
             if check_id: await bypass_svc.report_result(check_id, aid, "NO_CODE")
             manager.update_task_status(task_id, "failed", error=err)
         finally:
