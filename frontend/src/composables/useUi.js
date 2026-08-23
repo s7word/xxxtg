@@ -8,11 +8,11 @@ export const tabs = [
   { id: 'devices', name: '硬件指纹 & 拓扑库', en: 'Device Profiles & Base.db', icon: 'smartphone' }
 ]
 
-const activeTab = ref('console')
-const terminalExpanded = ref(false)
-const detailTask = ref(null)
-const toasts = ref([])
-const engineHealth = ref({ status: 'pending', version: '2.2.0', message: '正在探测仿真引擎...' })
+export const activeTab = ref('console')
+export const terminalExpanded = ref(false)
+export const detailTask = ref(null)
+export const toasts = ref([])
+export const engineHealth = ref({ status: 'pending', version: '2.2.0', message: '正在探测仿真引擎...' })
 
 let toastSeq = 0
 let toastTimers = new Map()
