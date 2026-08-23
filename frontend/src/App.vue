@@ -629,6 +629,77 @@
           </button>
         </div>
 
+        <div
+          class="glass-panel p-5 rounded-xl border-2 border-dashed transition-colors space-y-3"
+          :class="vaultUploadDragging ? 'border-cyan-400 bg-cyan-950/20' : 'border-cyan-700/70 bg-cyan-950/10'"
+          @dragenter.prevent="vaultUploadDragging = true"
+          @dragover.prevent="vaultUploadDragging = true"
+          @dragleave.prevent="vaultUploadDragging = false"
+          @drop.prevent="onVaultFileDrop"
+        >
+          <div class="flex items-start justify-between gap-4">
+            <div>
+              <h3 class="font-bold text-sm text-cyan-100 flex items-center gap-2">
+                <span>📤</span> 上传账号文件 (ZIP / Session / JSON)
+              </h3>
+              <p class="text-[11px] text-cyan-100/80 mt-1 leading-relaxed">
+                在浏览器里自己导入账号做申请测试，无需 SSH。选择或拖入
+                <code class="text-cyan-50">.zip</code> /
+                <code class="text-cyan-50">.session</code> /
+                <code class="text-cyan-50">.json</code>，
+                上传完成后自动扫描并刷新凭证库列表。
+              </p>
+            </div>
+            <label class="btn-primary text-xs py-2 px-3 cursor-pointer shrink-0">
+              <input
+                ref="vaultFileInput"
+                type="file"
+                accept=".zip,.session,.json,application/zip,application/json"
+                class="hidden"
+                :disabled="vaultUploading"
+                @change="onVaultFilePicked"
+              />
+              {{ vaultUploading ? '上传中...' : '选择文件并上传' }}
+            </label>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-2 text-[11px] text-zinc-300">
+            <div class="p-2.5 rounded-lg bg-zinc-950/60 border border-zinc-800">
+              <div class="font-semibold text-zinc-100">ZIP 压缩包</div>
+              <div class="text-zinc-400 mt-0.5">自动安全解压到 <code class="text-zinc-200">lod_user/&lt;压缩包名&gt;/</code>，支持账号目录。</div>
+            </div>
+            <div class="p-2.5 rounded-lg bg-zinc-950/60 border border-zinc-800">
+              <div class="font-semibold text-zinc-100">单个 Session / JSON</div>
+              <div class="text-zinc-400 mt-0.5">保存到 <code class="text-zinc-200">lod_user/imports/</code>。同名配对后可自动读 777000 验证码。</div>
+            </div>
+            <div class="p-2.5 rounded-lg bg-zinc-950/60 border border-zinc-800">
+              <div class="font-semibold text-zinc-100">限制与安全</div>
+              <div class="text-zinc-400 mt-0.5">仅接受上述后缀，最大 50MB；ZIP 会拦截路径穿越（zip-slip）。</div>
+            </div>
+          </div>
+
+          <div v-if="vaultUploading || vaultUploadProgress > 0" class="space-y-1">
+            <div class="flex items-center justify-between text-[11px] text-cyan-100">
+              <span>{{ vaultUploading ? '正在上传并导入...' : '上传完成' }}</span>
+              <span class="font-mono">{{ vaultUploadProgress }}%</span>
+            </div>
+            <div class="h-1.5 rounded-full bg-zinc-900 overflow-hidden">
+              <div class="h-full bg-cyan-500 transition-all" :style="{ width: vaultUploadProgress + '%' }"></div>
+            </div>
+          </div>
+
+          <div v-if="vaultUploadResult" :class="['p-3 rounded-lg text-xs', vaultUploadResult.success ? 'bg-green-950/40 border border-green-800/60 text-green-300' : 'bg-red-950/40 border border-red-800/60 text-red-300']">
+            <div>{{ vaultUploadResult.message }}</div>
+            <div v-if="vaultUploadResult.dest_dir" class="mt-1 font-mono text-[11px] text-zinc-400">目录: {{ vaultUploadResult.dest_dir }}</div>
+            <div v-if="vaultUploadResult.imported_accounts?.length" class="mt-1 text-[11px]">
+              新导入:
+              <span v-for="acc in vaultUploadResult.imported_accounts" :key="acc.account_id" class="mr-2 font-mono">
+                {{ acc.phone || acc.filename }}{{ acc.has_session ? ' ✓session' : '' }}
+              </span>
+            </div>
+          </div>
+        </div>
+
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <!-- 当前全局生效凭证 -->
           <div class="glass-panel p-5 rounded-xl border border-zinc-800/80 space-y-3">
@@ -1058,6 +1129,11 @@ const vaultSelectedId = ref('')
 const vaultApplyingId = ref('')
 const vaultApplyResult = ref(null)
 const vaultGuidance = ref('')
+const vaultFileInput = ref(null)
+const vaultUploading = ref(false)
+const vaultUploadDragging = ref(false)
+const vaultUploadProgress = ref(0)
+const vaultUploadResult = ref(null)
 const PUBLISHED_API_IDS = new Set([4, 6, 8, 10, 2040, 2100, 17349, 21724])
 const isPublishedCustomApiId = computed(() => PUBLISHED_API_IDS.has(Number(config.custom_api_id)))
 const selectedVaultAccount = computed(() => vaultAccounts.value.find(acc => acc.account_id === vaultSelectedId.value) || null)
@@ -1414,6 +1490,76 @@ const getStatusBadgeClass = (status) => {
 const formatTime = (iso) => {
   if (!iso) return '-'
   return iso.split('T')[1]?.substring(0, 8) || iso
+}
+
+const isAllowedVaultUpload = (file) => {
+  if (!file || !file.name) return false
+  return /\.(zip|session|json)$/i.test(file.name)
+}
+
+const uploadVaultFile = (file) => {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    xhr.open('POST', '/api/vault/upload')
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable) {
+        vaultUploadProgress.value = Math.max(1, Math.round((event.loaded / event.total) * 90))
+      }
+    }
+    xhr.onload = () => {
+      let data = {}
+      try {
+        data = JSON.parse(xhr.responseText || '{}')
+      } catch (e) {
+        reject(new Error('服务器返回了无法解析的响应'))
+        return
+      }
+      if (xhr.status >= 200 && xhr.status < 300) {
+        vaultUploadProgress.value = 100
+        resolve(data)
+        return
+      }
+      reject(new Error(data.detail || data.message || `上传失败 HTTP ${xhr.status}`))
+    }
+    xhr.onerror = () => reject(new Error('网络错误，上传未完成'))
+    const form = new FormData()
+    form.append('file', file)
+    xhr.send(form)
+  })
+}
+
+const handleVaultUpload = async (file) => {
+  if (!file) return
+  if (!isAllowedVaultUpload(file)) {
+    vaultUploadResult.value = { success: false, message: '仅支持 .zip / .session / .json' }
+    return
+  }
+  vaultUploading.value = true
+  vaultUploadProgress.value = 1
+  vaultUploadResult.value = null
+  try {
+    const data = await uploadVaultFile(file)
+    vaultUploadResult.value = data
+    await fetchVaultAccounts()
+    const first = (data.imported_accounts || [])[0]
+    if (first?.account_id) vaultSelectedId.value = first.account_id
+  } catch (e) {
+    vaultUploadResult.value = { success: false, message: e.message }
+  } finally {
+    vaultUploading.value = false
+    if (vaultFileInput.value) vaultFileInput.value.value = ''
+  }
+}
+
+const onVaultFilePicked = async (event) => {
+  const file = event.target.files?.[0]
+  await handleVaultUpload(file)
+}
+
+const onVaultFileDrop = async (event) => {
+  vaultUploadDragging.value = false
+  const file = event.dataTransfer?.files?.[0]
+  await handleVaultUpload(file)
 }
 
 const fetchVaultAccounts = async () => {

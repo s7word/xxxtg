@@ -18,6 +18,8 @@ data/sessions/
 *.session
 *.session-journal
 *.csv
+lod_user/**/CREDENTIALS.txt
+lod_user/imports/
 
 # OS & Editor
 .DS_Store

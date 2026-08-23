@@ -7,10 +7,13 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import logging
 import os
+import re
 import sqlite3
+import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -20,6 +23,7 @@ from backend.app.models.schemas import (
     ApplyVaultCredentialsResponse,
     VaultAccountItem,
     VaultAccountListResponse,
+    VaultUploadResponse,
 )
 from backend.app.services.device_profile import PUBLISHED_API_ID_BLOCKLIST
 
@@ -35,8 +39,8 @@ VAULT_GUIDANCE = (
     "在「🔐 凭证库 / 开发者 API」填入该账号手机号，点击「从 my.telegram.org 申请专属 API ID/Hash」。"
     "系统会向 777000 官方号发送 Web 登录码，你在手机 Telegram 里查看后填回本页即可自动登录 /apps 完成申请。"
     "【轨 B · 已有 Telethon .session】"
-    "把 *.session 拖入/复制到 lod_user/ 或 data/sessions/（最好与 JSON 同名），刷新凭证库后点申请，"
-    "系统会静默读取 777000 消息并完成申请。"
+    "在本页顶部「📤 上传账号文件」选择 .zip / .session / .json，或把文件复制到 lod_user/ 与 data/sessions/（最好与 JSON 同名），"
+    "刷新凭证库后点申请，系统会静默读取 777000 消息并完成申请。"
     "【轨 C · 已经在 my.telegram.org 申请过】"
     "直接到「⚙️ 参数拓扑」填写 custom_api_id / custom_api_hash，并把 api_credential_mode 设为 auto 或 custom。"
 )
@@ -259,6 +263,78 @@ def _file_mtime_as_register(path: Path) -> Tuple[Optional[str], Optional[int]]:
         return None, None
 
 
+ALLOWED_UPLOAD_EXTS = {".zip", ".session", ".json"}
+ALLOWED_ZIP_MEMBER_EXTS = {".session", ".json"}
+MAX_UPLOAD_BYTES = 50 * 1024 * 1024
+MAX_ZIP_MEMBERS = 200
+MAX_ZIP_MEMBER_BYTES = 20 * 1024 * 1024
+IMPORTS_SUBDIR = "imports"
+
+
+def sanitize_upload_filename(filename: Optional[str]) -> str:
+    """只保留文件名本身，剔除路径并折叠危险字符。"""
+    name = Path(str(filename or "upload.bin")).name.replace("\x00", "")
+    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "_", name).strip("._")
+    return (cleaned or "upload.bin")[:180]
+
+
+def zip_dest_stem(filename: str) -> str:
+    stem = Path(sanitize_upload_filename(filename)).stem
+    stem = re.sub(r"_+[0-9a-f]{3,8}$", "", stem, flags=re.I)
+    return stem or "uploaded_sessions"
+
+
+def _is_safe_relpath(member: str) -> bool:
+    raw = str(member or "").replace("\\", "/").strip()
+    if not raw or raw.endswith("/"):
+        return False
+    if raw.startswith("/") or raw.startswith("../") or "/../" in f"/{raw}/":
+        return False
+    parts = [p for p in Path(raw).parts if p not in {"", "."}]
+    if not parts or any(p == ".." for p in parts):
+        return False
+    return True
+
+
+def extract_zip_safely(content: bytes, dest_dir: Path) -> Tuple[List[str], List[str]]:
+    """安全解压账号 zip：拒绝 zip-slip、限制体积与成员类型。"""
+    imported: List[str] = []
+    skipped: List[str] = []
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest_root = dest_dir.resolve()
+    try:
+        archive = zipfile.ZipFile(io.BytesIO(content))
+    except zipfile.BadZipFile as exc:
+        raise ValueError(f"不是有效的 ZIP 压缩包: {exc}") from exc
+
+    infos = [info for info in archive.infolist() if not info.is_dir()]
+    if len(infos) > MAX_ZIP_MEMBERS:
+        raise ValueError(f"ZIP 成员过多（{len(infos)} > {MAX_ZIP_MEMBERS}）")
+
+    with archive:
+        for info in infos:
+            name = info.filename
+            if not _is_safe_relpath(name):
+                skipped.append(f"{name} (路径不安全)")
+                continue
+            ext = Path(name).suffix.lower()
+            if ext not in ALLOWED_ZIP_MEMBER_EXTS:
+                skipped.append(f"{name} (不支持的类型)")
+                continue
+            if info.file_size > MAX_ZIP_MEMBER_BYTES:
+                skipped.append(f"{name} (单文件过大)")
+                continue
+            rel = Path(Path(name).name)
+            target = (dest_root / rel).resolve()
+            if target != dest_root and dest_root not in target.parents:
+                skipped.append(f"{name} (zip-slip)")
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(archive.read(info))
+            imported.append(str(target))
+    return imported, skipped
+
+
 class AccountVaultService:
     """扫描、解析与应用已有账号凭证。"""
 
@@ -408,6 +484,141 @@ class AccountVaultService:
             reverse=True,
         )
         return accounts
+
+    @classmethod
+    def _accounts_touching_files(cls, accounts: List[VaultAccountItem], written: List[Path]) -> List[VaultAccountItem]:
+        names = {p.name for p in written}
+        resolved = {p.resolve() for p in written}
+        matched: List[VaultAccountItem] = []
+        for acc in accounts:
+            hits = []
+            for rel in (acc.json_path, acc.session_path):
+                if not rel:
+                    continue
+                path = (REPO_ROOT / rel).resolve()
+                hits.append(path)
+            if names.intersection({acc.filename or "", Path(acc.json_path or "").name, Path(acc.session_path or "").name}):
+                matched.append(acc)
+                continue
+            if any(path in resolved for path in hits):
+                matched.append(acc)
+        return matched
+
+    @classmethod
+    def import_uploaded_bytes(
+        cls,
+        filename: str,
+        content: bytes,
+        dest_root: Optional[Path] = None,
+    ) -> VaultUploadResponse:
+        """保存上传的 zip / session / json，然后立刻 scan_accounts。"""
+        safe_name = sanitize_upload_filename(filename)
+        ext = Path(safe_name).suffix.lower()
+        dest_root = Path(dest_root).resolve() if dest_root else LOD_USER_DIR.resolve()
+
+        if ext not in ALLOWED_UPLOAD_EXTS:
+            return VaultUploadResponse(
+                success=False,
+                message="仅支持 .zip / .session / .json 账号文件",
+                filename=safe_name,
+                kind="unknown",
+            )
+        if not content:
+            return VaultUploadResponse(
+                success=False,
+                message="上传文件为空",
+                filename=safe_name,
+                kind=ext.lstrip(".") or "unknown",
+            )
+        if len(content) > MAX_UPLOAD_BYTES:
+            return VaultUploadResponse(
+                success=False,
+                message=f"上传文件过大（{len(content)} > {MAX_UPLOAD_BYTES} 字节）",
+                filename=safe_name,
+                kind=ext.lstrip(".") or "unknown",
+            )
+
+        dest_root.mkdir(parents=True, exist_ok=True)
+        imported_files: List[str] = []
+        skipped: List[str] = []
+        dest_dir = dest_root
+
+        try:
+            if ext == ".zip":
+                dest_dir = dest_root / zip_dest_stem(safe_name)
+                imported_abs, skipped = extract_zip_safely(content, dest_dir)
+                imported_files = imported_abs
+                if not imported_files:
+                    return VaultUploadResponse(
+                        success=False,
+                        message="ZIP 中没有可导入的 .json / .session 账号文件",
+                        filename=safe_name,
+                        kind="zip",
+                        dest_dir=str(dest_dir),
+                        skipped_files=skipped,
+                    )
+            else:
+                dest_dir = dest_root / IMPORTS_SUBDIR
+                dest_dir.mkdir(parents=True, exist_ok=True)
+                target = dest_dir / safe_name
+                target.write_bytes(content)
+                imported_files = [str(target)]
+        except ValueError as exc:
+            return VaultUploadResponse(
+                success=False,
+                message=str(exc),
+                filename=safe_name,
+                kind=ext.lstrip(".") or "unknown",
+                dest_dir=str(dest_dir),
+            )
+        except OSError as exc:
+            return VaultUploadResponse(
+                success=False,
+                message=f"写入导入目录失败: {exc}",
+                filename=safe_name,
+                kind=ext.lstrip(".") or "unknown",
+                dest_dir=str(dest_dir),
+            )
+
+        extra_old = os.environ.get("VAULT_EXTRA_DIRS")
+        extra_needed = dest_root.resolve() not in {root.resolve() for _, root in cls.scan_roots()}
+        if extra_needed:
+            os.environ["VAULT_EXTRA_DIRS"] = (
+                str(dest_root) if not extra_old else f"{extra_old}{os.pathsep}{dest_root}"
+            )
+        try:
+            listing = cls.list_accounts()
+        finally:
+            if extra_needed:
+                if extra_old is None:
+                    os.environ.pop("VAULT_EXTRA_DIRS", None)
+                else:
+                    os.environ["VAULT_EXTRA_DIRS"] = extra_old
+
+        written_paths = [Path(p) for p in imported_files]
+        imported_accounts = cls._accounts_touching_files(listing.accounts, written_paths)
+        paired = sum(1 for acc in imported_accounts if acc.has_json and acc.has_session)
+        kind = ext.lstrip(".")
+        phones = [acc.phone or acc.filename or "?" for acc in imported_accounts]
+        message = (
+            f"已导入 {len(imported_files)} 个文件"
+            + (f"，识别到 {len(imported_accounts)} 个账号" if imported_accounts else "")
+            + (f"（{', '.join(phones)}）" if phones else "")
+            + f"，凭证库现共 {listing.total} 个账号"
+        )
+        return VaultUploadResponse(
+            success=True,
+            message=message,
+            filename=safe_name,
+            kind=kind,
+            dest_dir=str(dest_dir),
+            imported_files=[_rel_to_repo(Path(p)) or p for p in imported_files],
+            skipped_files=skipped,
+            imported_accounts=imported_accounts,
+            imported_count=len(imported_accounts),
+            total=listing.total,
+            paired_count=paired,
+        )
 
     @classmethod
     def list_accounts(cls) -> VaultAccountListResponse:

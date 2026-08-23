@@ -288,6 +288,21 @@ class VaultAccountListResponse(BaseModel):
     )
 
 
+class VaultUploadResponse(BaseModel):
+    """浏览器端上传 .zip / .session / .json 后的导入结果"""
+    success: bool
+    message: str
+    filename: str
+    kind: str = Field(default="unknown", description="zip / session / json")
+    dest_dir: str = ""
+    imported_files: List[str] = Field(default_factory=list)
+    skipped_files: List[str] = Field(default_factory=list)
+    imported_accounts: List[VaultAccountItem] = Field(default_factory=list)
+    imported_count: int = 0
+    total: int = 0
+    paired_count: int = 0
+
+
 class ApplyVaultCredentialsRequest(BaseModel):
     """将某个已有账号的 app_id/app_hash 写入全局配置"""
     account_id: str

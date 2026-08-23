@@ -2,7 +2,7 @@ import asyncio
 import os
 from pathlib import Path
 from typing import Dict, Any, List, Optional
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, File, HTTPException, UploadFile, BackgroundTasks
 
 from backend.app.config import ConfigManager, SESSIONS_DIR
 from backend.app.models.schemas import (
@@ -13,6 +13,7 @@ from backend.app.models.schemas import (
     TaskStatusResponse,
     EgressRelayConfig,
     VaultAccountListResponse,
+    VaultUploadResponse,
     ApplyVaultCredentialsRequest,
     ApplyVaultCredentialsResponse,
     TelegramAppsStartRequest,
@@ -389,6 +390,25 @@ def datetime_from_timestamp(ts: float) -> str:
 )
 async def list_vault_accounts():
     return AccountVaultService.list_accounts()
+
+
+@router.post(
+    "/vault/upload",
+    response_model=VaultUploadResponse,
+    summary="上传 .zip / .session / .json 并导入到凭证库",
+)
+async def upload_vault_accounts(file: UploadFile = File(..., description="账号压缩包或单个凭证文件")):
+    """浏览器端一键导入账号：ZIP 安全解压到 lod_user/<zip名>/，单文件落到 lod_user/imports/。"""
+    filename = file.filename or "upload.bin"
+    try:
+        content = await file.read()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"读取上传文件失败: {exc}") from exc
+    result = AccountVaultService.import_uploaded_bytes(filename, content)
+    if not result.success:
+        status = 413 if "过大" in result.message else 400
+        raise HTTPException(status_code=status, detail=result.message)
+    return result
 
 
 @router.post(

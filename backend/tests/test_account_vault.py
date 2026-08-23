@@ -1,12 +1,14 @@
 """Account Vault & Telegram Apps Helper — 离线单元 / API 契约测试。"""
 from __future__ import annotations
 
+import io
 import json
 import os
 import shutil
 import sys
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -23,13 +25,17 @@ from backend.app.models.schemas import (  # noqa: E402
     TelegramAppsJobResponse,
     VaultAccountItem,
     VaultAccountListResponse,
+    VaultUploadResponse,
     AppConfigModel,
 )
 from backend.app.services.account_vault import (  # noqa: E402
     AccountVaultService,
+    extract_zip_safely,
     normalize_phone,
     parse_register_time,
     make_account_id,
+    sanitize_upload_filename,
+    zip_dest_stem,
 )
 from backend.app.services.telegram_apps import (  # noqa: E402
     TelegramAppsHelper,
@@ -329,6 +335,8 @@ class TestSchemasComplete(unittest.TestCase):
         self.assertTrue(apply_job.set_mode_custom)
         item = VaultAccountItem(account_id="x", source="lod_user", phone="+1")
         self.assertEqual(item.source, "lod_user")
+        upload = VaultUploadResponse(success=True, message="ok", filename="a.zip", kind="zip")
+        self.assertEqual(upload.imported_count, 0)
         cfg = AppConfigModel()
         self.assertIn("custom_api_id", cfg.model_fields)
         self.assertIn("custom_api_hash", cfg.model_fields)
@@ -404,6 +412,8 @@ class TestVaultHttpApi(unittest.TestCase):
         paths = res.json().get("paths", {})
         self.assertIn("/api/vault/accounts", paths)
         self.assertIn("/api/vault/accounts/apply", paths)
+        self.assertIn("/api/vault/upload", paths)
+        self.assertIn("post", paths["/api/vault/upload"])
         self.assertIn("/api/vault/apps/start", paths)
         self.assertIn("/api/vault/apps/submit-code", paths)
         self.assertIn("/api/vault/apps/jobs", paths)
@@ -429,6 +439,179 @@ class TestVaultHttpApi(unittest.TestCase):
             self.assertEqual(cfg["api_credential_mode"], "custom")
         finally:
             ConfigManager.get_instance().save_config(original)
+
+
+def _zip_bytes(files: dict) -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        for name, payload in files.items():
+            data = payload if isinstance(payload, bytes) else payload.encode("utf-8")
+            zf.writestr(name, data)
+    return buf.getvalue()
+
+
+class TestVaultUploadImport(unittest.TestCase):
+    def test_sanitize_and_zip_stem(self):
+        self.assertEqual(sanitize_upload_filename("../../evil.json"), "evil.json")
+        self.assertEqual(sanitize_upload_filename("a/b\\c.session"), "c.session")
+        self.assertEqual(zip_dest_stem("autoc_sessions_20260823_113451_3_0f35.zip"), "autoc_sessions_20260823_113451_3")
+        self.assertEqual(zip_dest_stem("accounts.zip"), "accounts")
+
+    def test_extract_zip_rejects_slip_and_keeps_accounts(self):
+        payload = _zip_bytes({
+            "../../tmp/evil.session": b"nope",
+            "nested/918111122233.json": json.dumps({"phone": "918111122233", "app_id": 8}),
+            "readme.txt": "ignore me",
+            "nested/918111122233.session": b"session-bytes",
+        })
+        with tempfile.TemporaryDirectory() as tmp:
+            dest = Path(tmp) / "safe"
+            imported, skipped = extract_zip_safely(payload, dest)
+            names = {Path(p).name for p in imported}
+            self.assertIn("918111122233.json", names)
+            self.assertIn("918111122233.session", names)
+            self.assertTrue(any("路径不安全" in item or "zip-slip" in item for item in skipped) or any(".." in item for item in skipped))
+            self.assertTrue(any("readme.txt" in item for item in skipped))
+            self.assertFalse((dest / ".." / "tmp" / "evil.session").exists() or (Path(tmp) / "evil.session").exists())
+
+    def test_import_zip_and_scan_accounts(self):
+        phone = "12025550999"
+        files = {
+            f"{phone}.json": json.dumps({
+                "phone": phone,
+                "app_id": 12345678,
+                "app_hash": "abcdefabcdefabcdefabcdefabcdefab",
+                "device": "Pixel 8",
+            }),
+            f"{phone}.session": b"placeholder-session",
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            result = AccountVaultService.import_uploaded_bytes(
+                "demo_accounts_ab12.zip",
+                _zip_bytes(files),
+                dest_root=Path(tmp),
+            )
+            self.assertTrue(result.success, result.message)
+            self.assertEqual(result.kind, "zip")
+            self.assertEqual(result.imported_count, 1)
+            self.assertGreaterEqual(result.total, 1)
+            self.assertEqual(result.paired_count, 1)
+            dest = Path(result.dest_dir)
+            self.assertTrue((dest / f"{phone}.json").exists())
+            self.assertTrue((dest / f"{phone}.session").exists())
+            self.assertEqual(result.imported_accounts[0].phone, f"+{phone}")
+            self.assertTrue(result.imported_accounts[0].has_session)
+            self.assertTrue(result.imported_accounts[0].has_json)
+
+    def test_import_single_json_and_session(self):
+        phone = "12025550888"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            meta = {
+                "phone": phone,
+                "app_id": 87654321,
+                "app_hash": "ffffffffffffffffffffffffffffffff",
+                "device": "Pixel 7",
+            }
+            json_res = AccountVaultService.import_uploaded_bytes(
+                f"{phone}.json",
+                json.dumps(meta).encode("utf-8"),
+                dest_root=root,
+            )
+            self.assertTrue(json_res.success, json_res.message)
+            self.assertEqual(json_res.kind, "json")
+            sess_res = AccountVaultService.import_uploaded_bytes(
+                f"{phone}.session",
+                b"placeholder-session",
+                dest_root=root,
+            )
+            self.assertTrue(sess_res.success, sess_res.message)
+            self.assertEqual(sess_res.kind, "session")
+            self.assertTrue(sess_res.imported_accounts)
+            acc = sess_res.imported_accounts[0]
+            self.assertEqual(acc.phone, f"+{phone}")
+            self.assertTrue(acc.has_json)
+            self.assertTrue(acc.has_session)
+
+    def test_reject_bad_extension_and_empty(self):
+        bad = AccountVaultService.import_uploaded_bytes("notes.txt", b"hello")
+        self.assertFalse(bad.success)
+        empty = AccountVaultService.import_uploaded_bytes("x.json", b"")
+        self.assertFalse(empty.success)
+
+
+class TestVaultUploadHttpApi(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        from fastapi.testclient import TestClient
+        from backend.app.main import app
+
+        cls.client = TestClient(app)
+
+    def test_upload_rejects_txt(self):
+        res = self.client.post(
+            "/api/vault/upload",
+            files={"file": ("notes.txt", b"hello", "text/plain")},
+        )
+        self.assertEqual(res.status_code, 400)
+
+    def test_upload_zip_then_cleanup(self):
+        phone = "12025550777"
+        payload = _zip_bytes({
+            f"{phone}.json": json.dumps({
+                "phone": phone,
+                "app_id": 13579246,
+                "app_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "device": "Pixel 6",
+            }),
+            f"{phone}.session": b"placeholder-session",
+        })
+        dest = None
+        try:
+            res = self.client.post(
+                "/api/vault/upload",
+                files={"file": ("http_upload_demo.zip", payload, "application/zip")},
+            )
+            self.assertEqual(res.status_code, 200, res.text)
+            body = res.json()
+            self.assertTrue(body["success"])
+            self.assertEqual(body["kind"], "zip")
+            self.assertGreaterEqual(body["imported_count"], 1)
+            self.assertGreaterEqual(body["total"], 1)
+            dest = Path(body["dest_dir"])
+            phones = {acc["phone"] for acc in body["imported_accounts"]}
+            self.assertIn(f"+{phone}", phones)
+            listing = self.client.get("/api/vault/accounts").json()
+            listing_phones = {acc["phone"] for acc in listing["accounts"]}
+            self.assertIn(f"+{phone}", listing_phones)
+        finally:
+            if dest and dest.exists() and dest.name == "http_upload_demo":
+                shutil.rmtree(dest, ignore_errors=True)
+
+    def test_upload_single_json_to_imports(self):
+        phone = "12025550666"
+        dest = None
+        try:
+            res = self.client.post(
+                "/api/vault/upload",
+                files={"file": (
+                    f"{phone}.json",
+                    json.dumps({"phone": phone, "app_id": 4, "app_hash": "014b35b6184100b085b0d0572f9b5103"}).encode(),
+                    "application/json",
+                )},
+            )
+            self.assertEqual(res.status_code, 200, res.text)
+            body = res.json()
+            self.assertTrue(body["success"])
+            self.assertEqual(body["kind"], "json")
+            dest = Path(body["dest_dir"])
+            self.assertTrue(dest.name == "imports" or dest.as_posix().endswith("/imports"))
+            self.assertTrue((dest / f"{phone}.json").exists())
+        finally:
+            if dest and dest.exists():
+                target = dest / f"{phone}.json"
+                if target.exists():
+                    target.unlink()
 
 
 class TestSessionJsonPairing(unittest.TestCase):
