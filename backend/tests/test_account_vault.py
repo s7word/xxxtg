@@ -59,6 +59,28 @@ SAMPLE_CREATE_HTML = """
 </form>
 """
 
+SAMPLE_UNEDITABLE_APPS_HTML = """
+<html>
+  <head><title>App configuration</title>
+  <meta name="apple-itunes-app" content="app-id=686449807">
+  </head>
+  <body>
+    <div class="form-group">
+      App api_id:
+      <span class="form-control input-xlarge uneditable-input" onclick="this.select();">
+        21781234
+      </span>
+    </div>
+    <div class="form-group">
+      App api_hash:
+      <span class="form-control input-xlarge uneditable-input" onclick="this.select();">
+        0a1b2c3d4e5f60718293a4b5c6d7e8f9
+      </span>
+    </div>
+  </body>
+</html>
+"""
+
 SAMPLE_LOGIN_MESSAGES = [
     "Login code: 48291. Do not give this code to anyone, even if they say they are from Telegram!",
     "Web login code. Telegram (my.telegram.org code).\n48291",
@@ -238,6 +260,14 @@ class TestTelegramAppsParsers(unittest.TestCase):
         self.assertEqual(parsed["api_hash"], "0123456789abcdef0123456789abcdef")
         self.assertEqual(parsed["app_title"], "EdgeNode Auditor")
         self.assertFalse(parsed["has_create_form"])
+
+    def test_parse_uneditable_span_apps_html(self):
+        parsed = parse_apps_page(SAMPLE_UNEDITABLE_APPS_HTML)
+        self.assertEqual(parsed["api_id"], 21781234)
+        self.assertEqual(parsed["api_hash"], "0a1b2c3d4e5f60718293a4b5c6d7e8f9")
+        self.assertFalse(parsed["has_create_form"])
+        # 不把 iTunes app-id=686449807 误当成 api_id
+        self.assertNotEqual(parsed["api_id"], 686449807)
 
     def test_parse_create_form_html(self):
         parsed = parse_apps_page(SAMPLE_CREATE_HTML)

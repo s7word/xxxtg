@@ -60,20 +60,41 @@ LOGIN_CODE_PATTERNS = [
 API_ID_PATTERNS = [
     re.compile(r'id="app_id"[^>]*value="(\d+)"', re.I),
     re.compile(r'name="app_id"[^>]*value="(\d+)"', re.I),
-    re.compile(r"App api_id.*?</label>\s*<[^>]+>(\d+)", re.I | re.S),
-    re.compile(r"App api_id[:\s]*</(?:label|strong)>\s*<[^>]+>(\d+)", re.I | re.S),
+    re.compile(r"App api_id.*?</label>\s*<[^>]+>\s*(\d+)", re.I | re.S),
+    re.compile(r"App api_id[:\s]*</(?:label|strong)>\s*<[^>]+>\s*(\d+)", re.I | re.S),
     re.compile(r"<strong>\s*App api_id\s*</strong>\s*<span[^>]*>\s*(\d+)\s*</span>", re.I),
-    re.compile(r"api_id[^0-9]{0,40}(\d{4,10})", re.I),
-    re.compile(r"App api_id[:\s]+(\d{4,10})", re.I),
+    re.compile(
+        r"App api_id[\s\S]{0,400}?<span[^>]*uneditable-input[^>]*>\s*(\d{4,10})\s*</span>",
+        re.I,
+    ),
+    re.compile(
+        r"App api_id[\s\S]{0,400}?<span[^>]*input-xlarge[^>]*>\s*(\d{4,10})\s*</span>",
+        re.I,
+    ),
+    re.compile(r"App api_id[:\s]*(\d{4,10})", re.I),
+    re.compile(r"api_id[^0-9]{0,160}(\d{4,10})", re.I),
 ]
 
 API_HASH_PATTERNS = [
     re.compile(r'id="app_hash"[^>]*value="([a-fA-F0-9]{16,64})"', re.I),
     re.compile(r'name="app_hash"[^>]*value="([a-fA-F0-9]{16,64})"', re.I),
-    re.compile(r"App api_hash.*?</label>\s*<[^>]+>([a-fA-F0-9]{16,64})", re.I | re.S),
+    re.compile(r"App api_hash.*?</label>\s*<[^>]+>\s*([a-fA-F0-9]{16,64})", re.I | re.S),
     re.compile(r"<strong>\s*App api_hash\s*</strong>\s*<span[^>]*>\s*([a-fA-F0-9]{16,64})\s*</span>", re.I),
-    re.compile(r"api_hash[^a-fA-F0-9]{0,40}([a-fA-F0-9]{32})", re.I),
+    re.compile(
+        r"App api_hash[\s\S]{0,400}?<span[^>]*uneditable-input[^>]*>\s*([a-fA-F0-9]{32})\s*</span>",
+        re.I,
+    ),
+    re.compile(
+        r"App api_hash[\s\S]{0,400}?<span[^>]*input-xlarge[^>]*>\s*([a-fA-F0-9]{32})\s*</span>",
+        re.I,
+    ),
+    re.compile(r"api_hash[^a-fA-F0-9]{0,160}([a-fA-F0-9]{32})", re.I),
 ]
+
+UNEDITABLE_SPAN_RE = re.compile(
+    r'<span[^>]*(?:class="[^"]*(?:uneditable-input|input-xlarge)[^"]*"|uneditable-input|input-xlarge)[^>]*>\s*([^<]+?)\s*</span>',
+    re.I,
+)
 
 CREATE_HASH_PATTERNS = [
     re.compile(r'<input[^>]*name="hash"[^>]*value="([a-fA-F0-9]+)"', re.I),
@@ -92,6 +113,20 @@ def extract_login_code(text: Optional[str]) -> Optional[str]:
     return None
 
 
+def _extract_from_uneditable_spans(html: str) -> tuple[Optional[int], Optional[str]]:
+    """my.telegram.org 把已创建应用的 api_id / api_hash 放在 span.uneditable-input 文本里。"""
+    values = [re.sub(r"\s+", "", item or "") for item in UNEDITABLE_SPAN_RE.findall(html or "")]
+    api_id = None
+    api_hash = None
+    for value in values:
+        if api_id is None and re.fullmatch(r"\d{4,10}", value):
+            api_id = int(value)
+            continue
+        if api_hash is None and re.fullmatch(r"[a-fA-F0-9]{32}", value):
+            api_hash = value
+    return api_id, api_hash
+
+
 def parse_apps_page(html: str) -> Dict[str, Any]:
     """从 my.telegram.org/apps HTML 中提取已有凭证或创建表单 hash。"""
     api_id = None
@@ -99,20 +134,26 @@ def parse_apps_page(html: str) -> Dict[str, Any]:
     create_hash = None
     app_title = None
 
-    for pattern in API_ID_PATTERNS:
-        match = pattern.search(html)
-        if match:
-            try:
-                api_id = int(match.group(1))
-                break
-            except ValueError:
-                continue
+    span_id, span_hash = _extract_from_uneditable_spans(html)
+    api_id = span_id
+    api_hash = span_hash
 
-    for pattern in API_HASH_PATTERNS:
-        match = pattern.search(html)
-        if match:
-            api_hash = match.group(1)
-            break
+    if api_id is None:
+        for pattern in API_ID_PATTERNS:
+            match = pattern.search(html or "")
+            if match:
+                try:
+                    api_id = int(match.group(1))
+                    break
+                except ValueError:
+                    continue
+
+    if api_hash is None:
+        for pattern in API_HASH_PATTERNS:
+            match = pattern.search(html or "")
+            if match:
+                api_hash = match.group(1)
+                break
 
     for pattern in CREATE_HASH_PATTERNS:
         match = pattern.search(html)
@@ -498,10 +539,16 @@ class TelegramAppsHelper:
         parsed["created_new_app"] = True
         parsed["app_title"] = parsed.get("app_title") or title
         if not (parsed.get("api_id") and parsed.get("api_hash")):
-            snippet = re.sub(r"\s+", " ", last_html or "")[:240]
+            dump_path = Path("/tmp/mytg_apps_last.html")
+            try:
+                dump_path.write_text(last_html or "", encoding="utf-8")
+            except Exception:
+                dump_path = None
+            snippet = re.sub(r"\s+", " ", last_html or "")[:400]
             raise RuntimeError(
                 "已提交创建应用请求，但未能从 /apps 解析到 api_id / api_hash。"
-                f" create_body={create_text[:160]!r} apps_snippet={snippet!r}"
+                f" create_http={create_resp.status_code} create_body={create_text[:160]!r}"
+                f" apps_len={len(last_html or '')} dump={dump_path} apps_snippet={snippet!r}"
             )
         return parsed
 
