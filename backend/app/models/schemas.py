@@ -1,5 +1,12 @@
 from typing import Optional, Dict, Any, List
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+from backend.app.services.attestation_urls import (
+    DEFAULT_ANTISAFETY_BASES,
+    DEFAULT_ANTISAFETY_REPORTING_BASES,
+    DEFAULT_REGHELP_BASES,
+    sanitize_provider_urls,
+)
 
 class EgressRelayConfig(BaseModel):
     """出口中继与网络传输网关配置 (Multipath Egress Relay Gateway)"""
@@ -83,11 +90,11 @@ class AppConfigModel(BaseModel):
         description="自建开发者 API Hash，与 custom_api_id 配套使用"
     )
     antisafety_base_urls: List[str] = Field(
-        default=["https://api.antisafety.net"],
-        description="AntiSafety Push Token 网关候选地址列表 (按序尝试并自动容灾切换)"
+        default_factory=lambda: list(DEFAULT_ANTISAFETY_BASES),
+        description="AntiSafety Push Token 网关候选地址列表 (仅 antisafety.net，禁止混入 REGHelp 地址)"
     )
     antisafety_reporting_base_urls: List[str] = Field(
-        default=["https://reporting.antisafety.net"],
+        default_factory=lambda: list(DEFAULT_ANTISAFETY_REPORTING_BASES),
         description="AntiSafety 历史安全审计 / 结果上报网关候选地址列表"
     )
     antisafety_connect_timeout: float = Field(
@@ -110,8 +117,8 @@ class AppConfigModel(BaseModel):
                      "(参考开源客户端 https://github.com/REGHELPNET/reghelp_client)"
     )
     reghelp_base_urls: List[str] = Field(
-        default=["https://api.reghelp.net"],
-        description="REGHelp Key API 候选网关地址列表 (按序尝试并自动容灾切换)"
+        default_factory=lambda: list(DEFAULT_REGHELP_BASES),
+        description="REGHelp Key API 候选网关地址列表 (仅 reghelp.net，禁止混入 AntiSafety 地址)"
     )
     reghelp_enabled: bool = Field(
         default=True,
@@ -134,6 +141,21 @@ class AppConfigModel(BaseModel):
             "reghelp_only (仅使用 REGHelp) / antisafety_only (仅使用 AntiSafety)"
         )
     )
+
+    @field_validator("antisafety_base_urls", mode="before")
+    @classmethod
+    def _isolate_antisafety_base_urls(cls, value):
+        return sanitize_provider_urls(value, "antisafety", DEFAULT_ANTISAFETY_BASES)
+
+    @field_validator("antisafety_reporting_base_urls", mode="before")
+    @classmethod
+    def _isolate_antisafety_reporting_urls(cls, value):
+        return sanitize_provider_urls(value, "antisafety_reporting", DEFAULT_ANTISAFETY_REPORTING_BASES)
+
+    @field_validator("reghelp_base_urls", mode="before")
+    @classmethod
+    def _isolate_reghelp_base_urls(cls, value):
+        return sanitize_provider_urls(value, "reghelp", DEFAULT_REGHELP_BASES)
 
 
 class DeviceProfileSchema(BaseModel):
@@ -204,3 +226,223 @@ class TaskStatusResponse(BaseModel):
     updated_at: str
 
 NodeTaskStatusResponse = TaskStatusResponse
+
+
+# ==================== Account Vault & Telegram Apps Helper ====================
+
+class VaultAccountItem(BaseModel):
+    """已有账号凭证库条目（脱敏后的可展示元数据）"""
+    account_id: str = Field(..., description="稳定账号标识，用于后续 apply / apps 操作")
+    source: str = Field(..., description="来源分区: lod_user / sessions")
+    phone: Optional[str] = Field(default=None, description="国际格式手机号")
+    phone_raw: Optional[str] = Field(default=None, description="原始文件中记录的手机号")
+    user_id: Optional[int] = Field(default=None, description="Telegram 用户 ID")
+    register_time: Optional[str] = Field(default=None, description="注册/导入时间 (ISO 或可读字符串)")
+    register_time_unix: Optional[int] = Field(default=None, description="原始 Unix 时间戳")
+    device_model: Optional[str] = Field(default=None, description="设备型号")
+    system_version: Optional[str] = Field(default=None, description="SDK / 系统版本")
+    app_version: Optional[str] = Field(default=None, description="客户端版本")
+    lang_pack: Optional[str] = Field(default=None)
+    system_lang_code: Optional[str] = Field(default=None)
+    app_id: Optional[int] = Field(default=None, description="该账号记录的 api_id / app_id")
+    app_hash: Optional[str] = Field(default=None, description="该账号记录的 api_hash / app_hash")
+    is_published_api_id: bool = Field(default=False, description="记录的 api_id 是否属于已知公开泄露 ID")
+    has_usable_custom_credentials: bool = Field(
+        default=False,
+        description="是否具备可一键应用到全局配置的非公开泄露 api_id/api_hash"
+    )
+    has_session: bool = Field(default=False, description="是否存在可用的 Telethon .session 快照")
+    has_json: bool = Field(default=False, description="是否存在 JSON 元数据")
+    has_2fa: bool = Field(default=False, description="元数据是否标记了二级密码")
+    can_request_new_api_credentials: bool = Field(
+        default=False,
+        description="是否具备向 my.telegram.org 申请专属 api_id/api_hash 的基本条件 (至少有手机号)"
+    )
+    session_missing_for_auto_code: bool = Field(
+        default=True,
+        description="是否因缺少同名 .session 而无法自动读取 my.telegram.org 登录码"
+    )
+    apps_apply_hint: Optional[str] = Field(
+        default=None,
+        description="针对该账号申请/应用开发者凭证的操作提示"
+    )
+    json_path: Optional[str] = Field(default=None, description="相对仓库的 JSON 路径")
+    session_path: Optional[str] = Field(default=None, description="相对仓库的 .session 路径")
+    filename: Optional[str] = Field(default=None)
+
+
+class VaultAccountListResponse(BaseModel):
+    """凭证库扫描结果"""
+    total: int
+    lod_user_dir: str
+    sessions_dir: str
+    accounts: List[VaultAccountItem]
+    applied_api_id: Optional[int] = Field(default=None, description="当前全局配置中的 custom_api_id")
+    applied_api_hash: Optional[str] = Field(default=None, description="当前全局配置中的 custom_api_hash")
+    api_credential_mode: Optional[str] = None
+    published_api_id_count: int = 0
+    missing_session_count: int = 0
+    guidance: Optional[str] = Field(
+        default=None,
+        description="如何用 lod_user 已有账号申请全新 api_id/api_hash 的操作说明"
+    )
+
+
+class ApplyVaultCredentialsRequest(BaseModel):
+    """将某个已有账号的 app_id/app_hash 写入全局配置"""
+    account_id: str
+    set_mode_custom: bool = Field(
+        default=True,
+        description="写入后是否将 api_credential_mode 设为 custom，确保立即生效"
+    )
+
+
+class ApplyVaultCredentialsResponse(BaseModel):
+    success: bool
+    message: str
+    account_id: Optional[str] = None
+    custom_api_id: Optional[int] = None
+    custom_api_hash: Optional[str] = None
+    api_credential_mode: Optional[str] = None
+    is_published_api_id: bool = False
+    warning: Optional[str] = None
+
+
+class TelegramAppsStartRequest(BaseModel):
+    """对指定已有账号或手机号发起 my.telegram.org 开发者门户登录"""
+    account_id: Optional[str] = Field(
+        default=None,
+        description="凭证库账号 ID；与 phone 二选一，优先使用 account_id"
+    )
+    phone: Optional[str] = Field(
+        default=None,
+        description="已登录 Telegram 客户端的手机号。无 .session 时走 Web 登录码手动提交"
+    )
+    auto_read_code: bool = Field(
+        default=True,
+        description="若存在 Telethon session，则自动读取官方登录验证码"
+    )
+    app_title: Optional[str] = Field(default=None, description="若需创建新应用时使用的标题")
+    app_shortname: Optional[str] = Field(default=None, description="若需创建新应用时使用的短名")
+    apply_to_config: bool = Field(
+        default=False,
+        description="成功获取后是否立即写入 custom_api_id / custom_api_hash"
+    )
+
+
+class TelegramAppsSubmitCodeRequest(BaseModel):
+    """在无法自动读取验证码时，手动提交 my.telegram.org 登录码"""
+    job_id: str
+    code: str = Field(..., min_length=3, max_length=24)
+    apply_to_config: bool = Field(default=False)
+
+
+class TelegramAppsApplyRequest(BaseModel):
+    """将某次申请任务得到的 api_id/api_hash 写入全局配置"""
+    job_id: str
+    set_mode_custom: bool = Field(default=True)
+
+
+class TelegramAppsJobResponse(BaseModel):
+    """my.telegram.org 申请任务状态"""
+    job_id: str
+    account_id: Optional[str] = None
+    phone: Optional[str] = None
+    status: str = Field(
+        default="pending",
+        description=(
+            "pending / sending_code / waiting_code / logging_in / "
+            "fetching_apps / creating_app / success / failed"
+        )
+    )
+    logs: List[str] = []
+    api_id: Optional[int] = None
+    api_hash: Optional[str] = None
+    app_title: Optional[str] = None
+    created_new_app: bool = False
+    applied_to_config: bool = False
+    needs_manual_code: bool = False
+    error: Optional[str] = None
+    created_at: str
+    updated_at: str
+
+
+class TelegramAppsJobListResponse(BaseModel):
+    jobs: List[TelegramAppsJobResponse]
+
+
+# ==================== Proxy-Seller 区域代理池 ====================
+
+class ProxySellerNode(BaseModel):
+    """归一化后的 Proxy-Seller 出口节点"""
+    id: Optional[Any] = None
+    order_id: Optional[Any] = None
+    proxy_type: str = "socks5"
+    addr: str
+    port: int
+    username: Optional[str] = None
+    password: Optional[str] = None
+    country: Optional[str] = None
+    country_code: Optional[str] = None
+    country_alpha3: Optional[str] = None
+    active_until: Optional[str] = None
+    status: Optional[str] = None
+    status_type: Optional[str] = None
+    can_prolong: bool = False
+    catalog_type: Optional[str] = None
+    healthy: Optional[bool] = None
+    egress_ip: Optional[str] = None
+    egress_country: Optional[str] = None
+    egress_country_code: Optional[str] = None
+    last_error: Optional[str] = None
+    checked_at: Optional[float] = None
+
+
+class ProxySellerListResponse(BaseModel):
+    success: bool
+    message: str
+    country: Optional[str] = None
+    total: int = 0
+    proxies: List[Dict[str, Any]] = Field(default_factory=list)
+    cached: bool = False
+    cache_age_seconds: Optional[float] = None
+    available_countries: List[str] = Field(default_factory=list)
+
+
+class ProxySellerAutoSelectRequest(BaseModel):
+    target_country: Optional[str] = Field(default=None, description="目标区域 ISO-2 / ISO-3 / 国家名")
+    apply_fallback: bool = Field(default=False, description="是否一键写入 config.fallback_proxy")
+    probe: bool = Field(default=False, description="是否按顺序测活后挑选")
+    allow_fallback: bool = Field(default=True, description="指定国家无节点时是否智能兜底到其它区域")
+    refresh: bool = Field(default=False, description="是否绕过本地缓存强制拉取 API")
+    api_key: Optional[str] = None
+
+
+class ProxySellerAutoSelectResponse(BaseModel):
+    success: bool
+    message: str
+    matched: bool = False
+    fallback_used: bool = False
+    applied: bool = False
+    target_country: Optional[str] = None
+    source: Optional[str] = None
+    hint: Optional[str] = None
+    proxy: Optional[Dict[str, Any]] = None
+    fallback_proxy: Optional[EgressRelayConfig] = None
+
+
+class ProxySellerTestAllRequest(BaseModel):
+    country: Optional[str] = None
+    api_key: Optional[str] = None
+    refresh: bool = False
+    limit: int = Field(default=20, ge=1, le=100)
+    concurrency: int = Field(default=4, ge=1, le=10)
+
+
+class ProxySellerTestAllResponse(BaseModel):
+    success: bool
+    message: str
+    tested: int = 0
+    healthy: int = 0
+    country: Optional[str] = None
+    results: List[Dict[str, Any]] = Field(default_factory=list)
