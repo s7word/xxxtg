@@ -7,14 +7,7 @@
           <span class="ce-muted">全球国家拓扑矩阵</span>
         </div>
 
-        <div>
-          <label class="ce-label">目标拓扑与地理区域</label>
-          <select v-model="form.country" class="ce-select">
-            <optgroup v-for="group in COUNTRY_GROUPS" :key="group.id" :label="group.label">
-              <option v-for="opt in group.options" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
-            </optgroup>
-          </select>
-        </div>
+        <LiveStockCountryPicker v-model="form.country" :provider="form.sms_provider" />
 
         <div>
           <label class="ce-label">端点协议模板与 Attestation 凭证</label>
@@ -325,7 +318,8 @@
 </template>
 
 <script setup>
-import { COUNTRY_GROUPS, APP_TYPE_OPTIONS, countryFlag, classifyLogLine, getStatusBadgeClass, formatDuration, formatTime } from '../../composables/useShared'
+import { APP_TYPE_OPTIONS, countryFlag, classifyLogLine, getStatusBadgeClass, formatDuration, formatTime } from '../../composables/useShared'
+import LiveStockCountryPicker from './LiveStockCountryPicker.vue'
 import { useConfig } from '../../composables/useConfig'
 import { useProxy } from '../../composables/useProxy'
 import { useTasks } from '../../composables/useTasks'

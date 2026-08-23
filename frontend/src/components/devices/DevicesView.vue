@@ -298,7 +298,7 @@ const countryGroups = computed(() => {
   })
   const groups = COUNTRY_GROUP_META.map((group) => ({
     ...group,
-    options: items.filter((item) => (catalogByCode[item.code]?.group || 'apac') === group.id)
+    options: items.filter((item) => (item.group || catalogByCode[item.code]?.group || 'other') === group.id)
   })).filter((group) => group.options.length)
   const groupedCodes = new Set(groups.flatMap((group) => group.options.map((item) => item.code)))
   const leftover = items.filter((item) => !groupedCodes.has(item.code))

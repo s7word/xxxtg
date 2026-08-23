@@ -43,6 +43,7 @@ ISO2_TO_GRIZZLY: Dict[str, int] = {
 }
 
 # 扩展 SMS-Activate 常用国家，便于智能推断（不覆盖权威表）。
+# 动态 getPrices 全量返回的未知 ID 仍可通过 geo_catalog.SMSACTIVATE_ID_TO_ISO2 回落。
 _EXTENDED_ISO2_TO_GRIZZLY: Dict[str, int] = {
     "ua": 1,
     "cn": 3,
@@ -130,6 +131,93 @@ _EXTENDED_ISO2_TO_GRIZZLY: Dict[str, int] = {
     "au": 175,
     "jp": 182,
     "kr": 190,
+    "ng": 19,
+    "eg": 21,
+    "mg": 17,
+    "cd": 18,
+    "mo": 20,
+    "gm": 28,
+    "ye": 30,
+    "td": 42,
+    "gn": 68,
+    "ml": 69,
+    "pg": 79,
+    "mz": 80,
+    "tl": 91,
+    "zw": 96,
+    "pr": 97,
+    "sd": 98,
+    "tg": 99,
+    "kw": 100,
+    "sv": 101,
+    "ly": 102,
+    "jm": 103,
+    "tt": 104,
+    "sz": 106,
+    "om": 107,
+    "ba": 108,
+    "sy": 110,
+    "qa": 111,
+    "pa": 112,
+    "cu": 113,
+    "mr": 114,
+    "sl": 115,
+    "bb": 118,
+    "bi": 119,
+    "bj": 120,
+    "bn": 121,
+    "bs": 122,
+    "bw": 123,
+    "bz": 124,
+    "cf": 125,
+    "dm": 126,
+    "gd": 127,
+    "gy": 131,
+    "kn": 134,
+    "lr": 135,
+    "ls": 136,
+    "mw": 137,
+    "na": 138,
+    "ne": 139,
+    "rw": 140,
+    "sr": 142,
+    "mc": 144,
+    "re": 146,
+    "zm": 148,
+    "so": 149,
+    "bf": 152,
+    "lb": 153,
+    "ga": 154,
+    "al": 155,
+    "uy": 156,
+    "mu": 157,
+    "bt": 158,
+    "mv": 159,
+    "gp": 160,
+    "tm": 161,
+    "gf": 162,
+    "lc": 164,
+    "lu": 165,
+    "vc": 166,
+    "gq": 167,
+    "dj": 168,
+    "ag": 169,
+    "ky": 170,
+    "me": 171,
+    "dk": 172,
+    "ch": 173,
+    "no": 174,
+    "er": 176,
+    "ss": 177,
+    "st": 178,
+    "aw": 179,
+    "mk": 183,
+    "sc": 184,
+    "nc": 185,
+    "cv": 186,
+    "ps": 188,
+    "fj": 189,
+    "sg": 196,
 }
 
 ISO3_TO_ISO2: Dict[str, str] = {
@@ -236,6 +324,12 @@ def _merged_iso2_map() -> Dict[str, int]:
 
 def _build_id_to_iso() -> Dict[int, str]:
     reverse: Dict[int, str] = {}
+    try:
+        from backend.app.services.geo_catalog import SMSACTIVATE_ID_TO_ISO2
+        for cid, iso in SMSACTIVATE_ID_TO_ISO2.items():
+            reverse.setdefault(int(cid), iso)
+    except Exception:
+        pass
     for iso, cid in _EXTENDED_ISO2_TO_GRIZZLY.items():
         reverse.setdefault(int(cid), iso)
     for iso, cid in ISO2_TO_GRIZZLY.items():
@@ -274,6 +368,13 @@ def resolve_country_iso2(country: Union[str, int, None]) -> str:
     for alias, iso in COUNTRY_NAME_TO_ISO2.items():
         if compact == alias.replace(" ", ""):
             return iso
+    try:
+        from backend.app.services.geo_catalog import resolve_iso2
+        inferred = resolve_iso2(token)
+        if inferred:
+            return inferred
+    except Exception:
+        pass
     return lower
 
 
@@ -290,6 +391,13 @@ def resolve_grizzly_country_id(country: Union[str, int, None]) -> int:
     merged = _merged_iso2_map()
     if iso in merged:
         return int(merged[iso])
+    try:
+        from backend.app.services.geo_catalog import iso2_to_smsactivate_id
+        cid = iso2_to_smsactivate_id(iso)
+        if cid is not None:
+            return int(cid)
+    except Exception:
+        pass
     raise GrizzlySmsError(f"无法将国家 '{country}' 映射到 Grizzly country_id")
 
 
@@ -417,13 +525,23 @@ class GrizzlySmsService:
 
     query_telemetry_quota = get_balance
 
-    async def get_prices(self, country: Union[str, int] = "in", service: str = DEFAULT_SERVICE) -> Any:
-        country_id = resolve_grizzly_country_id(country)
-        raw = await self._get("getPrices", {"service": service, "country": country_id})
+    async def get_prices(
+        self,
+        country: Union[str, int, None] = None,
+        service: str = DEFAULT_SERVICE,
+    ) -> Any:
+        extra: Dict[str, Any] = {"service": service}
+        if country is not None and str(country).strip() != "":
+            extra["country"] = resolve_grizzly_country_id(country)
+        raw = await self._get("getPrices", extra)
         parsed = _parse_maybe_json(raw)
         if isinstance(parsed, (dict, list)):
             return parsed
         raise GrizzlySmsError(f"获取价格/库存失败: {raw}")
+
+    async def get_all_prices(self, service: str = DEFAULT_SERVICE) -> Any:
+        """不带 country 参数，官方返回全球所有有 Telegram 货的国家。"""
+        return await self.get_prices(country=None, service=service)
 
     def _stock_from_prices(self, data: Any, country_id: int, service: str) -> int:
         if not isinstance(data, dict):

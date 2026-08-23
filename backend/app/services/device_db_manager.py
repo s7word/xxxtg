@@ -300,13 +300,25 @@ def normalize_country(value: Optional[str]) -> Optional[str]:
 def country_display_name(code: Optional[str]) -> str:
     if not code:
         return "Unknown"
-    return COUNTRY_NAME_MAP.get(code, code.upper())
+    if code in COUNTRY_NAME_MAP:
+        return COUNTRY_NAME_MAP[code]
+    try:
+        from backend.app.services.geo_catalog import country_display_name as geo_name
+        return geo_name(code, default=str(code).upper())
+    except Exception:
+        return str(code).upper()
 
 
 def country_display_name_zh(code: Optional[str]) -> str:
     if not code:
         return ""
-    return COUNTRY_NAME_ZH_MAP.get(code, "")
+    if code in COUNTRY_NAME_ZH_MAP:
+        return COUNTRY_NAME_ZH_MAP[code]
+    try:
+        from backend.app.services.geo_catalog import country_display_name_zh as geo_name_zh
+        return geo_name_zh(code, default="")
+    except Exception:
+        return ""
 
 
 def country_dial_code(code: Optional[str]) -> str:
@@ -314,7 +326,13 @@ def country_dial_code(code: Optional[str]) -> str:
     if not code:
         return ""
     spec = COUNTRY_LANG_MAP.get(str(code).lower()) or {}
-    return str(spec.get("dial") or "")
+    if spec.get("dial"):
+        return str(spec.get("dial") or "")
+    try:
+        from backend.app.services.geo_catalog import country_dial_code as geo_dial
+        return geo_dial(code)
+    except Exception:
+        return ""
 
 
 def infer_country_from_filename(filename: str) -> Optional[str]:
@@ -343,7 +361,7 @@ def infer_country_from_stats(stats: Dict[str, Any]) -> Optional[str]:
         # es-cl / id-id 等 BCP47 后半段
         if "-" in str(top_locale):
             region = str(top_locale).split("-")[-1].lower()
-            if region in COUNTRY_NAME_MAP:
+            if region in COUNTRY_NAME_MAP or (len(region) == 2 and region.isalpha()):
                 return region
     tz_map = stats.get("tz_offsets") or {}
     if tz_map:

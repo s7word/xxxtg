@@ -22,7 +22,7 @@ import ProxyMeshView from './components/proxy/ProxyMeshView.vue'
 import SettingsView from './components/settings/SettingsView.vue'
 import DevicesView from './components/devices/DevicesView.vue'
 import { useUi } from './composables/useUi'
-import { fetchConfig } from './composables/useConfig'
+import { fetchConfig, fetchAvailableCountries } from './composables/useConfig'
 import { fetchCustomProxyList, refreshProxyPool } from './composables/useProxy'
 import {
   fetchDbStats, fetchPhonePrecheckStatus, fetchProfiles, fetchSessions, fetchTasks
@@ -51,6 +51,7 @@ const tickPolling = async () => {
 
 onMounted(() => {
   fetchConfig()
+  fetchAvailableCountries({ toast: false }).catch(() => {})
   fetchProfiles()
   fetchDbStats()
   fetchDeviceCatalog()

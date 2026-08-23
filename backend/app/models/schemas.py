@@ -292,6 +292,36 @@ class TestApiResponse(BaseModel):
     data: Optional[Dict[str, Any]] = None
 
 
+class SmsStockCountryItem(BaseModel):
+    """接码平台实时有货国家条目"""
+    code: str = Field(..., description="ISO-2 国家代码，未知 ID 时回落为平台数字 ID")
+    name: str = ""
+    name_zh: str = ""
+    dial: str = ""
+    flag: str = ""
+    stock: int = 0
+    cost: float = 0.0
+    provider: str = "grizzlysms"
+    provider_country_id: Optional[str] = None
+    lang_code: Optional[str] = None
+    system_lang_code: Optional[str] = None
+    tz_offset: Optional[int] = None
+
+
+class SmsAvailableCountriesResponse(BaseModel):
+    """GET /api/sms/available-countries 动态库存发现响应"""
+    success: bool = True
+    provider: str = "grizzlysms"
+    service: str = "tg"
+    items: List[SmsStockCountryItem] = Field(default_factory=list)
+    total_countries: int = 0
+    total_stock: int = 0
+    updated_at: float = 0.0
+    cached: bool = False
+    cache_age_seconds: float = 0.0
+    message: str = ""
+
+
 class BannedPhonesCacheStatusResponse(BaseModel):
     """本地已确认封禁号缓存状态与号段画像"""
     enabled: bool = True

@@ -2,7 +2,7 @@ import asyncio
 import os
 from pathlib import Path
 from typing import Dict, Any, List, Optional
-from fastapi import APIRouter, File, HTTPException, UploadFile, BackgroundTasks
+from fastapi import APIRouter, File, HTTPException, Query, UploadFile, BackgroundTasks
 
 from backend.app.config import ConfigManager, SESSIONS_DIR
 from backend.app.models.schemas import (
@@ -49,6 +49,7 @@ from backend.app.models.schemas import (
     DeviceDbPackResponse,
     DeviceDbToggleRequest,
     DeviceDbUpdateRequest,
+    SmsAvailableCountriesResponse,
 )
 from backend.app.services.device_profile import DeviceProfileManager
 from backend.app.services.device_db_manager import DeviceDbManager
@@ -58,6 +59,10 @@ from backend.app.services.grizzlysms import (
     GrizzlySmsService,
     PROVIDER_LABEL as GRIZZLY_PROVIDER_LABEL,
     resolve_grizzly_country_id,
+)
+from backend.app.services.sms_stock_service import (
+    SmsStockService,
+    normalize_sms_provider,
 )
 from backend.app.services.antisafety import AntiSafetyService
 from backend.app.services.reghelp import RegHelpService
@@ -222,6 +227,33 @@ async def generate_device_db(req: DeviceDbGenerateRequest):
         message=f"已合成 {pack.get('alias')}（{pack.get('sample_count')} 条 / {pack.get('country')}）",
         pack=pack,
     )
+
+# ==================== 1b. 接码平台实时有货拓扑 ====================
+@router.get(
+    "/sms/available-countries",
+    response_model=SmsAvailableCountriesResponse,
+    summary="动态获取接码平台当前有 Telegram 货的国家（按库存降序）",
+)
+async def list_sms_available_countries(
+    provider: Optional[str] = Query(
+        default=None,
+        description="grizzlysms 或 vaksms；默认读取系统当前 config.sms_provider",
+    ),
+    refresh: bool = Query(default=False, description="true 时绕过 90s 缓存强制刷新"),
+):
+    config = ConfigManager.get_instance().config
+    resolved = normalize_sms_provider(provider or getattr(config, "sms_provider", None))
+    try:
+        snap = await SmsStockService.get_available_countries(
+            provider=resolved,
+            refresh=refresh,
+            service="tg",
+            config=config,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"接码平台库存发现失败: {exc}") from exc
+    return SmsAvailableCountriesResponse(**snap.to_dict())
+
 
 # ==================== 2. 服务探针与连通性审计 ====================
 @router.post("/test/vaksms", response_model=TestApiResponse, summary="带外遥测与挑战响应通道诊断探针")

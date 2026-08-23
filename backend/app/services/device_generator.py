@@ -25,6 +25,12 @@ from backend.app.services.device_db_manager import (
     country_dial_code,
     normalize_country,
 )
+from backend.app.services.device_profile import DeviceProfileManager
+
+GENERIC_BRAND_WEIGHTS = {
+    "samsung": 30, "xiaomi": 16, "other": 12, "oppo": 10,
+    "vivo": 8, "realme": 8, "huawei": 8, "motorola": 8,
+}
 
 
 OFFICIAL_API_ID = 6
@@ -578,16 +584,71 @@ COUNTRY_SYNTH: Dict[str, Dict[str, Any]] = {
 }
 
 
+def resolve_synth_spec(country: str) -> Dict[str, Any]:
+    """已注册合成规格优先；否则按全球 ISO 推断引擎即时生成自洽规格。"""
+    code = normalize_country(country) or str(country or "").strip().lower()
+    if code == "uk":
+        code = "gb"
+    if code in COUNTRY_SYNTH:
+        spec = dict(COUNTRY_SYNTH[code])
+        spec["inferred"] = False
+        return spec
+    locale = DeviceProfileManager.infer_locale(code or country)
+    alts = []
+    for alt in locale.get("alt_system_lang_codes") or ():
+        lang = str(alt).split("-", 1)[0]
+        alts.append((lang, str(alt).lower(), 12))
+    locales = [
+        (locale.get("lang_code") or "en", locale.get("system_lang_code") or "en-us", 76),
+        *alts,
+        ("en", "en-us", 12),
+    ]
+    tz = int(locale.get("tz_offset") or 0)
+    tz_offsets = [(tz, 100)]
+    tz_range = locale.get("tz_offset_range")
+    if tz_range and len(tz_range) == 2 and tz_range[0] != tz_range[1]:
+        tz_offsets = [(int(tz_range[0]), 20), (tz, 60), (int(tz_range[1]), 20)]
+    name = locale.get("name") or country_display_name(code) or (code or "Unknown").upper()
+    return {
+        "name": name,
+        "locales": locales,
+        "tz_offsets": tz_offsets,
+        "brands": dict(GENERIC_BRAND_WEIGHTS),
+        "inferred": True,
+    }
+
+
 def list_supported_countries() -> List[Dict[str, str]]:
-    return [
-        {
+    listed: Dict[str, Dict[str, str]] = {}
+    for code, spec in COUNTRY_SYNTH.items():
+        listed[code] = {
             "code": code,
             "name": spec["name"],
             "name_zh": country_display_name_zh(code) or country_display_name(code),
             "dial": country_dial_code(code) or "",
+            "group": "",
         }
-        for code, spec in COUNTRY_SYNTH.items()
-    ]
+    try:
+        from backend.app.services.geo_catalog import iter_catalog
+        for meta in iter_catalog():
+            code = meta["code"]
+            if code in listed:
+                listed[code]["group"] = meta.get("region") or listed[code].get("group") or ""
+                if not listed[code].get("name_zh"):
+                    listed[code]["name_zh"] = meta.get("name_zh") or ""
+                if not listed[code].get("dial"):
+                    listed[code]["dial"] = meta.get("dial") or ""
+                continue
+            listed[code] = {
+                "code": code,
+                "name": meta["name"],
+                "name_zh": meta.get("name_zh") or "",
+                "dial": meta.get("dial") or "",
+                "group": meta.get("region") or "",
+            }
+    except Exception:
+        pass
+    return list(listed.values())
 
 # 设备指纹合成引擎已注册的国家全集
 SUPPORTED_COUNTRIES = tuple(COUNTRY_SYNTH.keys())
@@ -676,12 +737,12 @@ def synthesize_rows(
     brand_weights: Optional[Dict[str, int]] = None,
     seed: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
-    code = normalize_country(country)
-    if not code or code not in COUNTRY_SYNTH:
-        raise ValueError(f"暂不支持合成国家 '{country}'，可选: {', '.join(sorted(COUNTRY_SYNTH))}")
+    code = normalize_country(country) or str(country or "").strip().lower()
+    if not code:
+        raise ValueError("未指定合成国家")
+    spec = resolve_synth_spec(code)
     if count < 10 or count > 5000:
         raise ValueError("合成数量需在 10~5000 之间")
-    spec = COUNTRY_SYNTH[code]
     weights = dict(spec["brands"])
     if brand_weights:
         for key, value in brand_weights.items():
@@ -775,7 +836,8 @@ def generate_country_db(
     stats = compute_stats(rows)
     quality = assess_quality(stats, code)
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H-%M-%S")
-    origin = f"{stamp}_{COUNTRY_SYNTH[code]['name']}.db"
+    spec = resolve_synth_spec(code or country)
+    origin = f"{stamp}_{spec['name']}.db"
     stored = f"{uuid.uuid4().hex}.db"
     dest = _files_dir(root or DEVICE_DBS_DIR) / stored
     write_registrator_db(rows, dest)

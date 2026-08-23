@@ -968,3 +968,16 @@ code, pre, .mono, .font-mono {
   0%, 100% { opacity: 1; box-shadow: 0 0 6px rgba(245, 158, 11, 0.35); }
   50% { opacity: 0.55; box-shadow: 0 0 16px rgba(245, 158, 11, 0.7); }
 }
+
+/* ========== Live stock country picker ========== */
+.ce-stock-picker {
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: rgba(6, 22, 16, 0.55);
+}
+
+.ce-stock-select {
+  font-family: var(--font-sans);
+  min-height: 40px;
+}

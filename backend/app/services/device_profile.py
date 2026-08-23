@@ -259,23 +259,36 @@ class DeviceProfileManager:
         return cls._manager().aggregate_stats()
 
     @classmethod
+    def infer_locale(cls, country: str) -> Dict[str, Any]:
+        """任意 ISO-2 → 语言 / 时区 / 区号。预设表优先，其余走全球推断引擎。"""
+        code = (country or "").strip().lower()
+        if code == "uk":
+            code = "gb"
+        if code in COUNTRY_LANG_MAP:
+            spec = dict(COUNTRY_LANG_MAP[code])
+            spec["code"] = code
+            spec["locale_inferred"] = False
+            return spec
+        from backend.app.services.geo_catalog import infer_locale as infer_iso_locale
+        return infer_iso_locale(code or country)
+
+    @classmethod
     def _apply_locale(cls, profile: Dict[str, Any], country: str, sampled: Optional[Dict[str, Any]], match: str) -> None:
-        fallback = COUNTRY_LANG_MAP.get(
-            (country or "").lower(),
-            {"lang_code": "es", "system_lang_code": "es-cl", "tz_offset": -14400},
-        )
+        fallback = cls.infer_locale(country)
         sampled = sampled or {}
         keep_sampled_locale = match == "country" and sampled.get("lang_code") and sampled.get("system_lang_code")
         if keep_sampled_locale:
             profile["lang_code"] = str(sampled["lang_code"]).lower()
             profile["system_lang_code"] = str(sampled["system_lang_code"]).lower()
-            profile["tz_offset"] = int(sampled.get("tz_offset") or fallback["tz_offset"])
+            profile["tz_offset"] = int(sampled.get("tz_offset") or fallback.get("tz_offset") or 0)
             profile["locale_source"] = "pack"
             return
-        profile["lang_code"] = fallback["lang_code"]
-        profile["system_lang_code"] = fallback["system_lang_code"]
-        profile["tz_offset"] = int(fallback.get("tz_offset", -14400))
+        profile["lang_code"] = fallback.get("lang_code") or "en"
+        profile["system_lang_code"] = fallback.get("system_lang_code") or "en-us"
+        profile["tz_offset"] = int(fallback.get("tz_offset") or 0)
         profile["locale_source"] = "country_overlay"
+        if fallback.get("locale_inferred"):
+            profile["locale_source"] = "iso_inferred"
 
     @classmethod
     def get_resolved_profile(cls, app_type: str = "telegram_android", country: str = "cl") -> Dict[str, Any]:

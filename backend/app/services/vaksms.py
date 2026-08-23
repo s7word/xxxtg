@@ -77,6 +77,30 @@ class VakSmsService:
 
     query_channel_capacity = get_stock_count
 
+    async def get_all_stock_counts(self, service: str = "tg") -> Any:
+        """动态聚合当前所有有 Telegram 库存的国家。
+
+        优先 ``getCountNumbers``（全量），回落 ``getCountNumber`` 不带 country。
+        """
+        last_error = None
+        for path in ("getCountNumbers/", "getCountNumber/"):
+            try:
+                resp = await self.client.get(
+                    f"{self.BASE_URL}/{path}",
+                    params={"apiKey": self.api_key, "service": service},
+                )
+                data = resp.json()
+                if isinstance(data, dict) and data.get("error"):
+                    last_error = data.get("error")
+                    continue
+                return data
+            except Exception as exc:
+                last_error = exc
+                logger.warning("Vak-SMS 全量库存探测 %s 失败: %s", path, exc)
+        if last_error:
+            logger.warning("Vak-SMS 全量库存聚合失败: %s", last_error)
+        return {}
+
     async def get_number(self, country: str = "cl", service: str = "tg", operator: Optional[str] = None) -> Tuple[str, str]:
         """动态申请租借一个临时带外通信通道句柄"""
         params = {"apiKey": self.api_key, "service": service, "country": country}

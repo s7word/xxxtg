@@ -50,6 +50,95 @@ const form = reactive({
   sms_provider: 'grizzlysms'
 })
 
+const smsStock = reactive({
+  items: [],
+  total_countries: 0,
+  total_stock: 0,
+  updated_at: 0,
+  provider: 'grizzlysms',
+  cached: false,
+  cache_age_seconds: 0,
+  message: '',
+  loading: false,
+  error: ''
+})
+const countrySearch = ref('')
+
+export const formatStockCount = (n) => {
+  const value = Number(n) || 0
+  if (value >= 10000) return `${(value / 1000).toFixed(1).replace(/\.0$/, '')}k`
+  if (value >= 1000) return `${(value / 1000).toFixed(1).replace(/\.0$/, '')}k`
+  return String(value)
+}
+
+export const formatStockOption = (item) => {
+  if (!item) return ''
+  const flag = item.flag || ''
+  const zh = item.name_zh || item.name || ''
+  const en = item.name || ''
+  const title = zh && en && zh !== en ? `${zh} (${en})` : (zh || en || String(item.code || '').toUpperCase())
+  const dial = item.dial ? ` (+${String(item.dial).replace(/^\+/, '')})` : ''
+  const stock = formatStockCount(item.stock)
+  const cost = item.cost != null && Number(item.cost) > 0 ? ` · ${Number(item.cost).toFixed(2)}₽` : ''
+  return `${flag} ${title}${dial} · ⚡ ${stock} 货${cost}`
+}
+
+export const filteredStockCountries = computed(() => {
+  const q = String(countrySearch.value || '').trim().toLowerCase()
+  const items = smsStock.items || []
+  if (!q) return items
+  return items.filter((item) => {
+    const hay = [
+      item.code, item.name, item.name_zh, item.dial,
+      item.dial ? `+${item.dial}` : '', item.provider_country_id
+    ].join(' ').toLowerCase()
+    return hay.includes(q)
+  })
+})
+
+export const fetchAvailableCountries = async (opts = {}) => {
+  const provider = opts.provider || form.sms_provider || config.sms_provider || 'grizzlysms'
+  const refresh = !!opts.refresh
+  smsStock.loading = true
+  smsStock.error = ''
+  try {
+    const qs = new URLSearchParams({ provider })
+    if (refresh) qs.set('refresh', 'true')
+    const res = await fetch(`/api/sms/available-countries?${qs.toString()}`)
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.detail || data.message || '库存发现失败')
+    smsStock.items = data.items || []
+    smsStock.total_countries = data.total_countries || 0
+    smsStock.total_stock = data.total_stock || 0
+    smsStock.updated_at = data.updated_at || 0
+    smsStock.provider = data.provider || provider
+    smsStock.cached = !!data.cached
+    smsStock.cache_age_seconds = data.cache_age_seconds || 0
+    smsStock.message = data.message || ''
+    const codes = new Set(smsStock.items.map((item) => String(item.code || '').toLowerCase()))
+    if (smsStock.items.length) {
+      const current = String(form.country || '').toLowerCase()
+      if (!codes.has(current)) {
+        form.country = smsStock.items[0].code
+      }
+      const cfgCurrent = String(config.target_country || '').toLowerCase()
+      if (!codes.has(cfgCurrent)) {
+        config.target_country = smsStock.items[0].code
+      }
+    }
+    return data
+  } catch (e) {
+    smsStock.error = e.message
+    console.error('Fetch available countries error:', e)
+    if (opts.toast !== false) {
+      pushToast('danger', `刷新实时有货国家失败: ${e.message}`)
+    }
+    throw e
+  } finally {
+    smsStock.loading = false
+  }
+}
+
 const antisafetyBaseUrlsText = ref('')
 const antisafetyReportingBaseUrlsText = ref('')
 const reghelpBaseUrlsText = ref('')
@@ -84,6 +173,7 @@ export const fetchConfig = async () => {
     form.app_type = data.active_app_type || 'telegram_android'
     form.sms_provider = data.sms_provider || 'grizzlysms'
     syncBaseUrlsTextFromConfig()
+    fetchAvailableCountries({ provider: form.sms_provider, toast: false }).catch(() => {})
   } catch (e) {
     console.error('Fetch config error:', e)
     pushToast('danger', `读取全局配置失败: ${e.message}`)
@@ -116,6 +206,12 @@ export const saveConfig = async () => {
 export const useConfig = () => ({
   config,
   form,
+  smsStock,
+  countrySearch,
+  filteredStockCountries,
+  formatStockCount,
+  formatStockOption,
+  fetchAvailableCountries,
   antisafetyBaseUrlsText,
   antisafetyReportingBaseUrlsText,
   reghelpBaseUrlsText,

@@ -131,16 +131,13 @@
           <label class="ce-label">Grizzly SMS API Key</label>
           <input v-model="config.grizzly_sms_api_key" type="password" class="ce-input mono" placeholder="66bd4d8e5f54db073d15c2856c9a1366" />
         </div>
-        <div>
-          <label class="ce-label">默认地理拓扑区域</label>
-          <select v-model="config.target_country" class="ce-select">
-            <optgroup v-for="group in COUNTRY_GROUPS" :key="group.id" :label="group.label">
-              <option v-for="opt in group.options" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
-            </optgroup>
-          </select>
-        </div>
+        <LiveStockCountryPicker
+          v-model="config.target_country"
+          :provider="config.sms_provider"
+          label="默认地理拓扑区域（实时有货）"
+        />
         <div class="ce-tiny">
-          标准 SMS-Activate 协议 · 印度 <code>22</code> · 印尼 <code>6</code> · 智利 <code>151</code> · 加拿大 <code>36</code> · 美国 <code>187</code>。
+          国家列表由接码平台 <code>getPrices/getCountNumber</code> 动态发现，不再写死数量。
           失败路径自动 <code>setStatus=8</code> 退款。
         </div>
         <div v-if="testResults.grizzlysms" class="ce-alert" :class="testResults.grizzlysms.success ? 'is-ok' : 'is-danger'">
@@ -228,9 +225,9 @@
 </template>
 
 <script setup>
-import { COUNTRY_GROUPS } from '../../composables/useShared'
 import { useConfig } from '../../composables/useConfig'
 import { useProbes } from '../../composables/useProbes'
+import LiveStockCountryPicker from '../console/LiveStockCountryPicker.vue'
 
 const {
   config, isSavingConfig, saveConfig, reghelpBaseUrlsText,
