@@ -369,3 +369,80 @@ class TelegramAppsJobResponse(BaseModel):
 
 class TelegramAppsJobListResponse(BaseModel):
     jobs: List[TelegramAppsJobResponse]
+
+
+# ==================== Proxy-Seller 区域代理池 ====================
+
+class ProxySellerNode(BaseModel):
+    """归一化后的 Proxy-Seller 出口节点"""
+    id: Optional[Any] = None
+    order_id: Optional[Any] = None
+    proxy_type: str = "socks5"
+    addr: str
+    port: int
+    username: Optional[str] = None
+    password: Optional[str] = None
+    country: Optional[str] = None
+    country_code: Optional[str] = None
+    country_alpha3: Optional[str] = None
+    active_until: Optional[str] = None
+    status: Optional[str] = None
+    status_type: Optional[str] = None
+    can_prolong: bool = False
+    catalog_type: Optional[str] = None
+    healthy: Optional[bool] = None
+    egress_ip: Optional[str] = None
+    egress_country: Optional[str] = None
+    egress_country_code: Optional[str] = None
+    last_error: Optional[str] = None
+    checked_at: Optional[float] = None
+
+
+class ProxySellerListResponse(BaseModel):
+    success: bool
+    message: str
+    country: Optional[str] = None
+    total: int = 0
+    proxies: List[Dict[str, Any]] = Field(default_factory=list)
+    cached: bool = False
+    cache_age_seconds: Optional[float] = None
+    available_countries: List[str] = Field(default_factory=list)
+
+
+class ProxySellerAutoSelectRequest(BaseModel):
+    target_country: Optional[str] = Field(default=None, description="目标区域 ISO-2 / ISO-3 / 国家名")
+    apply_fallback: bool = Field(default=False, description="是否一键写入 config.fallback_proxy")
+    probe: bool = Field(default=False, description="是否按顺序测活后挑选")
+    allow_fallback: bool = Field(default=True, description="指定国家无节点时是否智能兜底到其它区域")
+    refresh: bool = Field(default=False, description="是否绕过本地缓存强制拉取 API")
+    api_key: Optional[str] = None
+
+
+class ProxySellerAutoSelectResponse(BaseModel):
+    success: bool
+    message: str
+    matched: bool = False
+    fallback_used: bool = False
+    applied: bool = False
+    target_country: Optional[str] = None
+    source: Optional[str] = None
+    hint: Optional[str] = None
+    proxy: Optional[Dict[str, Any]] = None
+    fallback_proxy: Optional[EgressRelayConfig] = None
+
+
+class ProxySellerTestAllRequest(BaseModel):
+    country: Optional[str] = None
+    api_key: Optional[str] = None
+    refresh: bool = False
+    limit: int = Field(default=20, ge=1, le=100)
+    concurrency: int = Field(default=4, ge=1, le=10)
+
+
+class ProxySellerTestAllResponse(BaseModel):
+    success: bool
+    message: str
+    tested: int = 0
+    healthy: int = 0
+    country: Optional[str] = None
+    results: List[Dict[str, Any]] = Field(default_factory=list)

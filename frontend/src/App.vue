@@ -87,12 +87,41 @@
             <!-- 代理模式 -->
             <div>
               <label class="block text-xs font-medium text-zinc-400 mb-1">多径出站中继网关 (Multipath Egress)</label>
-              <div v-if="config.use_proxy_seller_auto" class="p-2.5 rounded-lg bg-blue-950/30 border border-blue-800/60 text-xs text-blue-200 flex items-center justify-between">
-                <div>
-                  <div class="font-medium">多径中继网关 API 自动分配</div>
-                  <div class="text-[11px] text-zinc-400">自动分配目标区域 ({{ form.country.toUpperCase() }}) SOCKS5 中继跳点</div>
+              <div v-if="config.use_proxy_seller_auto" class="p-2.5 rounded-lg bg-blue-950/30 border border-blue-800/60 text-xs text-blue-200 space-y-2">
+                <div class="flex items-center justify-between">
+                  <div>
+                    <div class="font-medium">多径中继网关 API 自动分配</div>
+                    <div class="text-[11px] text-zinc-400">自动分配目标区域 ({{ form.country.toUpperCase() }}) SOCKS5 中继跳点</div>
+                  </div>
+                  <span class="badge badge-info">动态拓扑路由</span>
                 </div>
-                <span class="badge badge-info">动态拓扑路由</span>
+                <div v-if="matchedProxy" class="p-2 rounded-md bg-emerald-950/40 border border-emerald-800/50 text-[11px] text-emerald-100">
+                  当前国家自动分配:
+                  <span class="font-mono">{{ (matchedProxy.proxy_type || 'socks5') }}://{{ matchedProxy.addr }}:{{ matchedProxy.port }}</span>
+                  <span class="ml-1 text-emerald-300">[{{ (matchedProxy.country_code || matchedProxy.country || form.country).toString().toUpperCase() }}]</span>
+                </div>
+                <div class="flex items-center gap-2">
+                  <button @click="refreshProxyPool(form.country, true)" :disabled="testing.proxypool" class="btn-secondary text-[11px] py-1 px-2">
+                    {{ testing.proxypool ? '刷新中...' : '🔄 自动从 API 刷新区域代理池' }}
+                  </button>
+                  <button @click="previewAutoSelect(form.country)" :disabled="testing.autoselect" class="text-[11px] text-blue-300 hover:underline">
+                    查看当前国家分配
+                  </button>
+                </div>
+                <div v-if="proxyPool.length" class="max-h-28 overflow-y-auto space-y-1">
+                  <div
+                    v-for="(p, idx) in proxyPool.slice(0, 6)"
+                    :key="p.id || (p.addr + ':' + p.port + idx)"
+                    class="flex items-center justify-between gap-2 px-2 py-1 rounded bg-zinc-950/60 border border-zinc-800/80 text-[11px]"
+                  >
+                    <span class="badge badge-info">{{ (p.country_code || p.country || '?').toString().toUpperCase() }}</span>
+                    <span class="font-mono text-zinc-200 truncate">{{ p.addr }}:{{ p.port }}</span>
+                    <span class="text-zinc-400 uppercase">{{ p.proxy_type }}</span>
+                    <span :class="p.healthy === true ? 'text-emerald-400' : (p.healthy === false ? 'text-red-400' : 'text-zinc-500')">
+                      {{ p.healthy === true ? '通' : (p.healthy === false ? '断' : '待测') }}
+                    </span>
+                  </div>
+                </div>
               </div>
               <div v-else class="p-2.5 rounded-lg bg-zinc-900 border border-zinc-800 text-xs text-zinc-300 flex items-center justify-between">
                 <div>
@@ -392,9 +421,14 @@
                 <span class="text-base">🌐</span>
                 <h3 class="font-semibold text-sm text-zinc-200">多径传输出口中继网关池 (Multipath Relay / Proxy-Seller)</h3>
               </div>
-              <button @click="testProxySeller" :disabled="testing.proxyseller" class="btn-secondary text-xs py-1">
-                {{ testing.proxyseller ? '测试中...' : '⚡ 拓扑发现' }}
-              </button>
+              <div class="flex items-center gap-1.5">
+                <button @click="refreshProxyPool(config.target_country, true)" :disabled="testing.proxypool" class="btn-secondary text-xs py-1">
+                  {{ testing.proxypool ? '刷新中...' : '🔄 自动从 API 刷新区域代理池' }}
+                </button>
+                <button @click="testProxySeller" :disabled="testing.proxyseller" class="btn-secondary text-xs py-1">
+                  {{ testing.proxyseller ? '测试中...' : '⚡ 拓扑发现' }}
+                </button>
+              </div>
             </div>
 
             <div>
@@ -407,8 +441,54 @@
               <label for="autoProxy" class="text-xs text-zinc-300">节点引导时自动分配与拓扑匹配的中继跳点</label>
             </div>
 
+            <div class="flex items-center gap-2">
+              <button @click="previewAutoSelect(config.target_country, false)" :disabled="testing.autoselect" class="btn-secondary text-xs py-1">
+                {{ testing.autoselect ? '匹配中...' : '查看当前国家自动分配' }}
+              </button>
+              <button @click="previewAutoSelect(config.target_country, true)" :disabled="testing.autoselect" class="btn-secondary text-xs py-1">
+                一键设为后备代理
+              </button>
+              <button @click="testAllProxySeller" :disabled="testing.proxyall" class="btn-secondary text-xs py-1">
+                {{ testing.proxyall ? '测活中...' : '批量测活' }}
+              </button>
+            </div>
+
+            <div v-if="proxyPoolMeta.message" :class="['p-2.5 rounded-lg text-[11px]', proxyPoolMeta.success === false ? 'bg-red-950/40 border border-red-800/60 text-red-300' : 'bg-zinc-900 border border-zinc-800 text-zinc-300']">
+              {{ proxyPoolMeta.message }}
+              <span v-if="proxyPoolMeta.available_countries?.length" class="ml-1 text-zinc-500">
+                账户区域: {{ proxyPoolMeta.available_countries.join(', ') }}
+              </span>
+            </div>
+
+            <div v-if="matchedProxy" class="p-2.5 rounded-lg bg-emerald-950/30 border border-emerald-800/50 text-[11px] text-emerald-100">
+              当前 {{ (matchedProxy.country_code || config.target_country || '').toString().toUpperCase() }} 自动分配:
+              <span class="font-mono">{{ matchedProxy.proxy_type }}://{{ matchedProxy.addr }}:{{ matchedProxy.port }}</span>
+              <span v-if="matchedProxy.egress_ip" class="ml-1 text-zinc-400">出口 {{ matchedProxy.egress_ip }} {{ matchedProxy.egress_country || '' }}</span>
+            </div>
+
+            <div v-if="proxyPool.length" class="max-h-52 overflow-y-auto rounded-lg border border-zinc-800 divide-y divide-zinc-800/60">
+              <div
+                v-for="(p, idx) in proxyPool"
+                :key="p.id || (p.addr + ':' + p.port + idx)"
+                class="flex items-center justify-between gap-2 px-2.5 py-1.5 text-[11px]"
+              >
+                <div class="flex items-center gap-2 min-w-0">
+                  <span class="badge badge-info shrink-0">{{ (p.country_code || p.country_alpha3 || p.country || '?').toString().toUpperCase() }}</span>
+                  <span class="font-mono text-zinc-200 truncate">{{ p.addr }}:{{ p.port }}</span>
+                  <span class="text-zinc-500 uppercase">{{ p.proxy_type }}</span>
+                  <span :class="p.healthy === true ? 'text-emerald-400' : (p.healthy === false ? 'text-red-400' : 'text-zinc-500')">
+                    {{ p.healthy === true ? '连通' : (p.healthy === false ? '失败' : '未知') }}
+                  </span>
+                </div>
+                <button @click="setProxyAsFallback(p)" class="text-blue-400 hover:text-blue-300 shrink-0">一键设为后备代理</button>
+              </div>
+            </div>
+
             <div v-if="testResults.proxyseller" :class="['p-3 rounded-lg text-xs', testResults.proxyseller.success ? 'bg-green-950/40 border border-green-800/60 text-green-300' : 'bg-red-950/40 border border-red-800/60 text-red-300']">
               {{ testResults.proxyseller.message }}
+            </div>
+            <div v-if="testResults.proxyall" :class="['p-3 rounded-lg text-xs', testResults.proxyall.success ? 'bg-green-950/40 border border-green-800/60 text-green-300' : 'bg-red-950/40 border border-red-800/60 text-red-300']">
+              {{ testResults.proxyall.message }}
             </div>
           </div>
 
@@ -937,6 +1017,9 @@ const testing = reactive({
   antisafety: false,
   reghelp: false,
   proxyseller: false,
+  proxypool: false,
+  autoselect: false,
+  proxyall: false,
   connectivity: false
 })
 
@@ -945,8 +1028,18 @@ const testResults = reactive({
   antisafety: null,
   reghelp: null,
   proxyseller: null,
+  proxyall: null,
   connectivity: null
 })
+
+const proxyPool = ref([])
+const proxyPoolMeta = reactive({
+  success: null,
+  message: '',
+  available_countries: [],
+  cached: false
+})
+const matchedProxy = ref(null)
 
 const isStartingTask = ref(false)
 const isSavingConfig = ref(false)
@@ -1064,7 +1157,19 @@ const fetchSessions = async () => {
 
 const startRegistrationTask = async () => {
   isStartingTask.value = true
+  const bootLogs = []
   try {
+    if (config.use_proxy_seller_auto) {
+      const preview = await previewAutoSelect(form.country, false)
+      if (preview?.proxy) {
+        matchedProxy.value = preview.proxy
+        bootLogs.push(
+          `[${new Date().toLocaleTimeString()}] [多径中继网关] 启动前已匹配 ${form.country.toUpperCase()} 区域代理: ${preview.proxy.proxy_type || 'socks5'}://${preview.proxy.addr}:${preview.proxy.port}`
+        )
+      } else if (preview?.message) {
+        bootLogs.push(`[${new Date().toLocaleTimeString()}] [多径中继网关] ${preview.message}`)
+      }
+    }
     const res = await fetch('/api/register/start', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1077,7 +1182,10 @@ const startRegistrationTask = async () => {
     activeTask.value = {
       task_id: data.task_id,
       status: 'pending',
-      logs: [`[${new Date().toLocaleTimeString()}] 虚拟节点任务 ${data.task_id} 已提交至状态机编排引擎...`]
+      logs: [
+        ...bootLogs,
+        `[${new Date().toLocaleTimeString()}] 虚拟节点任务 ${data.task_id} 已提交至状态机编排引擎...`
+      ]
     }
     await fetchTasks()
   } catch (e) {
@@ -1174,10 +1282,106 @@ const testProxySeller = async () => {
       body: JSON.stringify({ api_key: config.proxy_seller_key, country: config.target_country })
     })
     testResults.proxyseller = await res.json()
+    if (testResults.proxyseller?.data?.proxies) {
+      proxyPool.value = testResults.proxyseller.data.proxies
+    }
   } catch (e) {
     testResults.proxyseller = { success: false, message: e.message }
   } finally {
     testing.proxyseller = false
+  }
+}
+
+const refreshProxyPool = async (country, refresh = true) => {
+  testing.proxypool = true
+  try {
+    const params = new URLSearchParams()
+    if (country) params.set('country', country)
+    if (refresh) params.set('refresh', 'true')
+    const res = await fetch(`/api/proxy-seller/proxies?${params.toString()}`)
+    const data = await res.json()
+    proxyPool.value = data.proxies || []
+    proxyPoolMeta.success = data.success
+    proxyPoolMeta.message = data.message || ''
+    proxyPoolMeta.available_countries = data.available_countries || []
+    proxyPoolMeta.cached = !!data.cached
+    const regional = (data.proxies || []).find(p => {
+      const code = String(p.country_code || p.country || '').toLowerCase()
+      return !country || code.includes(String(country).toLowerCase())
+    })
+    if (regional) matchedProxy.value = regional
+    return data
+  } catch (e) {
+    proxyPoolMeta.success = false
+    proxyPoolMeta.message = e.message
+    return null
+  } finally {
+    testing.proxypool = false
+  }
+}
+
+const previewAutoSelect = async (country, applyFallback = false) => {
+  testing.autoselect = true
+  try {
+    const res = await fetch('/api/proxy-seller/auto-select', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        target_country: country,
+        apply_fallback: applyFallback,
+        probe: false,
+        allow_fallback: true,
+        api_key: config.proxy_seller_key
+      })
+    })
+    const data = await res.json()
+    proxyPoolMeta.success = data.success
+    proxyPoolMeta.message = data.message || ''
+    if (data.proxy) matchedProxy.value = data.proxy
+    if (data.fallback_proxy) Object.assign(config.fallback_proxy, data.fallback_proxy)
+    return data
+  } catch (e) {
+    proxyPoolMeta.success = false
+    proxyPoolMeta.message = e.message
+    return { success: false, message: e.message }
+  } finally {
+    testing.autoselect = false
+  }
+}
+
+const setProxyAsFallback = async (proxy) => {
+  config.fallback_proxy.proxy_type = proxy.proxy_type || 'socks5'
+  config.fallback_proxy.addr = proxy.addr
+  config.fallback_proxy.port = Number(proxy.port)
+  config.fallback_proxy.username = proxy.username || ''
+  config.fallback_proxy.password = proxy.password || ''
+  matchedProxy.value = proxy
+  await saveConfig()
+}
+
+const testAllProxySeller = async () => {
+  testing.proxyall = true
+  testResults.proxyall = null
+  try {
+    const res = await fetch('/api/proxy-seller/test-all', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        country: config.target_country,
+        api_key: config.proxy_seller_key,
+        refresh: false,
+        limit: 20
+      })
+    })
+    const data = await res.json()
+    testResults.proxyall = data
+    if (data.results) proxyPool.value = data.results
+    proxyPoolMeta.message = data.message || ''
+    proxyPoolMeta.success = data.success
+  } catch (e) {
+    testResults.proxyall = { success: false, message: e.message }
+  } finally {
+    testing.proxyall = false
   }
 }
 
@@ -1384,6 +1588,7 @@ onMounted(() => {
   fetchTasks()
   fetchSessions()
   fetchVaultAccounts()
+  refreshProxyPool('', false)
   pollTimer = setInterval(() => {
     fetchTasks()
   }, 2000)

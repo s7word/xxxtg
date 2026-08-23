@@ -140,6 +140,100 @@ class RegistrationOrchestrator:
         )
 
     @classmethod
+    async def _resolve_proxy_seller_auto(
+        cls,
+        config,
+        target_country: str,
+        task_id: str,
+        manager: RegistrationTaskManager,
+    ) -> Optional[Dict[str, Any]]:
+        """当 use_proxy_seller_auto 开启时，按目标国家自动匹配并测活 Proxy-Seller 区域代理。
+
+        选中的动态代理会同时注入 MTProto 通道、Attestation 网关以及 RecaptchaMobile 解题通道，
+        以保证手机号国家、语言、时区与出口 IP 拓扑对齐。
+        """
+        from backend.app.services.proxyseller import ProxySellerService, format_proxy_endpoint
+
+        await manager.append_log(
+            task_id,
+            f"[多径中继网关] 正在通过 Proxy-Seller API 检索 {target_country.upper()} 区域代理..."
+        )
+        ps_svc = ProxySellerService(config.proxy_seller_key)
+        try:
+            regional = await ps_svc.get_proxy_list(country=target_country, refresh=True)
+            if regional:
+                selection = await ps_svc.select_best_proxy(
+                    target_country=target_country,
+                    probe=True,
+                    allow_fallback=False,
+                    refresh=False,
+                    max_probes=min(3, len(regional)),
+                )
+                chosen = selection.get("proxy")
+                if chosen:
+                    endpoint = format_proxy_endpoint(chosen)
+                    await manager.append_log(
+                        task_id,
+                        f"[多径中继网关] 成功从 Proxy-Seller API 自动匹配到 {target_country.upper()} "
+                        f"区域代理: {endpoint}"
+                    )
+                    if chosen.get("egress_ip") or chosen.get("egress_country"):
+                        await manager.append_log(
+                            task_id,
+                            f"[多径中继网关] 出口拓扑对齐: IP={chosen.get('egress_ip') or '-'} "
+                            f"国家={chosen.get('egress_country') or chosen.get('country') or target_country.upper()} "
+                            f"(手机号区域/语言/时区将按 {target_country.upper()} 对齐)"
+                        )
+                    return chosen
+                await manager.append_log(
+                    task_id,
+                    f"[多径中继网关] 已检索到 {len(regional)} 个 {target_country.upper()} "
+                    f"节点但未能完成测活选择，回退至列表首个节点"
+                )
+                first = regional[0]
+                await manager.append_log(
+                    task_id,
+                    f"[多径中继网关] 成功从 Proxy-Seller API 自动匹配到 {target_country.upper()} "
+                    f"区域代理: {format_proxy_endpoint(first)}"
+                )
+                return first
+
+            await manager.append_log(
+                task_id,
+                f"[多径中继网关] 目标区域 {target_country.upper()} 暂无可用 Proxy-Seller 代理，"
+                "尝试智能兜底到账户内其它活跃区域..."
+            )
+            fallback_sel = await ps_svc.select_best_proxy(
+                target_country=target_country,
+                probe=False,
+                allow_fallback=True,
+                refresh=False,
+            )
+            chosen = fallback_sel.get("proxy")
+            if chosen and fallback_sel.get("fallback_used"):
+                other = (chosen.get("country_code") or chosen.get("country") or "UNKNOWN").upper()
+                await manager.append_log(
+                    task_id,
+                    f"[多径中继网关] {target_country.upper()} 无匹配节点，已智能兜底至 {other} "
+                    f"区域代理: {format_proxy_endpoint(chosen)}"
+                )
+                return chosen
+            await manager.append_log(
+                task_id,
+                fallback_sel.get("hint")
+                or f"[多径中继网关] Proxy-Seller 未返回可用节点，将回退至静态后备中继"
+            )
+            return None
+        except Exception as exc:
+            await manager.append_log(
+                task_id,
+                f"[多径中继网关] 动态分配未成功 ({exc})，回退至静态后备中继"
+            )
+            return None
+        finally:
+            await ps_svc.close()
+
+    @classmethod
     async def perform_handshake(cls, client: TelegramClient, profile: Dict[str, Any], task_id: str, manager: RegistrationTaskManager):
         """执行标准端点握手序列与协议状态对齐"""
         await manager.append_log(task_id, "开始执行协议端点初始化握手序列...")
@@ -254,23 +348,23 @@ class RegistrationOrchestrator:
 
         sms_svc = VakSmsService(config.vak_sms_api_key)
 
-        # 动态出口中继网关调度
+        # 动态出口中继网关调度：优先按手机号国家 target_country 从 Proxy-Seller 自动匹配
         active_proxy = proxy_override
         if not active_proxy and config.use_proxy_seller_auto and config.proxy_seller_key:
-            try:
-                await manager.append_log(task_id, f"尝试通过多径中继网关自动租借 {target_country.upper()} 出口跳点...")
-                from backend.app.services.proxyseller import ProxySellerService
-                ps_svc = ProxySellerService(config.proxy_seller_key)
-                fetched_proxies = await ps_svc.get_proxy_list(country=target_country)
-                if fetched_proxies:
-                    active_proxy = fetched_proxies[0]
-                    await manager.append_log(task_id, f"已动态分配中继跳点: {active_proxy['addr']}:{active_proxy['port']}")
-                await ps_svc.close()
-            except Exception as e:
-                await manager.append_log(task_id, f"中继网关动态分配未成功 ({e})，回退至静态后备中继")
+            active_proxy = await cls._resolve_proxy_seller_auto(
+                config=config,
+                target_country=target_country,
+                task_id=task_id,
+                manager=manager,
+            )
 
         if not active_proxy:
             active_proxy = config.fallback_proxy.model_dump()
+            await manager.append_log(
+                task_id,
+                f"[多径中继网关] 使用静态后备中继 {active_proxy.get('proxy_type', 'socks5')}://"
+                f"{active_proxy.get('addr')}:{active_proxy.get('port')}"
+            )
 
         # 统一 Attestation / Push 凭证高可用网关：按 config.attestation_provider_mode 策略
         # 在 REGHelp 与 AntiSafety 两个独立提供源之间自动选择主备顺序并容灾切换

@@ -1,7 +1,7 @@
 import asyncio
 import os
 from pathlib import Path
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 
 from backend.app.config import ConfigManager, SESSIONS_DIR
@@ -20,6 +20,11 @@ from backend.app.models.schemas import (
     TelegramAppsApplyRequest,
     TelegramAppsJobResponse,
     TelegramAppsJobListResponse,
+    ProxySellerListResponse,
+    ProxySellerAutoSelectRequest,
+    ProxySellerAutoSelectResponse,
+    ProxySellerTestAllRequest,
+    ProxySellerTestAllResponse,
 )
 from backend.app.services.device_profile import DeviceProfileManager
 from backend.app.services.vaksms import VakSmsService
@@ -195,6 +200,132 @@ async def test_proxy_connectivity(proxy_data: Dict[str, Any]):
         service="Relay-Connectivity",
         message=f"中继链路探测失败: {res.get('error')}"
     )
+
+
+def _proxy_seller_service(api_key: Optional[str] = None) -> ProxySellerService:
+    config = ConfigManager.get_instance().config
+    key = (api_key or config.proxy_seller_key or "").strip()
+    if not key:
+        raise HTTPException(status_code=400, detail="未配置 Proxy-Seller API Key")
+    return ProxySellerService(key)
+
+
+def _available_countries(proxies: List[Dict[str, Any]]) -> List[str]:
+    codes = []
+    seen = set()
+    for item in proxies:
+        label = (item.get("country_code") or item.get("country_alpha3") or item.get("country") or "").upper()
+        if label and label not in seen:
+            seen.add(label)
+            codes.append(label)
+    return codes
+
+
+@router.get("/proxy-seller/proxies", response_model=ProxySellerListResponse, summary="检索 Proxy-Seller 区域代理池")
+async def list_proxy_seller_proxies(country: Optional[str] = None, refresh: bool = False, api_key: Optional[str] = None):
+    """列出账户下全部或指定区域的代理，附带缓存健康状态与地理归属。"""
+    svc = _proxy_seller_service(api_key)
+    try:
+        proxies = await svc.get_proxy_list(country=country, refresh=refresh)
+        all_items = await svc.get_proxy_list(country=None, refresh=False)
+        meta = svc.cache_meta()
+        scope = (country or "ALL").upper()
+        return ProxySellerListResponse(
+            success=True,
+            message=f"成功检索到 {len(proxies)} 个 {scope} 区域出口中继跳点",
+            country=country,
+            total=len(proxies),
+            proxies=proxies,
+            cached=bool(meta.get("cached")) and not refresh,
+            cache_age_seconds=meta.get("cache_age_seconds"),
+            available_countries=_available_countries(all_items),
+        )
+    except Exception as e:
+        return ProxySellerListResponse(
+            success=False,
+            message=f"检索 Proxy-Seller 代理池失败: {e}",
+            country=country,
+            total=0,
+            proxies=[],
+        )
+    finally:
+        await svc.close()
+
+
+@router.post("/proxy-seller/auto-select", response_model=ProxySellerAutoSelectResponse, summary="按目标国家自动挑选并可选写入后备代理")
+async def auto_select_proxy_seller(req: ProxySellerAutoSelectRequest):
+    """给定 target_country，自动挑选该区域最佳/可用代理；可一键应用为 fallback_proxy。"""
+    config_mgr = ConfigManager.get_instance()
+    svc = _proxy_seller_service(req.api_key)
+    try:
+        target = (req.target_country or config_mgr.config.target_country or "").strip()
+        selection = await svc.select_best_proxy(
+            target_country=target,
+            probe=req.probe,
+            allow_fallback=req.allow_fallback,
+            refresh=req.refresh,
+        )
+        applied = False
+        fallback = None
+        proxy = selection.get("proxy")
+        if req.apply_fallback and proxy:
+            current = config_mgr.config.model_dump()
+            current["fallback_proxy"] = {
+                "proxy_type": proxy.get("proxy_type") or "socks5",
+                "addr": proxy.get("addr"),
+                "port": int(proxy.get("port")),
+                "username": proxy.get("username"),
+                "password": proxy.get("password"),
+            }
+            saved = config_mgr.save_config(AppConfigModel(**current))
+            fallback = saved.fallback_proxy
+            applied = True
+            selection["message"] = (
+                f"{selection.get('message')}；已一键写入 fallback_proxy "
+                f"{proxy.get('addr')}:{proxy.get('port')}"
+            )
+        return ProxySellerAutoSelectResponse(
+            success=bool(selection.get("success")),
+            message=selection.get("message") or "未匹配到可用代理",
+            matched=bool(selection.get("matched")),
+            fallback_used=bool(selection.get("fallback_used")),
+            applied=applied,
+            target_country=target,
+            source=selection.get("source"),
+            hint=selection.get("hint"),
+            proxy=proxy,
+            fallback_proxy=fallback,
+        )
+    except Exception as e:
+        return ProxySellerAutoSelectResponse(
+            success=False,
+            message=f"自动挑选区域代理失败: {e}",
+            target_country=req.target_country,
+        )
+    finally:
+        await svc.close()
+
+
+@router.post("/proxy-seller/test-all", response_model=ProxySellerTestAllResponse, summary="批量测活 Proxy-Seller 代理出口")
+async def test_all_proxy_seller(req: ProxySellerTestAllRequest):
+    """批量测试连通性，并回写每个节点的出口 IP / 国家。"""
+    svc = _proxy_seller_service(req.api_key)
+    try:
+        result = await svc.test_all(
+            country=req.country,
+            refresh=req.refresh,
+            limit=req.limit,
+            concurrency=req.concurrency,
+        )
+        return ProxySellerTestAllResponse(**result)
+    except Exception as e:
+        return ProxySellerTestAllResponse(
+            success=False,
+            message=f"批量测活失败: {e}",
+            country=req.country,
+        )
+    finally:
+        await svc.close()
 
 # ==================== 3. 虚拟节点引导任务调度 ====================
 @router.post("/register/start", response_model=RegisterTaskResponse, summary="触发边缘节点引导任务")
