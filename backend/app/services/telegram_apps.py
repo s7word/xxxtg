@@ -355,6 +355,18 @@ class TelegramAppsHelper:
         country = infer_country_from_phone(phone)
         config = ConfigManager.get_instance().config
         try:
+            from backend.app.services.proxy_manager import select_custom_proxy
+
+            custom = select_custom_proxy(country) if country else None
+            if custom:
+                chosen = _slim_proxy(custom)
+                if chosen:
+                    chosen["inferred_country"] = country
+                    chosen["selection_source"] = "custom_pool"
+                    return chosen
+        except Exception as exc:
+            logger.warning("自建代理池按手机号匹配失败（%s）: %s", phone, exc)
+        try:
             svc = ProxySellerService(getattr(config, "proxy_seller_key", "") or "")
             try:
                 selection = await svc.select_best_proxy(

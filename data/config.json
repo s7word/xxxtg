@@ -17,6 +17,7 @@
     "username": "2c131619348a4a7c",
     "password": "aU9dcl6IekEYLmtv"
   },
+  "custom_proxies": [],
   "default_2fa_password": "Password@2026!Sec",
   "auto_set_2fa": true,
   "custom_device_profiles": [],

@@ -140,6 +140,46 @@ class RegistrationOrchestrator:
         )
 
     @classmethod
+    async def _resolve_custom_proxy(
+        cls,
+        config,
+        target_country: str,
+        task_id: str,
+        manager: RegistrationTaskManager,
+    ) -> Optional[Dict[str, Any]]:
+        """优先从用户自建代理池按目标国家匹配节点。"""
+        from backend.app.services.proxy_manager import custom_pool_summary, select_custom_proxy
+        from backend.app.services.proxyseller import format_proxy_endpoint
+
+        if not getattr(config, "custom_proxies", None):
+            return None
+        summary = custom_pool_summary(target_country)
+        if not summary.get("total"):
+            return None
+        chosen = select_custom_proxy(target_country)
+        if not chosen:
+            await manager.append_log(
+                task_id,
+                f"[自建代理池] 已载入 {summary['total']} 条自定义代理，"
+                f"但没有匹配 {target_country.upper()} 的节点"
+                + (f"（池内区域: {', '.join(summary.get('countries') or [])}）" if summary.get("countries") else "")
+            )
+            return None
+        await manager.append_log(
+            task_id,
+            f"[自建代理池] 成功匹配 {target_country.upper()} 区域代理: {format_proxy_endpoint(chosen)}"
+            + (f" 延迟={chosen.get('latency_ms')}ms" if chosen.get("latency_ms") is not None else "")
+        )
+        if chosen.get("egress_ip") or chosen.get("egress_country") or chosen.get("country"):
+            await manager.append_log(
+                task_id,
+                f"[自建代理池] 出口拓扑: IP={chosen.get('egress_ip') or '-'} "
+                f"国家={chosen.get('egress_country') or chosen.get('country') or target_country.upper()} "
+                f"城市={chosen.get('city') or '-'}"
+            )
+        return chosen
+
+    @classmethod
     async def _resolve_proxy_seller_auto(
         cls,
         config,
@@ -155,12 +195,13 @@ class RegistrationOrchestrator:
         from backend.app.services.proxyseller import (
             ProxySellerService,
             format_proxy_endpoint,
+            is_custom_proxy,
             is_static_residential,
         )
 
         await manager.append_log(
             task_id,
-            f"[多径中继网关] 正在检索 {target_country.upper()} 区域代理（API + 内置静态住宅池）..."
+            f"[多径中继网关] 正在检索 {target_country.upper()} 区域代理（自建池 + API + 内置静态住宅池）..."
         )
         ps_svc = ProxySellerService(config.proxy_seller_key)
         try:
@@ -176,11 +217,12 @@ class RegistrationOrchestrator:
                 chosen = selection.get("proxy")
                 if chosen:
                     endpoint = format_proxy_endpoint(chosen)
-                    origin = (
-                        "内置静态住宅代理池"
-                        if is_static_residential(chosen)
-                        else "Proxy-Seller API"
-                    )
+                    if is_custom_proxy(chosen):
+                        origin = "用户自建代理池"
+                    elif is_static_residential(chosen):
+                        origin = "内置静态住宅代理池"
+                    else:
+                        origin = "Proxy-Seller API"
                     await manager.append_log(
                         task_id,
                         f"[多径中继网关] 成功从 {origin} 自动匹配到 {target_country.upper()} "
@@ -200,11 +242,12 @@ class RegistrationOrchestrator:
                     f"节点但未能完成测活选择，回退至列表首个节点"
                 )
                 first = regional[0]
-                origin = (
-                    "内置静态住宅代理池"
-                    if is_static_residential(first)
-                    else "Proxy-Seller API"
-                )
+                if is_custom_proxy(first):
+                    origin = "用户自建代理池"
+                elif is_static_residential(first):
+                    origin = "内置静态住宅代理池"
+                else:
+                    origin = "Proxy-Seller API"
                 await manager.append_log(
                     task_id,
                     f"[多径中继网关] 成功从 {origin} 自动匹配到 {target_country.upper()} "
@@ -362,9 +405,16 @@ class RegistrationOrchestrator:
 
         sms_svc = VakSmsService(config.vak_sms_api_key)
 
-        # 动态出口中继网关调度：优先按手机号国家 target_country 从 Proxy-Seller 自动匹配
+        # 动态出口中继网关调度：自建池按国家优先，再走 Proxy-Seller API / 内置静态住宅
         active_proxy = proxy_override
-        if not active_proxy and config.use_proxy_seller_auto and config.proxy_seller_key:
+        if not active_proxy:
+            active_proxy = await cls._resolve_custom_proxy(
+                config=config,
+                target_country=target_country,
+                task_id=task_id,
+                manager=manager,
+            )
+        if not active_proxy and config.use_proxy_seller_auto:
             active_proxy = await cls._resolve_proxy_seller_auto(
                 config=config,
                 target_country=target_country,

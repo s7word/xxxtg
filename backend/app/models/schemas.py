@@ -20,6 +20,27 @@ class EgressRelayConfig(BaseModel):
 ProxyConfig = EgressRelayConfig
 
 
+class CustomProxyItem(BaseModel):
+    """用户手动粘贴并持久化的自建代理节点"""
+    id: Optional[str] = None
+    proxy_type: str = Field(default="socks5", description="socks5 / http / socks4")
+    addr: str
+    port: int
+    username: Optional[str] = None
+    password: Optional[str] = None
+    country: Optional[str] = None
+    country_code: Optional[str] = None
+    country_alpha3: Optional[str] = None
+    city: Optional[str] = None
+    egress_ip: Optional[str] = None
+    latency_ms: Optional[float] = None
+    healthy: Optional[bool] = None
+    last_error: Optional[str] = None
+    checked_at: Optional[float] = None
+    source: str = "custom"
+    raw_line: Optional[str] = None
+
+
 class AppConfigModel(BaseModel):
     """系统全局仿真实验与节点编排配置"""
     active_app_type: str = Field(
@@ -57,6 +78,10 @@ class AppConfigModel(BaseModel):
     fallback_proxy: EgressRelayConfig = Field(
         default_factory=EgressRelayConfig,
         description="静态后备中继网关配置"
+    )
+    custom_proxies: List[CustomProxyItem] = Field(
+        default_factory=list,
+        description="用户手动粘贴导入的自建代理池 (Custom Proxy Pool)"
     )
     default_2fa_password: str = Field(
         default="Password@2026!Sec",
@@ -461,3 +486,83 @@ class ProxySellerTestAllResponse(BaseModel):
     healthy: int = 0
     country: Optional[str] = None
     results: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+# ==================== 自定义代理池 (Custom Proxy Pool) ====================
+
+class CustomProxyListResponse(BaseModel):
+    success: bool
+    message: str
+    total: int = 0
+    healthy: int = 0
+    country: Optional[str] = None
+    countries: List[str] = Field(default_factory=list)
+    proxies: List[Dict[str, Any]] = Field(default_factory=list)
+    fallback_proxy: Optional[EgressRelayConfig] = None
+
+
+class CustomProxyImportRequest(BaseModel):
+    text: str = Field(..., description="多行代理文本，支持 host:port:user:pass / host;port;user;pass / user:pass@host:port / scheme://...")
+    probe: bool = Field(default=False, description="导入后是否立即并发测活")
+    replace: bool = Field(default=False, description="是否用本次解析结果整表替换自建池")
+    default_protocol: str = Field(default="socks5", description="无协议前缀时的默认协议")
+    default_country: Optional[str] = Field(default=None, description="可选：为本批未测活节点预标注国家 ISO-2")
+    concurrency: int = Field(default=4, ge=1, le=16)
+
+
+class CustomProxyImportResponse(BaseModel):
+    success: bool
+    message: str
+    parsed: int = 0
+    imported: int = 0
+    updated: int = 0
+    skipped: List[str] = Field(default_factory=list)
+    skipped_count: int = 0
+    total: int = 0
+    proxies: List[Dict[str, Any]] = Field(default_factory=list)
+    probe: Optional[Dict[str, Any]] = None
+
+
+class CustomProxyTestAllRequest(BaseModel):
+    concurrency: int = Field(default=4, ge=1, le=16)
+    limit: Optional[int] = Field(default=None, ge=1, le=500)
+
+
+class CustomProxyTestAllResponse(BaseModel):
+    success: bool
+    message: str
+    tested: int = 0
+    healthy: int = 0
+    results: List[Dict[str, Any]] = Field(default_factory=list)
+    proxies: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+class CustomProxySetFallbackRequest(BaseModel):
+    proxy_id: Optional[str] = None
+    addr: Optional[str] = None
+    port: Optional[int] = None
+    username: Optional[str] = None
+
+
+class CustomProxySetFallbackResponse(BaseModel):
+    success: bool
+    message: str
+    proxy: Optional[Dict[str, Any]] = None
+    fallback_proxy: Optional[EgressRelayConfig] = None
+
+
+class CustomProxyDeleteRequest(BaseModel):
+    proxy_id: Optional[str] = None
+    addr: Optional[str] = None
+    port: Optional[int] = None
+    username: Optional[str] = None
+    clear_all: bool = False
+
+
+class CustomProxyDeleteResponse(BaseModel):
+    success: bool
+    message: str
+    deleted: int = 0
+    remaining: int = 0
+    cleared: bool = False
+    proxy: Optional[Dict[str, Any]] = None

@@ -441,6 +441,96 @@ def is_static_residential(proxy: Optional[Dict[str, Any]]) -> bool:
     )
 
 
+def is_custom_proxy(proxy: Optional[Dict[str, Any]]) -> bool:
+    if not proxy:
+        return False
+    return (
+        _norm(proxy.get("source")) == "custom"
+        or _norm(proxy.get("catalog_type")) == "custom"
+        or str(proxy.get("id") or "").startswith("custom-")
+    )
+
+
+def normalize_custom_proxy_item(item: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """把用户粘贴/持久化的自定义代理归一化为调度结构。"""
+    if not isinstance(item, dict):
+        return None
+    addr = item.get("addr") or item.get("ip") or item.get("host")
+    port = _as_int(item.get("port"))
+    if not addr or not port:
+        return None
+    username = item.get("username") or item.get("login") or item.get("user")
+    password = item.get("password") or item.get("pass")
+    country_name = item.get("country") or item.get("egress_country") or item.get("country_name")
+    alpha2 = item.get("country_code") or item.get("egress_country_code") or item.get("iso2")
+    alpha3 = item.get("country_alpha3") or item.get("alpha3")
+    if not alpha2 and country_name:
+        aliases = expand_country_aliases(str(country_name))
+        for iso2 in COUNTRY_PROFILES:
+            if iso2 in aliases:
+                alpha2 = iso2
+                break
+    normalized = normalize_proxy_item(
+        {
+            "id": item.get("id"),
+            "ip": addr,
+            "protocol": item.get("proxy_type") or item.get("protocol") or "socks5",
+            "port": port,
+            "login": username,
+            "password": password,
+            "country": country_name,
+            "country_alpha3": alpha3,
+            "country_code": _norm(alpha2) or None,
+            "status": item.get("status") or ("ACTIVE" if item.get("healthy") else "custom"),
+            "status_type": item.get("status_type") or ("ACTIVE" if item.get("healthy") else "CUSTOM"),
+            "type": "custom",
+        },
+        bucket="custom",
+    )
+    if not normalized:
+        return None
+    if not normalized.get("id"):
+        user = _norm(username)
+        ident = f"{addr}:{port}:{user}" if user else f"{addr}:{port}"
+        normalized["id"] = f"custom-{ident}"
+    normalized["source"] = "custom"
+    normalized["region"] = _norm(alpha2) or normalized.get("country_code")
+    normalized["city"] = item.get("city")
+    normalized["healthy"] = item.get("healthy")
+    normalized["egress_ip"] = item.get("egress_ip") or item.get("ip")
+    normalized["egress_country"] = item.get("egress_country") or country_name
+    normalized["egress_country_code"] = _norm(item.get("egress_country_code") or alpha2) or None
+    normalized["latency_ms"] = item.get("latency_ms")
+    normalized["last_error"] = item.get("last_error") or item.get("error")
+    normalized["checked_at"] = item.get("checked_at")
+    normalized["raw_line"] = item.get("raw_line")
+    return normalized
+
+
+def load_custom_proxy_items() -> List[Dict[str, Any]]:
+    """从全局配置读取用户自建代理池。配置尚未就绪时返回空列表。"""
+    try:
+        from backend.app.config import ConfigManager
+
+        raw_items = getattr(ConfigManager.get_instance().config, "custom_proxies", None) or []
+    except Exception:
+        return []
+    collected: List[Dict[str, Any]] = []
+    for item in raw_items:
+        data = item.model_dump() if hasattr(item, "model_dump") else dict(item)
+        normalized = normalize_custom_proxy_item(data)
+        if normalized:
+            collected.append(normalized)
+    return collected
+
+
+def custom_residential_count(country: Optional[str] = None) -> int:
+    items = load_custom_proxy_items()
+    if country:
+        items = [item for item in items if match_proxy_country(item, country)]
+    return len(items)
+
+
 class ProxySellerService:
     """多径传输出口中继网关服务 (Multipath Egress Relay Gateway Provider)"""
 
@@ -473,6 +563,10 @@ class ProxySellerService:
 
     def invalidate_cache(self) -> None:
         self._pool_cache.pop(self.api_key, None)
+
+    @classmethod
+    def invalidate_all_caches(cls) -> None:
+        cls._pool_cache.clear()
 
     def _raise_api_error(self, data: Dict[str, Any]) -> None:
         errors = data.get("errors") or []
@@ -551,25 +645,38 @@ class ProxySellerService:
                     logger.warning("Proxy-Seller API 不可用（%s）", api_error)
 
         static_items = builtin_static_residential_items() if self.include_static else []
-        items = merge_proxy_pools(api_items, static_items)
+        custom_items = load_custom_proxy_items()
+        # 自建池优先：同一 identity 时保留用户粘贴的节点及其测活结果
+        items = merge_proxy_pools(custom_items, api_items, static_items)
         if not items:
             if api_error:
                 raise RuntimeError(api_error)
-            raise RuntimeError("Proxy-Seller 账户下没有检索到活跃代理，且未启用内置静态住宅池")
+            raise RuntimeError("Proxy-Seller 账户下没有检索到活跃代理，且未启用内置静态住宅池/自建代理池")
 
-        source = "api+static" if api_items and static_items else (
-            "static_residential" if static_items and not api_items else "api"
-        )
+        parts = []
+        if custom_items:
+            parts.append("custom")
+        if api_items:
+            parts.append("api")
+        if static_items:
+            parts.append("static")
+        source = "+".join(parts) if parts else "empty"
+        if source == "custom":
+            source = "custom_pool"
+        elif source == "static":
+            source = "static_residential"
         entry = self._cache_entry()
         entry["items"] = items
         entry["fetched_at"] = time.time()
         entry["api_error"] = api_error
         entry["api_count"] = len(api_items)
         entry["static_count"] = len(static_items)
+        entry["custom_count"] = len(custom_items)
         entry["source"] = source
         logger.info(
-            "已刷新出口中继池: 合计 %s 个节点 (API=%s, 静态住宅=%s, source=%s)",
+            "已刷新出口中继池: 合计 %s 个节点 (自建=%s, API=%s, 静态住宅=%s, source=%s)",
             len(items),
+            len(custom_items),
             len(api_items),
             len(static_items),
             source,
@@ -593,12 +700,26 @@ class ProxySellerService:
         view = dict(proxy)
         view.pop("raw", None)
         health = self._health.get(proxy_identity(proxy)) or {}
-        view["healthy"] = health.get("healthy")
-        view["egress_ip"] = health.get("egress_ip")
-        view["egress_country"] = health.get("egress_country")
-        view["egress_country_code"] = health.get("country_code")
-        view["last_error"] = health.get("error")
-        view["checked_at"] = health.get("checked_at")
+        if health:
+            view["healthy"] = health.get("healthy")
+            view["egress_ip"] = health.get("egress_ip") or view.get("egress_ip")
+            view["egress_country"] = health.get("egress_country") or view.get("egress_country")
+            view["egress_country_code"] = health.get("country_code") or view.get("egress_country_code")
+            if health.get("country_code") and not view.get("country_code"):
+                view["country_code"] = health.get("country_code")
+            view["city"] = health.get("city") or view.get("city")
+            view["latency_ms"] = health.get("latency_ms") if health.get("latency_ms") is not None else view.get("latency_ms")
+            view["last_error"] = health.get("error")
+            view["checked_at"] = health.get("checked_at") or view.get("checked_at")
+        else:
+            view.setdefault("healthy", proxy.get("healthy"))
+            view.setdefault("egress_ip", proxy.get("egress_ip"))
+            view.setdefault("egress_country", proxy.get("egress_country"))
+            view.setdefault("egress_country_code", proxy.get("egress_country_code") or proxy.get("country_code"))
+            view.setdefault("city", proxy.get("city"))
+            view.setdefault("latency_ms", proxy.get("latency_ms"))
+            view.setdefault("last_error", proxy.get("last_error"))
+            view.setdefault("checked_at", proxy.get("checked_at"))
         return view
 
     def record_health(self, proxy: Dict[str, Any], result: Dict[str, Any]) -> None:
@@ -608,6 +729,8 @@ class ProxySellerService:
             "egress_ip": result.get("ip"),
             "egress_country": result.get("country"),
             "country_code": _norm(result.get("country_code")) or None,
+            "city": result.get("city"),
+            "latency_ms": result.get("latency_ms"),
             "error": result.get("error"),
         }
 
@@ -644,20 +767,24 @@ class ProxySellerService:
             "api_error": entry.get("api_error"),
             "api_count": entry.get("api_count"),
             "static_count": entry.get("static_count"),
+            "custom_count": entry.get("custom_count"),
         }
 
     def _sort_candidates(self, proxies: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        def score(item: Dict[str, Any]) -> Tuple[int, int, str]:
+        def score(item: Dict[str, Any]) -> Tuple[int, int, int, str]:
             health = self._health.get(proxy_identity(item)) or {}
-            if health.get("healthy") is True:
+            persisted_healthy = item.get("healthy")
+            healthy = health.get("healthy") if health else persisted_healthy
+            if healthy is True:
                 health_rank = 0
-            elif health.get("healthy") is False:
+            elif healthy is False:
                 health_rank = 2
             else:
                 health_rank = 1
+            source_rank = 0 if is_custom_proxy(item) else (1 if is_static_residential(item) else 2)
             status = _norm(item.get("status_type") or item.get("status"))
-            active_rank = 0 if (not status or "active" in status) else 1
-            return (health_rank, active_rank, proxy_identity(item))
+            active_rank = 0 if (not status or "active" in status or "custom" in status) else 1
+            return (health_rank, source_rank, active_rank, proxy_identity(item))
 
         return sorted(proxies, key=score)
 
@@ -691,11 +818,22 @@ class ProxySellerService:
 
         if regional:
             candidates = self._rotate(country or "*", self._sort_candidates(regional))
+            custom_hit = any(is_custom_proxy(item) for item in regional)
             static_hit = any(is_static_residential(item) for item in regional)
-            source = "static_residential" if static_hit and all(is_static_residential(item) for item in regional) else "regional"
+            if custom_hit and all(is_custom_proxy(item) for item in regional):
+                source = "custom_pool"
+            elif static_hit and all(is_static_residential(item) for item in regional):
+                source = "static_residential"
+            else:
+                source = "regional"
             message = f"已匹配到 {len(regional)} 个 {(country or 'ALL').upper()} 区域代理"
+            extras = []
+            if custom_hit:
+                extras.append("用户自建代理池")
             if static_hit:
-                message += "（含内置静态住宅节点）"
+                extras.append("内置静态住宅节点")
+            if extras:
+                message += f"（含{' / '.join(extras)}）"
         else:
             all_items = await self.get_proxy_list(country=None, refresh=False, include_health=False)
             if country and all_items and allow_fallback:
@@ -750,7 +888,11 @@ class ProxySellerService:
                 f"区域代理 {format_proxy_endpoint(selected)}"
             )
 
-        if selected and is_static_residential(selected):
+        if selected and is_custom_proxy(selected):
+            source = "custom_pool"
+            if "自建" not in (message or ""):
+                message = f"{message}（用户自建代理池）"
+        elif selected and is_static_residential(selected):
             source = "static_residential"
             if "内置静态住宅" not in (message or ""):
                 message = f"{message}（内置静态住宅节点）"

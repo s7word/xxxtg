@@ -188,6 +188,12 @@ class TestProxySellerServicePool(unittest.IsolatedAsyncioTestCase):
         ProxySellerService._pool_cache.clear()
         ProxySellerService._health.clear()
         ProxySellerService._rr_cursor.clear()
+        self._custom_patch = patch(
+            "backend.app.services.proxyseller.load_custom_proxy_items",
+            return_value=[],
+        )
+        self._custom_patch.start()
+        self.addCleanup(self._custom_patch.stop)
 
     async def _svc_with_payload(self, payload, include_static=False):
         svc = ProxySellerService("test-key", cache_ttl=30, include_static=include_static)
@@ -502,6 +508,12 @@ class TestRegistrarProxyAutoMatch(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         RegistrationTaskManager._instance = None
         ProxySellerService._pool_cache.clear()
+        self._custom_patch = patch(
+            "backend.app.services.proxyseller.load_custom_proxy_items",
+            return_value=[],
+        )
+        self._custom_patch.start()
+        self.addCleanup(self._custom_patch.stop)
 
     async def test_run_logs_required_region_match_line(self):
         manager = RegistrationTaskManager.get_instance()
@@ -544,6 +556,63 @@ class TestRegistrarProxyAutoMatch(unittest.IsolatedAsyncioTestCase):
             "[多径中继网关] 成功从 Proxy-Seller API 自动匹配到 CL 区域代理: socks5://181.43.10.22:50101",
             logs,
         )
+
+
+class TestCustomPoolRouting(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        ProxySellerService._pool_cache.clear()
+        ProxySellerService._health.clear()
+        ProxySellerService._rr_cursor.clear()
+
+    async def test_select_prefers_custom_pool_for_indonesia(self):
+        custom = {
+            "id": "custom-id-1",
+            "proxy_type": "socks5",
+            "addr": "10.8.0.21",
+            "port": 41080,
+            "username": "id_user",
+            "password": "id_pass",
+            "country": "Indonesia",
+            "country_code": "id",
+            "source": "custom",
+            "catalog_type": "custom",
+            "healthy": True,
+        }
+        with patch("backend.app.services.proxyseller.load_custom_proxy_items", return_value=[custom]):
+            svc = ProxySellerService("", include_static=True)
+            try:
+                selected = await svc.select_best_proxy(target_country="id", allow_fallback=False)
+                self.assertTrue(selected["success"])
+                self.assertTrue(selected["matched"])
+                self.assertEqual(selected["source"], "custom_pool")
+                self.assertEqual(selected["proxy"]["addr"], "10.8.0.21")
+                self.assertEqual(selected["proxy"]["country_code"], "id")
+                self.assertIn("自建", selected["message"])
+            finally:
+                await svc.close()
+
+    async def test_custom_chile_does_not_steal_india_static(self):
+        custom = {
+            "id": "custom-cl-1",
+            "proxy_type": "socks5",
+            "addr": "186.1.2.3",
+            "port": 1080,
+            "username": "cl_user",
+            "password": "cl_pass",
+            "country": "Chile",
+            "country_code": "cl",
+            "source": "custom",
+            "catalog_type": "custom",
+        }
+        with patch("backend.app.services.proxyseller.load_custom_proxy_items", return_value=[custom]):
+            svc = ProxySellerService("", include_static=True)
+            try:
+                india = await svc.select_best_proxy(target_country="in", allow_fallback=False)
+                self.assertTrue(india["success"])
+                self.assertEqual(india["proxy"]["country_code"], "in")
+                self.assertNotEqual(india["proxy"]["addr"], "186.1.2.3")
+            finally:
+                await svc.close()
 
 
 class TestSchemas(unittest.TestCase):

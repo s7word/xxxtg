@@ -123,13 +123,41 @@
                     </span>
                   </div>
                 </div>
-              </div>
-              <div v-else class="p-2.5 rounded-lg bg-zinc-900 border border-zinc-800 text-xs text-zinc-300 flex items-center justify-between">
-                <div>
-                  <div class="font-medium text-zinc-200">{{ config.fallback_proxy.addr }}:{{ config.fallback_proxy.port }}</div>
-                  <div class="text-[11px] text-zinc-500">传输: {{ config.fallback_proxy.proxy_type.toUpperCase() }} (静态后备跳点)</div>
+                <div class="p-2 rounded-md bg-zinc-950/50 border border-zinc-800/80 space-y-1.5">
+                  <div class="flex items-center justify-between text-[11px]">
+                    <span class="text-zinc-300">📋 自建代理池</span>
+                    <span class="text-zinc-400">{{ customProxySummaryText }}</span>
+                  </div>
+                  <div v-if="customProxiesForCountry.length" class="space-y-1">
+                    <div
+                      v-for="(p, idx) in customProxiesForCountry.slice(0, 4)"
+                      :key="p.id || (p.addr + ':' + p.port + idx)"
+                      class="flex items-center justify-between gap-2 text-[11px]"
+                    >
+                      <span>{{ countryFlag(p.country_code) }} {{ (p.country_code || '?').toString().toUpperCase() }}</span>
+                      <span class="font-mono text-zinc-200 truncate">{{ p.addr }}:{{ p.port }}</span>
+                      <span :class="p.healthy === true ? 'text-emerald-400' : (p.healthy === false ? 'text-red-400' : 'text-zinc-500')">
+                        {{ p.healthy === true ? (p.latency_ms != null ? p.latency_ms + 'ms' : '通') : (p.healthy === false ? '断' : '待测') }}
+                      </span>
+                    </div>
+                  </div>
+                  <div v-else class="text-[11px] text-zinc-500">当前国家暂无已标注的自建节点，可到「参数拓扑」批量粘贴导入</div>
                 </div>
-                <span class="badge badge-warning">静态中继</span>
+              </div>
+              <div v-else class="p-2.5 rounded-lg bg-zinc-900 border border-zinc-800 text-xs text-zinc-300 space-y-2">
+                <div class="flex items-center justify-between">
+                  <div>
+                    <div class="font-medium text-zinc-200">{{ config.fallback_proxy.addr }}:{{ config.fallback_proxy.port }}</div>
+                    <div class="text-[11px] text-zinc-500">传输: {{ config.fallback_proxy.proxy_type.toUpperCase() }} (静态后备跳点)</div>
+                  </div>
+                  <span class="badge badge-warning">静态中继</span>
+                </div>
+                <div class="pt-1 border-t border-zinc-800 text-[11px] text-zinc-400">
+                  📋 自建代理池 {{ customProxySummaryText }}
+                  <span v-if="customProxiesForCountry.length" class="ml-1 text-zinc-300">
+                    · 当前国家可匹配 {{ customProxiesForCountry.length }} 条
+                  </span>
+                </div>
               </div>
             </div>
 
@@ -535,6 +563,86 @@
 
             <div v-if="testResults.connectivity" :class="['p-3 rounded-lg text-xs', testResults.connectivity.success ? 'bg-green-950/40 border border-green-800/60 text-green-300' : 'bg-red-950/40 border border-red-800/60 text-red-300']">
               {{ testResults.connectivity.message }}
+            </div>
+          </div>
+
+          <!-- 自定义代理池 / 手动批量粘贴导入 -->
+          <div class="glass-panel p-5 rounded-xl border border-zinc-800/80 space-y-4 md:col-span-2">
+            <div class="flex items-center justify-between border-b border-zinc-800 pb-2">
+              <div class="flex items-center gap-2">
+                <span class="text-base">📋</span>
+                <h3 class="font-semibold text-sm text-zinc-200">自定义代理池 / 手动批量粘贴导入 (Custom Proxy Pool)</h3>
+                <span class="badge badge-info text-[10px]">{{ customProxies.length }} 条</span>
+              </div>
+              <div class="flex items-center gap-1.5">
+                <button @click="importCustomProxyText" :disabled="testing.customimport" class="btn-secondary text-xs py-1">
+                  {{ testing.customimport ? '导入中...' : '📥 批量解析并导入' }}
+                </button>
+                <button @click="testAllCustomProxies" :disabled="testing.customall" class="btn-secondary text-xs py-1">
+                  {{ testing.customall ? '测活中...' : '⚡ 一键全量测活' }}
+                </button>
+                <button @click="clearCustomProxyPool" :disabled="testing.customclear" class="btn-secondary text-xs py-1">
+                  {{ testing.customclear ? '清空中...' : '🧹 清空自建池' }}
+                </button>
+              </div>
+            </div>
+
+            <p class="text-[11px] text-zinc-400 leading-relaxed">
+              支持一次粘贴多行。自动去除空行与 <code class="font-mono">#</code> / <code class="font-mono">//</code> 注释，默认协议 <code class="font-mono">socks5</code>。
+              调度需要 <code class="font-mono">cl / in / id</code> 等国家时，会优先匹配本池中已标注或已测活的对应节点。
+            </p>
+
+            <textarea
+              v-model="customProxyText"
+              rows="7"
+              class="input-field font-mono text-xs"
+              placeholder="host;port;user;pass&#10;host:port:user:pass&#10;host:port&#10;user:pass@host:port&#10;socks5://user:pass@host:port&#10;http://user:pass@host:port"
+            ></textarea>
+
+            <div class="flex flex-wrap items-center gap-3 text-[11px] text-zinc-400">
+              <label class="flex items-center gap-1.5">
+                <input type="checkbox" v-model="customProxyImportProbe" class="rounded bg-zinc-900 border-zinc-700" />
+                导入后立即测活
+              </label>
+              <div class="flex items-center gap-1.5">
+                <span>预标注国家</span>
+                <input v-model="customProxyImportCountry" type="text" placeholder="可选 cl / in / id" class="input-field font-mono text-xs w-28 py-1" />
+              </div>
+              <span class="text-zinc-500">格式：host;port;user;pass · host:port:user:pass · socks5://...</span>
+            </div>
+
+            <div v-if="customProxyMeta.message" :class="['p-2.5 rounded-lg text-[11px]', customProxyMeta.success === false ? 'bg-red-950/40 border border-red-800/60 text-red-300' : 'bg-zinc-900 border border-zinc-800 text-zinc-300']">
+              {{ customProxyMeta.message }}
+              <span v-if="customProxyMeta.countries?.length" class="ml-1 text-zinc-500">
+                已识别区域: {{ customProxyMeta.countries.join(', ') }}
+              </span>
+            </div>
+
+            <div v-if="customProxies.length" class="max-h-72 overflow-y-auto rounded-lg border border-zinc-800 divide-y divide-zinc-800/60">
+              <div
+                v-for="(p, idx) in customProxies"
+                :key="p.id || (p.addr + ':' + p.port + idx)"
+                class="flex items-center justify-between gap-2 px-2.5 py-2 text-[11px]"
+              >
+                <div class="flex items-center gap-2 min-w-0">
+                  <span class="shrink-0">{{ countryFlag(p.country_code) }}</span>
+                  <span class="badge badge-info shrink-0">{{ (p.country_code || p.country || '?').toString().toUpperCase() }}</span>
+                  <span class="font-mono text-zinc-200 truncate">{{ p.addr }}:{{ p.port }}</span>
+                  <span class="text-zinc-500 uppercase">{{ p.proxy_type || 'socks5' }}</span>
+                  <span :class="p.healthy === true ? 'text-emerald-400' : (p.healthy === false ? 'text-red-400' : 'text-zinc-500')">
+                    {{ p.healthy === true ? '连通' : (p.healthy === false ? '失败' : '待测') }}
+                  </span>
+                  <span v-if="p.latency_ms != null" class="text-zinc-400">{{ p.latency_ms }}ms</span>
+                  <span v-if="p.egress_ip" class="text-zinc-500 truncate">出口 {{ p.egress_ip }}{{ p.city ? ' / ' + p.city : '' }}</span>
+                </div>
+                <div class="flex items-center gap-2 shrink-0">
+                  <button @click="setCustomProxyAsFallback(p)" class="text-blue-400 hover:text-blue-300">设为当前后备</button>
+                  <button @click="deleteCustomProxy(p)" class="text-red-400/80 hover:text-red-300">删除</button>
+                </div>
+              </div>
+            </div>
+            <div v-else class="p-3 rounded-lg bg-zinc-900 border border-zinc-800 text-[11px] text-zinc-500">
+              自建代理池为空。把供应商提供的多行列表粘贴到上方文本框，再点「批量解析并导入」。
             </div>
           </div>
 
@@ -1033,6 +1141,7 @@ const config = reactive({
     username: '',
     password: ''
   },
+  custom_proxies: [],
   default_2fa_password: 'Password@2026!Sec',
   api_credential_mode: 'auto',
   custom_api_id: null,
@@ -1093,7 +1202,10 @@ const testing = reactive({
   proxypool: false,
   autoselect: false,
   proxyall: false,
-  connectivity: false
+  connectivity: false,
+  customimport: false,
+  customall: false,
+  customclear: false
 })
 
 const testResults = reactive({
@@ -1113,6 +1225,39 @@ const proxyPoolMeta = reactive({
   cached: false
 })
 const matchedProxy = ref(null)
+const customProxies = ref([])
+const customProxyText = ref('')
+const customProxyImportProbe = ref(false)
+const customProxyImportCountry = ref('')
+const customProxyMeta = reactive({
+  success: null,
+  message: '',
+  countries: []
+})
+
+const countryFlag = (code) => {
+  const iso = String(code || '').trim().toUpperCase()
+  if (iso.length !== 2 || !/^[A-Z]{2}$/.test(iso)) return '🏳️'
+  return String.fromCodePoint(...[...iso].map((ch) => 127397 + ch.charCodeAt(0)))
+}
+
+const customProxiesForCountry = computed(() => {
+  const wanted = String(form.country || config.target_country || '').trim().toLowerCase()
+  if (!wanted) return customProxies.value
+  return customProxies.value.filter((item) => {
+    const code = String(item.country_code || '').toLowerCase()
+    const name = String(item.country || '').toLowerCase()
+    return code === wanted || name.includes(wanted)
+  })
+})
+
+const customProxySummaryText = computed(() => {
+  const total = customProxies.value.length
+  const healthy = customProxies.value.filter((item) => item.healthy === true).length
+  const pending = customProxies.value.filter((item) => item.healthy == null).length
+  if (!total) return '空'
+  return `${total} 条 / ${healthy} 通 / ${pending} 待测`
+})
 
 const isStartingTask = ref(false)
 const isSavingConfig = ref(false)
@@ -1463,6 +1608,146 @@ const testAllProxySeller = async () => {
   }
 }
 
+const applyCustomProxyPayload = (data) => {
+  if (!data) return
+  if (Array.isArray(data.proxies)) customProxies.value = data.proxies
+  if (Array.isArray(data.results) && !data.proxies) customProxies.value = data.results
+  config.custom_proxies = customProxies.value
+  customProxyMeta.success = data.success
+  customProxyMeta.message = data.message || ''
+  customProxyMeta.countries = data.countries || []
+  if (data.fallback_proxy) Object.assign(config.fallback_proxy, data.fallback_proxy)
+}
+
+const fetchCustomProxyList = async (country) => {
+  try {
+    const params = new URLSearchParams()
+    if (country) params.set('country', country)
+    const res = await fetch(`/api/proxy/custom-list${params.toString() ? '?' + params.toString() : ''}`)
+    const data = await res.json()
+    applyCustomProxyPayload(data)
+    return data
+  } catch (e) {
+    customProxyMeta.success = false
+    customProxyMeta.message = e.message
+    return null
+  }
+}
+
+const importCustomProxyText = async () => {
+  if (!customProxyText.value.trim()) {
+    customProxyMeta.success = false
+    customProxyMeta.message = '请先粘贴代理列表'
+    return
+  }
+  testing.customimport = true
+  try {
+    const res = await fetch('/api/proxy/import-text', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        text: customProxyText.value,
+        probe: customProxyImportProbe.value,
+        replace: false,
+        default_protocol: 'socks5',
+        default_country: customProxyImportCountry.value || undefined
+      })
+    })
+    const data = await res.json()
+    applyCustomProxyPayload(data)
+    if (data.success) customProxyText.value = ''
+    await fetchCustomProxyList()
+  } catch (e) {
+    customProxyMeta.success = false
+    customProxyMeta.message = e.message
+  } finally {
+    testing.customimport = false
+  }
+}
+
+const testAllCustomProxies = async () => {
+  testing.customall = true
+  try {
+    const res = await fetch('/api/proxy/test-all', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ concurrency: 4 })
+    })
+    const data = await res.json()
+    applyCustomProxyPayload(data)
+    await fetchCustomProxyList()
+  } catch (e) {
+    customProxyMeta.success = false
+    customProxyMeta.message = e.message
+  } finally {
+    testing.customall = false
+  }
+}
+
+const setCustomProxyAsFallback = async (proxy) => {
+  try {
+    const res = await fetch('/api/proxy/set-fallback', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        proxy_id: proxy.id,
+        addr: proxy.addr,
+        port: proxy.port,
+        username: proxy.username
+      })
+    })
+    const data = await res.json()
+    applyCustomProxyPayload(data)
+    if (data.success && data.fallback_proxy) {
+      Object.assign(config.fallback_proxy, data.fallback_proxy)
+      matchedProxy.value = data.proxy || proxy
+    }
+    if (!data.success) alert(data.message || '设为后备失败')
+  } catch (e) {
+    alert('设为后备失败: ' + e.message)
+  }
+}
+
+const deleteCustomProxy = async (proxy) => {
+  if (!confirm(`删除自建代理 ${proxy.addr}:${proxy.port} ?`)) return
+  try {
+    const res = await fetch('/api/proxy/delete', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ proxy_id: proxy.id, addr: proxy.addr, port: proxy.port, username: proxy.username })
+    })
+    const data = await res.json()
+    customProxyMeta.success = data.success
+    customProxyMeta.message = data.message || ''
+    await fetchCustomProxyList()
+  } catch (e) {
+    customProxyMeta.success = false
+    customProxyMeta.message = e.message
+  }
+}
+
+const clearCustomProxyPool = async () => {
+  if (!customProxies.value.length) return
+  if (!confirm('确定清空全部自建代理？此操作会从配置中删除已导入列表。')) return
+  testing.customclear = true
+  try {
+    const res = await fetch('/api/proxy/delete', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ clear_all: true })
+    })
+    const data = await res.json()
+    customProxyMeta.success = data.success
+    customProxyMeta.message = data.message || ''
+    await fetchCustomProxyList()
+  } catch (e) {
+    customProxyMeta.success = false
+    customProxyMeta.message = e.message
+  } finally {
+    testing.customclear = false
+  }
+}
+
 const testProxyConnectivity = async () => {
   testing.connectivity = true
   testResults.connectivity = null
@@ -1737,6 +2022,7 @@ onMounted(() => {
   fetchSessions()
   fetchVaultAccounts()
   refreshProxyPool('', false)
+  fetchCustomProxyList()
   pollTimer = setInterval(() => {
     fetchTasks()
   }, 2000)

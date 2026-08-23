@@ -26,6 +26,15 @@ from backend.app.models.schemas import (
     ProxySellerAutoSelectResponse,
     ProxySellerTestAllRequest,
     ProxySellerTestAllResponse,
+    CustomProxyListResponse,
+    CustomProxyImportRequest,
+    CustomProxyImportResponse,
+    CustomProxyTestAllRequest,
+    CustomProxyTestAllResponse,
+    CustomProxySetFallbackRequest,
+    CustomProxySetFallbackResponse,
+    CustomProxyDeleteRequest,
+    CustomProxyDeleteResponse,
 )
 from backend.app.services.device_profile import DeviceProfileManager
 from backend.app.services.vaksms import VakSmsService
@@ -33,6 +42,14 @@ from backend.app.services.antisafety import AntiSafetyService
 from backend.app.services.reghelp import RegHelpService
 from backend.app.services.attestation_urls import sanitize_provider_urls
 from backend.app.services.proxyseller import ProxySellerService
+from backend.app.services.proxy_manager import (
+    custom_pool_summary,
+    delete_custom_proxies,
+    find_custom_proxy,
+    import_proxy_text_async,
+    list_custom_proxies,
+    probe_custom_proxies,
+)
 from backend.app.services.registrar import RegistrationTaskManager, RegistrationOrchestrator
 from backend.app.services.account_vault import AccountVaultService
 from backend.app.services.telegram_apps import TelegramAppsHelper, TelegramAppsJobManager
@@ -326,6 +343,100 @@ async def test_all_proxy_seller(req: ProxySellerTestAllRequest):
         )
     finally:
         await svc.close()
+
+
+# ==================== 2b. 自定义代理池 (手动粘贴导入) ====================
+@router.get("/proxy/custom-list", response_model=CustomProxyListResponse, summary="获取已保存的自建代理列表")
+async def list_custom_proxy_pool(country: Optional[str] = None):
+    items = list_custom_proxies(country=country)
+    summary = custom_pool_summary(country)
+    config = ConfigManager.get_instance().config
+    scope = (country or "ALL").upper()
+    return CustomProxyListResponse(
+        success=True,
+        message=f"自建代理池共 {summary['total']} 条，{scope} 匹配 {len(items)} 条，{summary['healthy']} 条已测通",
+        total=len(items),
+        healthy=sum(1 for item in items if item.get("healthy") is True),
+        country=country,
+        countries=summary.get("countries") or [],
+        proxies=items,
+        fallback_proxy=config.fallback_proxy,
+    )
+
+
+@router.post("/proxy/import-text", response_model=CustomProxyImportResponse, summary="批量解析并导入粘贴的代理文本")
+async def import_custom_proxy_text(req: CustomProxyImportRequest):
+    if not (req.text or "").strip():
+        return CustomProxyImportResponse(success=False, message="代理文本为空")
+    try:
+        result = await import_proxy_text_async(
+            req.text,
+            probe=req.probe,
+            replace=req.replace,
+            default_scheme=req.default_protocol or "socks5",
+            default_country=req.default_country,
+            concurrency=req.concurrency,
+        )
+        return CustomProxyImportResponse(**result)
+    except Exception as exc:
+        return CustomProxyImportResponse(success=False, message=f"导入自建代理失败: {exc}")
+
+
+@router.post("/proxy/test-all", response_model=CustomProxyTestAllResponse, summary="对自建代理池进行并发测活")
+async def test_all_custom_proxies(req: CustomProxyTestAllRequest = None):
+    payload = req or CustomProxyTestAllRequest()
+    try:
+        result = await probe_custom_proxies(
+            persist=True,
+            concurrency=payload.concurrency,
+            limit=payload.limit,
+        )
+        return CustomProxyTestAllResponse(**result)
+    except Exception as exc:
+        return CustomProxyTestAllResponse(success=False, message=f"自建代理池测活失败: {exc}")
+
+
+@router.post("/proxy/set-fallback", response_model=CustomProxySetFallbackResponse, summary="将某个自建代理设为全局 fallback_proxy")
+async def set_custom_proxy_fallback(req: CustomProxySetFallbackRequest):
+    target = find_custom_proxy(
+        proxy_id=req.proxy_id,
+        addr=req.addr,
+        port=req.port,
+        username=req.username,
+    )
+    if not target:
+        return CustomProxySetFallbackResponse(success=False, message="未找到指定的自建代理")
+    config_mgr = ConfigManager.get_instance()
+    current = config_mgr.config.model_dump()
+    current["fallback_proxy"] = {
+        "proxy_type": target.get("proxy_type") or "socks5",
+        "addr": target.get("addr"),
+        "port": int(target.get("port")),
+        "username": target.get("username"),
+        "password": target.get("password"),
+    }
+    saved = config_mgr.save_config(AppConfigModel(**current))
+    return CustomProxySetFallbackResponse(
+        success=True,
+        message=f"已将 {target.get('addr')}:{target.get('port')} 设为当前后备代理",
+        proxy=target,
+        fallback_proxy=saved.fallback_proxy,
+    )
+
+
+@router.delete("/proxy/delete", response_model=CustomProxyDeleteResponse, summary="删除指定自建代理或清空自建代理池")
+async def delete_custom_proxy(req: CustomProxyDeleteRequest):
+    if not req.clear_all and not req.proxy_id and not (req.addr and req.port):
+        return CustomProxyDeleteResponse(success=False, message="请指定 proxy_id / addr+port，或设置 clear_all=true")
+    result = delete_custom_proxies(
+        proxy_id=req.proxy_id,
+        addr=req.addr,
+        port=req.port,
+        username=req.username,
+        clear_all=req.clear_all,
+    )
+    return CustomProxyDeleteResponse(**result)
+
 
 # ==================== 3. 虚拟节点引导任务调度 ====================
 @router.post("/register/start", response_model=RegisterTaskResponse, summary="触发边缘节点引导任务")
