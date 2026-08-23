@@ -365,7 +365,7 @@ def resolve_iso2(value: Any) -> Optional[str]:
     lower = token.lower()
     if lower == "uk":
         return "gb"
-    if len(lower) == 2 and lower.isalpha():
+    if len(lower) == 2 and lower.isascii() and lower.isalpha():
         return lower
     if lower in _NAME_INDEX:
         return _NAME_INDEX[lower]

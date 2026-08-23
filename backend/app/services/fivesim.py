@@ -393,11 +393,11 @@ def resolve_country_iso2(country: Union[str, int, None]) -> str:
         return ""
     lower = token.lower()
     compact = _slugify(lower)
-    if compact in FIVESIM_TO_ISO2:
+    if compact and compact in FIVESIM_TO_ISO2:
         return FIVESIM_TO_ISO2[compact]
     if lower in FIVESIM_TO_ISO2:
         return FIVESIM_TO_ISO2[lower]
-    if len(lower) == 2 and lower.isalpha():
+    if len(lower) == 2 and lower.isascii() and lower.isalpha():
         return "gb" if lower == "uk" else lower
     try:
         from backend.app.services.geo_catalog import resolve_iso2
@@ -416,7 +416,7 @@ def resolve_fivesim_country(country: Union[str, int, None]) -> str:
         raise FiveSimError("未指定租号国家")
     token = str(country).strip().lower()
     compact = _slugify(token)
-    if compact in FIVESIM_TO_ISO2:
+    if compact and compact in FIVESIM_TO_ISO2:
         # 已是官方 slug（或别名），归一到权威写法
         iso = FIVESIM_TO_ISO2[compact]
         return ISO2_TO_FIVESIM.get(iso, compact)
@@ -438,11 +438,11 @@ def fivesim_country_to_iso(country: Union[str, int, None]) -> Optional[str]:
     if not token:
         return None
     compact = _slugify(token)
-    if compact in FIVESIM_TO_ISO2:
+    if compact and compact in FIVESIM_TO_ISO2:
         return FIVESIM_TO_ISO2[compact]
     if token in FIVESIM_TO_ISO2:
         return FIVESIM_TO_ISO2[token]
-    if len(token) == 2 and token.isalpha():
+    if len(token) == 2 and token.isascii() and token.isalpha():
         return "gb" if token == "uk" else token
     try:
         from backend.app.services.geo_catalog import resolve_iso2
