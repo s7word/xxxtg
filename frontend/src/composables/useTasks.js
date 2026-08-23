@@ -174,7 +174,7 @@ export const startRegistrationTask = async () => {
       country: form.country,
       app_type: form.app_type,
       proxy_mode: form.proxy_mode || 'custom_pool',
-      sms_provider: form.sms_provider || config.sms_provider || 'grizzlysms'
+      sms_provider: form.sms_provider || config.sms_provider || 'fivesim'
     }
     const taskMaxPrice = Number(form.max_price)
     if (Number.isFinite(taskMaxPrice) && taskMaxPrice > 0) {

@@ -6,6 +6,7 @@ const { config, applyBaseUrlsTextToConfig } = useConfig()
 const { proxyPool, proxyPoolMeta, testing } = useProxy()
 
 const probeTesting = reactive({
+  fivesim: false,
   vaksms: false,
   grizzlysms: false,
   antisafety: false,
@@ -13,6 +14,7 @@ const probeTesting = reactive({
 })
 
 const testResults = reactive({
+  fivesim: null,
   vaksms: null,
   grizzlysms: null,
   antisafety: null,
@@ -21,6 +23,26 @@ const testResults = reactive({
   proxyall: null,
   connectivity: null
 })
+
+export const testFiveSim = async () => {
+  probeTesting.fivesim = true
+  testResults.fivesim = null
+  try {
+    const res = await fetch('/api/test/fivesim', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        api_key: config.fivesim_api_key,
+        country: config.target_country
+      })
+    })
+    testResults.fivesim = await res.json()
+  } catch (e) {
+    testResults.fivesim = { success: false, message: e.message }
+  } finally {
+    probeTesting.fivesim = false
+  }
+}
 
 export const testGrizzlySms = async () => {
   probeTesting.grizzlysms = true
@@ -169,6 +191,7 @@ export const testProxyConnectivity = async () => {
 export const useProbes = () => ({
   probeTesting,
   testResults,
+  testFiveSim,
   testGrizzlySms,
   testVakSms,
   testAntiSafety,

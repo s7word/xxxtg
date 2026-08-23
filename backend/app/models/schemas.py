@@ -137,8 +137,12 @@ class AppConfigModel(BaseModel):
         description="异步带外挑战响应 (OOB Challenge) 遥测源 API Key"
     )
     sms_provider: str = Field(
-        default="grizzlysms",
-        description="当前接码提供源: grizzlysms (推荐, Grizzly SMS) / vaksms (Vak-SMS)"
+        default="fivesim",
+        description="当前接码提供源: fivesim (推荐, 5SIM) / grizzlysms (Grizzly SMS) / vaksms (Vak-SMS)"
+    )
+    fivesim_api_key: str = Field(
+        default="eyJhbGciOiJSUzUxMiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE4MTg5MzAxMzYsImlhdCI6MTc4NzM5NDEzNiwicmF5IjoiMTBiOGU4OTkwMmQzODdkYmUzY2Y2NzE5Mzc2MGJkOGQiLCJzdWIiOjI5NjU0NDJ9.JvnelHQoodRonZ7OWYv-5XJMXfZ0spP2pI1yPETPvD-VGe0cE8VDJGLLsg-teh_vtRhu-QzIEIji4LcztZv0rLQ8h5poAHOxlfJJYWO_Oh077GWn83n7M1Gc1fukEgmWSv--WQify8PuSK_XwLmfttwHuDAqwvLnmq2cEIYnGTdRT2LgdomcNksRYzGk26nE8wsEqJVlbhlUH9tkLjwwWzedMLdj227_b6gjmjRR0IfwTphMatLMm-5I-6i2yfUMPAKY34rpRGSPqKmjoS3jk29xOFKYVVqKBYgTb_XoaNzHMZWqCMnm7de9jU54fjkphiECRvngh4mfI3-oeDvB2A",
+        description="5SIM (5sim.net) API JWT Token，请求头 Authorization: Bearer <token>"
     )
     grizzly_sms_api_key: str = Field(
         default="66bd4d8e5f54db073d15c2856c9a1366",
@@ -293,15 +297,19 @@ class AppConfigModel(BaseModel):
     @field_validator("sms_provider", mode="before")
     @classmethod
     def _normalize_sms_provider(cls, value):
-        token = str(value or "grizzlysms").strip().lower().replace("-", "").replace("_", "")
+        token = str(value or "fivesim").strip().lower().replace("-", "").replace("_", "")
         aliases = {
+            "fivesim": "fivesim",
+            "5sim": "fivesim",
+            "5simnet": "fivesim",
+            "fivesimnet": "fivesim",
             "grizzly": "grizzlysms",
             "grizzlysms": "grizzlysms",
             "grizzlysmscom": "grizzlysms",
             "vak": "vaksms",
             "vaksms": "vaksms",
         }
-        return aliases.get(token, "grizzlysms")
+        return aliases.get(token, "fivesim")
 
     @field_validator("sms_max_price", mode="before")
     @classmethod
@@ -422,7 +430,7 @@ class RegisterTaskRequest(BaseModel):
     )
     sms_provider: Optional[str] = Field(
         default=None,
-        description="单次任务覆盖接码提供源: grizzlysms / vaksms；为空则使用全局配置",
+        description="单次任务覆盖接码提供源: fivesim / grizzlysms / vaksms；为空则使用全局配置",
     )
     max_price: Optional[float] = Field(
         default=None,
@@ -444,6 +452,10 @@ class RegisterTaskRequest(BaseModel):
             return None
         token = str(value).strip().lower().replace("-", "").replace("_", "")
         aliases = {
+            "fivesim": "fivesim",
+            "5sim": "fivesim",
+            "5simnet": "fivesim",
+            "fivesimnet": "fivesim",
             "grizzly": "grizzlysms",
             "grizzlysms": "grizzlysms",
             "vak": "vaksms",

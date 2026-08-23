@@ -265,10 +265,11 @@ class TestGrizzlySmsClient(unittest.IsolatedAsyncioTestCase):
 
 
 class TestSmsProviderConfig(unittest.TestCase):
-    def test_default_provider_is_grizzly(self):
+    def test_default_provider_is_fivesim_but_grizzly_key_remains(self):
         cfg = AppConfigModel()
-        self.assertEqual(cfg.sms_provider, "grizzlysms")
+        self.assertEqual(cfg.sms_provider, "fivesim")
         self.assertEqual(cfg.grizzly_sms_api_key, "66bd4d8e5f54db073d15c2856c9a1366")
+        self.assertTrue(cfg.fivesim_api_key)
         self.assertIsNone(cfg.sms_max_price)
 
     def test_sms_max_price_normalizes(self):
@@ -294,8 +295,9 @@ class TestSmsProviderConfig(unittest.TestCase):
     def test_aliases_normalize(self):
         self.assertEqual(AppConfigModel(sms_provider="Grizzly-SMS").sms_provider, "grizzlysms")
         self.assertEqual(AppConfigModel(sms_provider="vak_sms").sms_provider, "vaksms")
+        self.assertEqual(AppConfigModel(sms_provider="5sim").sms_provider, "fivesim")
         self.assertEqual(RegistrationOrchestrator.normalize_sms_provider("vak"), "vaksms")
-        self.assertEqual(RegistrationOrchestrator.normalize_sms_provider(None), "grizzlysms")
+        self.assertEqual(RegistrationOrchestrator.normalize_sms_provider(None), "fivesim")
 
     def test_task_request_accepts_override(self):
         req = RegisterTaskRequest(country="in", sms_provider="vak")
@@ -343,6 +345,7 @@ class TestRegistrarGrizzlyPipeline(unittest.IsolatedAsyncioTestCase):
             active_app_type="telegram_android",
             vak_sms_api_key="vak",
             sms_provider=provider,
+            fivesim_api_key="fivesim-jwt",
             grizzly_sms_api_key="66bd4d8e5f54db073d15c2856c9a1366",
             use_proxy_seller_auto=False,
             fallback_proxy=SimpleNamespace(model_dump=lambda: {

@@ -60,6 +60,13 @@ from backend.app.services.grizzlysms import (
     PROVIDER_LABEL as GRIZZLY_PROVIDER_LABEL,
     resolve_grizzly_country_id,
 )
+from backend.app.services.fivesim import (
+    FiveSimService,
+    PROVIDER_LABEL as FIVESIM_PROVIDER_LABEL,
+    resolve_fivesim_country,
+    resolve_country_iso2 as fivesim_resolve_iso2,
+    parse_fivesim_price_payload,
+)
 from backend.app.services.sms_stock_service import (
     SmsStockService,
     normalize_sms_provider,
@@ -237,7 +244,7 @@ async def generate_device_db(req: DeviceDbGenerateRequest):
 async def list_sms_available_countries(
     provider: Optional[str] = Query(
         default=None,
-        description="grizzlysms 或 vaksms；默认读取系统当前 config.sms_provider",
+        description="fivesim / grizzlysms / vaksms；默认读取系统当前 config.sms_provider",
     ),
     refresh: bool = Query(default=False, description="true 时绕过 90s 缓存强制刷新"),
 ):
@@ -256,6 +263,79 @@ async def list_sms_available_countries(
 
 
 # ==================== 2. 服务探针与连通性审计 ====================
+@router.post("/test/fivesim", response_model=TestApiResponse, summary="5SIM 接码平台余额与连通性探针")
+async def test_fivesim(payload: Dict[str, Any] = None):
+    config = ConfigManager.get_instance().config
+    api_key = (payload or {}).get("api_key") or config.fivesim_api_key
+    country = (payload or {}).get("country") or config.target_country
+
+    svc = FiveSimService(api_key)
+    try:
+        from backend.app.services.vaksms import format_no_number_message
+
+        profile = await svc.get_profile()
+        balance = float(profile.get("balance") or 0)
+        stock = 0
+        prices = None
+        country_slug = None
+        iso = None
+        ref_cost = None
+        try:
+            country_slug = resolve_fivesim_country(country)
+            iso = fivesim_resolve_iso2(country)
+            prices = await svc.get_prices(country=country_slug, product="telegram")
+            rows = parse_fivesim_price_payload(prices, product="telegram", country=country_slug)
+            if rows:
+                stock = int(rows[0].get("stock") or 0)
+                ref_cost = rows[0].get("cost")
+        except Exception as stock_exc:
+            prices = {"error": str(stock_exc)}
+        message = f"{FIVESIM_PROVIDER_LABEL} 鉴权与通信正常，余额 {balance}（RUB）"
+        if profile.get("email"):
+            message += f"，账号 {profile.get('email')}"
+        if profile.get("rating") is not None:
+            message += f"，评分 {profile.get('rating')}"
+        if ref_cost is not None:
+            message += f"，参考价 {ref_cost}"
+        if int(stock or 0) <= 0 and not (isinstance(prices, dict) and prices.get("error")):
+            message = format_no_number_message(iso or country)
+        return TestApiResponse(
+            success=True,
+            service="5SIM",
+            message=message,
+            data={
+                "balance": balance,
+                "currency": "RUB",
+                "email": profile.get("email"),
+                "rating": profile.get("rating"),
+                "ref_cost": ref_cost,
+                "country": country,
+                "country_slug": country_slug,
+                "iso": iso,
+                "telegram_stock": stock,
+                "prices": prices,
+                "no_number": int(stock or 0) <= 0,
+                "provider": "fivesim",
+                "endpoint": FiveSimService.BASE_URL,
+                "profile": {
+                    "id": profile.get("id"),
+                    "email": profile.get("email"),
+                    "balance": balance,
+                    "rating": profile.get("rating"),
+                    "frozen_balance": profile.get("frozen_balance"),
+                },
+            },
+        )
+    except Exception as e:
+        return TestApiResponse(
+            success=False,
+            service="5SIM",
+            message=f"5SIM 探针异常: {str(e)}",
+        )
+    finally:
+        await svc.close()
+
+
 @router.post("/test/vaksms", response_model=TestApiResponse, summary="带外遥测与挑战响应通道诊断探针")
 async def test_vaksms(payload: Dict[str, Any] = None):
     config = ConfigManager.get_instance().config

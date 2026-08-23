@@ -11,7 +11,8 @@ const config = reactive({
     telegram_9: ''
   },
   vak_sms_api_key: '',
-  sms_provider: 'grizzlysms',
+  sms_provider: 'fivesim',
+  fivesim_api_key: '',
   grizzly_sms_api_key: '',
   sms_max_price: null,
   target_country: 'cl',
@@ -48,7 +49,7 @@ const form = reactive({
   app_type: 'telegram_android',
   proxy_mode: 'custom_pool',
   proxy_id: '',
-  sms_provider: 'grizzlysms',
+  sms_provider: 'fivesim',
   max_price: null
 })
 
@@ -57,7 +58,7 @@ const smsStock = reactive({
   total_countries: 0,
   total_stock: 0,
   updated_at: 0,
-  provider: 'grizzlysms',
+  provider: 'fivesim',
   cached: false,
   cache_age_seconds: 0,
   message: '',
@@ -65,6 +66,13 @@ const smsStock = reactive({
   error: ''
 })
 const countrySearch = ref('')
+
+export const smsProviderLabel = (provider) => {
+  const token = String(provider || '').toLowerCase()
+  if (token === 'vaksms') return 'Vak-SMS'
+  if (token === 'grizzlysms') return 'Grizzly SMS'
+  return '5SIM'
+}
 
 export const formatStockCount = (n) => {
   const value = Number(n) || 0
@@ -99,7 +107,7 @@ export const filteredStockCountries = computed(() => {
 })
 
 export const fetchAvailableCountries = async (opts = {}) => {
-  const provider = opts.provider || form.sms_provider || config.sms_provider || 'grizzlysms'
+  const provider = opts.provider || form.sms_provider || config.sms_provider || 'fivesim'
   const refresh = !!opts.refresh
   smsStock.loading = true
   smsStock.error = ''
@@ -173,7 +181,7 @@ export const fetchConfig = async () => {
     Object.assign(config, data)
     form.country = data.target_country || 'cl'
     form.app_type = data.active_app_type || 'telegram_android'
-    form.sms_provider = data.sms_provider || 'grizzlysms'
+    form.sms_provider = data.sms_provider || 'fivesim'
     form.max_price = data.sms_max_price != null ? data.sms_max_price : null
     syncBaseUrlsTextFromConfig()
     fetchAvailableCountries({ provider: form.sms_provider, toast: false }).catch(() => {})
@@ -214,6 +222,7 @@ export const useConfig = () => ({
   smsStock,
   countrySearch,
   filteredStockCountries,
+  smsProviderLabel,
   formatStockCount,
   formatStockOption,
   fetchAvailableCountries,

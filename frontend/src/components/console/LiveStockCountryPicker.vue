@@ -36,7 +36,7 @@
         更新于 {{ formatUpdated(smsStock.updated_at) }}
         <span v-if="smsStock.cached"> · 缓存 {{ Math.round(smsStock.cache_age_seconds || 0) }}s</span>
       </span>
-      <span v-if="smsStock.provider"> · 源 {{ smsStock.provider === 'vaksms' ? 'Vak-SMS' : 'Grizzly SMS' }}</span>
+      <span v-if="smsStock.provider"> · 源 {{ smsProviderLabel(smsStock.provider) }}</span>
     </p>
     <p v-if="smsStock.error" class="ce-tiny" style="color:var(--danger-soft)">{{ smsStock.error }}</p>
     <p v-else-if="selectedItem" class="ce-tiny">
@@ -66,6 +66,7 @@ const {
   filteredStockCountries,
   formatStockCount,
   formatStockOption,
+  smsProviderLabel,
   fetchAvailableCountries
 } = useConfig()
 

@@ -19,11 +19,12 @@
         <div>
           <label class="ce-label">本次接码平台源（可临时覆盖）</label>
           <select v-model="form.sms_provider" class="ce-select">
-            <option value="grizzlysms">Grizzly SMS (推荐) · grizzlysms.com</option>
+            <option value="fivesim">5SIM (推荐) · 5sim.net</option>
+            <option value="grizzlysms">Grizzly SMS · grizzlysms.com</option>
             <option value="vaksms">Vak-SMS · vak-sms.com</option>
           </select>
           <p class="ce-tiny">
-            全局默认：{{ (config.sms_provider || 'grizzlysms') === 'vaksms' ? 'Vak-SMS' : 'Grizzly SMS' }}。
+            全局默认：{{ smsProviderLabel(config.sms_provider || 'fivesim') }}。
             本次任务将使用上方选择，失败自动退款。
           </p>
         </div>
@@ -351,7 +352,7 @@ import { useProxy } from '../../composables/useProxy'
 import { useTasks } from '../../composables/useTasks'
 import { useUi } from '../../composables/useUi'
 
-const { config, form } = useConfig()
+const { config, form, smsProviderLabel } = useConfig()
 const {
   matchedProxy, proxyPool, customProxiesForCountry, customProxySummaryText,
   registrationProxies, roleLabel, testing: proxyTesting, refreshProxyPool, previewAutoSelect

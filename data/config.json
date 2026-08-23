@@ -7,6 +7,10 @@
     "telegram_9": "59e59906-5177-4f6f-8f7e-ced3fe370997"
   },
   "vak_sms_api_key": "16aa4499a3954317aaf002a55e354eed",
+  "sms_provider": "fivesim",
+  "fivesim_api_key": "eyJhbGciOiJSUzUxMiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE4MTg5MzAxMzYsImlhdCI6MTc4NzM5NDEzNiwicmF5IjoiMTBiOGU4OTkwMmQzODdkYmUzY2Y2NzE5Mzc2MGJkOGQiLCJzdWIiOjI5NjU0NDJ9.JvnelHQoodRonZ7OWYv-5XJMXfZ0spP2pI1yPETPvD-VGe0cE8VDJGLLsg-teh_vtRhu-QzIEIji4LcztZv0rLQ8h5poAHOxlfJJYWO_Oh077GWn83n7M1Gc1fukEgmWSv--WQify8PuSK_XwLmfttwHuDAqwvLnmq2cEIYnGTdRT2LgdomcNksRYzGk26nE8wsEqJVlbhlUH9tkLjwwWzedMLdj227_b6gjmjRR0IfwTphMatLMm-5I-6i2yfUMPAKY34rpRGSPqKmjoS3jk29xOFKYVVqKBYgTb_XoaNzHMZWqCMnm7de9jU54fjkphiECRvngh4mfI3-oeDvB2A",
+  "grizzly_sms_api_key": "66bd4d8e5f54db073d15c2856c9a1366",
+  "sms_max_price": 1.0,
   "target_country": "cl",
   "proxy_seller_key": "q8WKCvB4QNUF",
   "use_proxy_seller_auto": true,

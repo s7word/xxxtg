@@ -22,6 +22,7 @@ logger = logging.getLogger("SmsStockService")
 
 DEFAULT_SERVICE = "tg"
 CACHE_TTL_SECONDS = 90.0  # 60~120 秒轻量缓存
+PROVIDER_FIVESIM = "fivesim"
 PROVIDER_GRIZZLY = "grizzlysms"
 PROVIDER_VAK = "vaksms"
 
@@ -29,13 +30,17 @@ PROVIDER_VAK = "vaksms"
 def normalize_sms_provider(value: Optional[str]) -> str:
     token = str(value or "").strip().lower().replace("-", "").replace("_", "")
     aliases = {
+        "fivesim": PROVIDER_FIVESIM,
+        "5sim": PROVIDER_FIVESIM,
+        "5simnet": PROVIDER_FIVESIM,
+        "fivesimnet": PROVIDER_FIVESIM,
         "grizzly": PROVIDER_GRIZZLY,
         "grizzlysms": PROVIDER_GRIZZLY,
         "grizzlysmscom": PROVIDER_GRIZZLY,
         "vak": PROVIDER_VAK,
         "vaksms": PROVIDER_VAK,
     }
-    return aliases.get(token, PROVIDER_GRIZZLY)
+    return aliases.get(token, PROVIDER_FIVESIM)
 
 
 def _as_int(value: Any, default: int = 0) -> int:
@@ -191,10 +196,27 @@ def parse_vak_count_payload(
     return rows
 
 
+def parse_fivesim_price_payload(
+    data: Any,
+    product: str = "telegram",
+    country: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """解析 5SIM guest/prices，仅保留 count > 0 的国家。"""
+    from backend.app.services.fivesim import parse_fivesim_price_payload as _parse
+
+    return _parse(data, product=product, country=country)
+
+
 def _resolve_stock_iso2(provider: str, provider_country_id: Any) -> str:
     token = str(provider_country_id or "").strip()
     if not token:
         return ""
+    if provider == PROVIDER_FIVESIM:
+        from backend.app.services.fivesim import fivesim_country_to_iso
+
+        iso = fivesim_country_to_iso(token)
+        if iso:
+            return iso
     if provider == PROVIDER_GRIZZLY:
         from backend.app.services.grizzlysms import grizzly_country_id_to_iso
 
@@ -332,6 +354,8 @@ class SmsStockService:
         try:
             if resolved == PROVIDER_VAK:
                 items = await cls._fetch_vaksms(service=service, api_key=api_key, config=config)
+            elif resolved == PROVIDER_FIVESIM:
+                items = await cls._fetch_fivesim(service=service, api_key=api_key, config=config)
             else:
                 items = await cls._fetch_grizzly(service=service, api_key=api_key, config=config)
         except Exception as exc:
@@ -378,6 +402,27 @@ class SmsStockService:
             payload = await svc.get_prices(country=None, service=service)
             rows = parse_grizzly_price_payload(payload, service=service)
             return enrich_stock_rows(rows, PROVIDER_GRIZZLY)
+        finally:
+            await svc.close()
+
+    @classmethod
+    async def _fetch_fivesim(
+        cls,
+        service: str,
+        api_key: Optional[str],
+        config: Any,
+    ) -> List[Dict[str, Any]]:
+        from backend.app.services.fivesim import FiveSimService, resolve_product
+
+        key = (api_key or "").strip()
+        if not key and config is not None:
+            key = str(getattr(config, "fivesim_api_key", "") or "").strip()
+        product = resolve_product(service)
+        svc = FiveSimService(key)
+        try:
+            payload = await svc.get_prices(country=None, product=product)
+            rows = parse_fivesim_price_payload(payload, product=product)
+            return enrich_stock_rows(rows, PROVIDER_FIVESIM)
         finally:
             await svc.close()
 

@@ -113,19 +113,50 @@
       <div class="ce-panel stack">
         <div class="ce-panel-head">
           <div class="row">
-            <h3>📩 Grizzly SMS 接码平台 (grizzlysms.com)</h3>
+            <h3>📩 5SIM 接码平台 (5sim.net)</h3>
             <span class="ce-badge is-success">推荐</span>
           </div>
-          <button class="ce-btn-ghost" :disabled="probeTesting.grizzlysms" @click="testGrizzlySms">
-            {{ probeTesting.grizzlysms ? '测试中...' : '余额/连通性探针' }}
+          <button class="ce-btn-ghost" :disabled="probeTesting.fivesim" @click="testFiveSim">
+            {{ probeTesting.fivesim ? '测试中...' : '余额/连通性探针' }}
           </button>
         </div>
         <div>
           <label class="ce-label">当前接码提供源选择</label>
           <select v-model="config.sms_provider" class="ce-select">
-            <option value="grizzlysms">Grizzly SMS (推荐)</option>
+            <option value="fivesim">5SIM (推荐)</option>
+            <option value="grizzlysms">Grizzly SMS</option>
             <option value="vaksms">Vak-SMS</option>
           </select>
+        </div>
+        <div>
+          <label class="ce-label">5SIM API JWT Token</label>
+          <input v-model="config.fivesim_api_key" type="password" class="ce-input mono" placeholder="Authorization: Bearer &lt;JWT&gt;" />
+        </div>
+        <div class="ce-tiny">
+          一手全球接码 · 国家参数使用英文全名小写（<code>indonesia</code> / <code>usa</code> / <code>england</code>），
+          控制台按 ISO-2 自动转换。失败路径自动 <code>/user/cancel</code> 或 <code>/user/ban</code> 退款。
+        </div>
+        <div v-if="testResults.fivesim" class="ce-alert" :class="testResults.fivesim.success ? 'is-ok' : 'is-danger'">
+          <div>{{ testResults.fivesim.message }}</div>
+          <div v-if="testResults.fivesim.data" class="mono ce-tiny">
+            余额: {{ testResults.fivesim.data.balance }} {{ testResults.fivesim.data.currency || 'RUB' }}
+            <span v-if="testResults.fivesim.data.email"> | 账号 {{ testResults.fivesim.data.email }}</span>
+            <span v-if="testResults.fivesim.data.rating != null"> | 评分 {{ testResults.fivesim.data.rating }}</span>
+            | 拓扑 {{ testResults.fivesim.data.country }} ({{ testResults.fivesim.data.country_slug }})
+            | 库存: {{ testResults.fivesim.data.telegram_stock }}
+          </div>
+        </div>
+      </div>
+
+      <div class="ce-panel stack">
+        <div class="ce-panel-head">
+          <div class="row">
+            <h3>📩 Grizzly SMS 接码平台 (grizzlysms.com)</h3>
+            <span class="ce-badge is-info">备选</span>
+          </div>
+          <button class="ce-btn-ghost" :disabled="probeTesting.grizzlysms" @click="testGrizzlySms">
+            {{ probeTesting.grizzlysms ? '测试中...' : '余额/连通性探针' }}
+          </button>
         </div>
         <div>
           <label class="ce-label">Grizzly SMS API Key</label>
@@ -250,5 +281,5 @@ const {
   config, isSavingConfig, saveConfig, reghelpBaseUrlsText,
   antisafetyBaseUrlsText, antisafetyReportingBaseUrlsText
 } = useConfig()
-const { probeTesting, testResults, testRegHelp, testAntiSafety, testGrizzlySms, testVakSms } = useProbes()
+const { probeTesting, testResults, testRegHelp, testAntiSafety, testFiveSim, testGrizzlySms, testVakSms } = useProbes()
 </script>

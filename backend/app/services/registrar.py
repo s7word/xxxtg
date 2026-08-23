@@ -26,6 +26,7 @@ from backend.app.config import ConfigManager, SESSIONS_DIR
 from backend.app.services.device_profile import DeviceProfileManager
 from backend.app.services.vaksms import NoNumberAvailableError, VakSmsService, format_no_number_message
 from backend.app.services.grizzlysms import GrizzlySmsService, PROVIDER_LABEL as GRIZZLY_PROVIDER_LABEL
+from backend.app.services.fivesim import FiveSimService, PROVIDER_LABEL as FIVESIM_PROVIDER_LABEL
 from backend.app.services.attestation_gateway import AttestationGatewayService
 from backend.app.services.banned_phones import (
     LOCAL_BANNED_REASON,
@@ -191,6 +192,11 @@ BATCH_CONCURRENCY_MIN = 1
 BATCH_CONCURRENCY_MAX = 10
 
 SMS_PROVIDER_ALIASES = {
+    "fivesim": "fivesim",
+    "5sim": "fivesim",
+    "5simnet": "fivesim",
+    "five_sim": "fivesim",
+    "five-sim": "fivesim",
     "grizzly": "grizzlysms",
     "grizzlysms": "grizzlysms",
     "grizzly_sms": "grizzlysms",
@@ -201,6 +207,7 @@ SMS_PROVIDER_ALIASES = {
     "vak-sms": "vaksms",
 }
 SMS_PROVIDER_LABELS = {
+    "fivesim": FIVESIM_PROVIDER_LABEL,
     "grizzlysms": GRIZZLY_PROVIDER_LABEL,
     "vaksms": "Vak-SMS (vak-sms.com)",
 }
@@ -427,9 +434,9 @@ class RegistrationOrchestrator:
     def normalize_sms_provider(value: Optional[str] = None) -> str:
         token = str(value or "").strip().lower()
         if not token:
-            return "grizzlysms"
+            return "fivesim"
         compact = token.replace("-", "").replace("_", "")
-        return SMS_PROVIDER_ALIASES.get(token) or SMS_PROVIDER_ALIASES.get(compact) or "grizzlysms"
+        return SMS_PROVIDER_ALIASES.get(token) or SMS_PROVIDER_ALIASES.get(compact) or "fivesim"
 
     @classmethod
     def resolve_sms_provider(cls, config=None, sms_provider: Optional[str] = None) -> str:
@@ -444,7 +451,9 @@ class RegistrationOrchestrator:
         provider = cls.resolve_sms_provider(config, sms_provider)
         if provider == "vaksms":
             return VakSmsService(getattr(config, "vak_sms_api_key", "") or "")
-        return GrizzlySmsService(getattr(config, "grizzly_sms_api_key", "") or "")
+        if provider == "grizzlysms":
+            return GrizzlySmsService(getattr(config, "grizzly_sms_api_key", "") or "")
+        return FiveSimService(getattr(config, "fivesim_api_key", "") or "")
 
     @staticmethod
     def resolve_sms_max_price(config=None, max_price=None):
@@ -464,7 +473,7 @@ class RegistrationOrchestrator:
         if label:
             return str(label)
         name = getattr(sms_svc, "PROVIDER_NAME", None) or provider
-        return SMS_PROVIDER_LABELS.get(cls.normalize_sms_provider(name), SMS_PROVIDER_LABELS["grizzlysms"])
+        return SMS_PROVIDER_LABELS.get(cls.normalize_sms_provider(name), SMS_PROVIDER_LABELS["fivesim"])
 
     @classmethod
     async def _refund_and_revoke_channel(
