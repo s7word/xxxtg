@@ -15,7 +15,6 @@ frontend/.vite/
 
 # Session & Runtime Artifacts
 data/sessions/
-lod_user/
 *.session
 *.session-journal
 *.csv
