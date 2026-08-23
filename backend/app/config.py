@@ -1,8 +1,17 @@
 import os
 import json
 import logging
+import shutil
+import threading
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - Windows / 无 fcntl 环境
+    fcntl = None
+
 from backend.app.models.schemas import AppConfigModel
 from backend.app.services.attestation_urls import is_antisafety_url, is_reghelp_url
 
@@ -12,6 +21,8 @@ DATA_DIR = Path(os.getenv("DATA_DIR", "./data")).resolve()
 CONFIG_FILE = DATA_DIR / "config.json"
 SESSIONS_DIR = DATA_DIR / "sessions"
 SESSION_ARTIFACTS_DIR = SESSIONS_DIR  # 学术化规范别名
+
+_CONFIG_MEM_LOCK = threading.RLock()
 
 
 def _resolve_lod_user_dir() -> Path:
@@ -37,6 +48,70 @@ LOD_USER_DIR = _resolve_lod_user_dir()
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
 
+
+def _config_lock_path(dest: Path) -> Path:
+    return dest.with_name(dest.name + ".lock")
+
+
+def _tmp_config_path(dest: Path) -> Path:
+    return dest.with_name(dest.name + ".tmp")
+
+
+def corrupted_config_backup_path(dest: Optional[Path] = None) -> Path:
+    target = Path(dest) if dest is not None else CONFIG_FILE
+    return target.with_name("config.json.corrupted.bak")
+
+
+@contextmanager
+def config_io_lock(dest: Optional[Path] = None):
+    """进程内 RLock + 跨进程 fcntl 文件锁，保护 config.json 读写。"""
+    target = Path(dest) if dest is not None else CONFIG_FILE
+    target.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = _config_lock_path(target)
+    with _CONFIG_MEM_LOCK:
+        fh = open(lock_path, "a+", encoding="utf-8")
+        try:
+            if fcntl is not None:
+                fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+            yield
+        finally:
+            if fcntl is not None:
+                try:
+                    fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+                except Exception:
+                    pass
+            fh.close()
+
+
+def backup_corrupted_config(src: Optional[Path] = None) -> Optional[Path]:
+    """损坏的 config.json 先备份为 config.json.corrupted.bak，再允许回退默认配置。"""
+    source = Path(src) if src is not None else CONFIG_FILE
+    if not source.exists():
+        return None
+    bak = corrupted_config_backup_path(source)
+    shutil.copy2(source, bak)
+    logger.warning("已将损坏的配置备份至 %s，避免直接覆盖丢失原有内容", bak)
+    return bak
+
+
+def _atomic_write_unlocked(payload: Dict[str, Any], dest: Path) -> Path:
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = _tmp_config_path(dest)
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp_path, dest)
+    return dest
+
+
+def atomic_write_config(payload: Dict[str, Any], dest: Optional[Path] = None) -> Path:
+    """写入 config.json.tmp 后 os.replace 原子替换，避免半截 JSON。"""
+    target = Path(dest) if dest is not None else CONFIG_FILE
+    with config_io_lock(target):
+        return _atomic_write_unlocked(payload, target)
+
+
 class ConfigManager:
     """全局仿真配置与状态持久化管理器"""
     _instance = None
@@ -52,10 +127,11 @@ class ConfigManager:
         self.load_config()
 
     def load_config(self) -> AppConfigModel:
-        if CONFIG_FILE.exists():
-            try:
-                with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-                    data = json.load(f)
+        with config_io_lock(CONFIG_FILE):
+            if CONFIG_FILE.exists():
+                try:
+                    with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                        data = json.load(f)
                     self._config = AppConfigModel(**data)
                     logger.info("已从持久化存储区载入系统配置快照")
                     # 旧配置可能把 api.reghelp.net 混进 antisafety_base_urls（或反过来），
@@ -76,12 +152,20 @@ class ConfigManager:
                         self._config.attestation_provider_mode,
                     )
                     return self._config
+                except Exception as e:
+                    logger.warning(f"读取本地配置异常，正在回退至初始默认配置: {e}")
+                    try:
+                        backup_corrupted_config(CONFIG_FILE)
+                    except Exception as bak_exc:
+                        logger.error("备份损坏配置失败: %s", bak_exc)
+
+            self._config = AppConfigModel()
+            try:
+                _atomic_write_unlocked(self._config.model_dump(), CONFIG_FILE)
+                logger.info("系统配置快照已成功持久化至磁盘")
             except Exception as e:
-                logger.warning(f"读取本地配置异常，正在回退至初始默认配置: {e}")
-        
-        self._config = AppConfigModel()
-        self.save_config(self._config)
-        return self._config
+                logger.error(f"持久化配置文件失败: {e}")
+            return self._config
 
     @staticmethod
     def _persist_if_urls_sanitized(raw: Dict[str, Any], config: AppConfigModel) -> bool:
@@ -96,8 +180,7 @@ class ConfigManager:
                     break
         if changed:
             try:
-                with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-                    json.dump(config.model_dump(), f, ensure_ascii=False, indent=2)
+                _atomic_write_unlocked(config.model_dump(), CONFIG_FILE)
             except Exception as exc:
                 logger.warning("回写清洗后的网关地址失败: %s", exc)
                 return False
@@ -106,8 +189,7 @@ class ConfigManager:
     def save_config(self, new_config: AppConfigModel) -> AppConfigModel:
         self._config = new_config
         try:
-            with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-                json.dump(self._config.model_dump(), f, ensure_ascii=False, indent=2)
+            atomic_write_config(self._config.model_dump(), CONFIG_FILE)
             logger.info("系统配置快照已成功持久化至磁盘")
         except Exception as e:
             logger.error(f"持久化配置文件失败: {e}")

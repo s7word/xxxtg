@@ -252,11 +252,15 @@ class TestProxySellerServicePool(unittest.IsolatedAsyncioTestCase):
             miss = await svc.select_best_proxy(target_country="cl", allow_fallback=False)
             self.assertFalse(miss["success"])
             self.assertIn("暂无可用", miss["message"])
+            self.assertIsNone(miss["proxy"])
+            self.assertFalse(miss["fallback_used"])
 
             fallback = await svc.select_best_proxy(target_country="cl", allow_fallback=True)
-            self.assertTrue(fallback["success"])
-            self.assertTrue(fallback["fallback_used"])
-            self.assertIsNotNone(fallback["proxy"])
+            self.assertFalse(fallback["success"])
+            self.assertFalse(fallback["fallback_used"])
+            self.assertIsNone(fallback["proxy"])
+            self.assertIn("禁止跨大区", fallback["message"])
+            self.assertEqual(fallback["source"], "config_fallback_required")
 
             kz = await svc.select_best_proxy(target_country="kz", allow_fallback=False)
             self.assertTrue(kz["matched"])

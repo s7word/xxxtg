@@ -17,6 +17,7 @@ import random
 import re
 import shutil
 import tempfile
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -32,6 +33,25 @@ from backend.app.services.account_vault import AccountVaultService, normalize_ph
 from backend.app.services.net_utils import create_httpx_client
 
 logger = logging.getLogger("TelegramAppsHelper")
+
+TELETHON_CONNECT_TIMEOUT = 25.0
+MAX_RETAINED_JOBS = 200
+TERMINAL_JOB_STATUSES = frozenset({"success", "failed"})
+
+
+class TelethonConnectTimeout(RuntimeError):
+    """Telethon client.connect() 超过时限，避免前端无限等待。"""
+
+
+async def connect_telethon_with_timeout(client, timeout: float = TELETHON_CONNECT_TIMEOUT) -> None:
+    try:
+        await asyncio.wait_for(client.connect(), timeout=timeout)
+    except asyncio.TimeoutError as exc:
+        logger.warning("Telethon connect() 超时 (%.1fs)，切换手动验证码通道", timeout)
+        raise TelethonConnectTimeout(
+            f"Telethon 连接超时（{timeout:.0f}s），无法自动读取验证码"
+        ) from exc
+
 
 MY_TELEGRAM_ORG = "https://my.telegram.org"
 TELEGRAM_SYSTEM_USER_ID = 777000
@@ -254,7 +274,9 @@ class TelegramAppsJobManager:
     """my.telegram.org 申请任务内存状态机。"""
 
     _instance = None
+    _lock = threading.RLock()
     jobs: Dict[str, Dict[str, Any]] = {}
+    max_retained_jobs = MAX_RETAINED_JOBS
 
     @classmethod
     def get_instance(cls) -> "TelegramAppsJobManager":
@@ -262,54 +284,79 @@ class TelegramAppsJobManager:
             cls._instance = TelegramAppsJobManager()
         return cls._instance
 
+    def _evict_overflow_unlocked(self) -> None:
+        limit = getattr(self, "max_retained_jobs", MAX_RETAINED_JOBS) or MAX_RETAINED_JOBS
+        overflow = len(self.jobs) - limit + 1
+        if overflow <= 0:
+            return
+        completed = [
+            (jid, job)
+            for jid, job in self.jobs.items()
+            if (job.get("status") or "") in TERMINAL_JOB_STATUSES
+        ]
+        completed.sort(key=lambda item: item[1].get("updated_at") or item[1].get("created_at") or "")
+        for jid, _ in completed[:overflow]:
+            self.jobs.pop(jid, None)
+
     def create_job(self, account_id: Optional[str], phone: str) -> str:
         job_id = str(uuid.uuid4())[:8]
         now = datetime.datetime.now().isoformat()
-        self.jobs[job_id] = {
-            "job_id": job_id,
-            "account_id": account_id or "",
-            "phone": phone,
-            "status": "pending",
-            "logs": [],
-            "api_id": None,
-            "api_hash": None,
-            "app_title": None,
-            "created_new_app": False,
-            "applied_to_config": False,
-            "needs_manual_code": False,
-            "error": None,
-            "created_at": now,
-            "updated_at": now,
-            "random_hash": None,
-            "cookies": {},
-            "app_title_pref": None,
-            "app_shortname_pref": None,
-            "proxy": None,
-        }
+        with self._lock:
+            self._evict_overflow_unlocked()
+            self.jobs[job_id] = {
+                "job_id": job_id,
+                "account_id": account_id or "",
+                "phone": phone,
+                "status": "pending",
+                "logs": [],
+                "api_id": None,
+                "api_hash": None,
+                "app_title": None,
+                "created_new_app": False,
+                "applied_to_config": False,
+                "needs_manual_code": False,
+                "error": None,
+                "created_at": now,
+                "updated_at": now,
+                "random_hash": None,
+                "cookies": {},
+                "app_title_pref": None,
+                "app_shortname_pref": None,
+                "proxy": None,
+            }
         return job_id
 
     def get_job(self, job_id: str) -> Optional[Dict[str, Any]]:
-        return self.jobs.get(job_id)
+        with self._lock:
+            return self.jobs.get(job_id)
 
     def list_jobs(self) -> List[Dict[str, Any]]:
-        return sorted(self.jobs.values(), key=lambda x: x["created_at"], reverse=True)
+        with self._lock:
+            snapshot = list(self.jobs.values())
+        return sorted(snapshot, key=lambda x: x["created_at"], reverse=True)
+
+    def list_tasks(self) -> List[Dict[str, Any]]:
+        """与 RegistrationTaskManager.list_tasks 对齐的安全快照接口。"""
+        return self.list_jobs()
 
     async def append_log(self, job_id: str, message: str):
-        job = self.jobs.get(job_id)
-        if not job:
-            return
-        stamp = datetime.datetime.now().strftime("%H:%M:%S")
-        entry = f"[{stamp}] {message}"
-        job["logs"].append(entry)
-        job["updated_at"] = datetime.datetime.now().isoformat()
+        with self._lock:
+            job = self.jobs.get(job_id)
+            if not job:
+                return
+            stamp = datetime.datetime.now().strftime("%H:%M:%S")
+            entry = f"[{stamp}] {message}"
+            job["logs"].append(entry)
+            job["updated_at"] = datetime.datetime.now().isoformat()
         logger.info("[%s] %s", job_id, message)
 
     def update(self, job_id: str, **kwargs):
-        job = self.jobs.get(job_id)
-        if not job:
-            return
-        job.update(kwargs)
-        job["updated_at"] = datetime.datetime.now().isoformat()
+        with self._lock:
+            job = self.jobs.get(job_id)
+            if not job:
+                return
+            job.update(kwargs)
+            job["updated_at"] = datetime.datetime.now().isoformat()
 
     def to_response(self, job: Dict[str, Any]) -> TelegramAppsJobResponse:
         return TelegramAppsJobResponse(
@@ -615,7 +662,7 @@ class TelegramAppsHelper:
             **cls._telethon_client_kwargs(account),
         )
         try:
-            await client.connect()
+            await connect_telethon_with_timeout(client)
             me = await client.get_me()
             if not me:
                 raise RuntimeError("Telethon session 未授权（get_me 为空）")
@@ -656,7 +703,7 @@ class TelegramAppsHelper:
         since = since or (deadline - datetime.timedelta(seconds=15))
 
         try:
-            await client.connect()
+            await connect_telethon_with_timeout(client)
             me = await client.get_me()
             if not me or not await client.is_user_authorized():
                 raise RuntimeError("Telethon session 未授权，无法读取官方登录验证码")
@@ -740,10 +787,20 @@ class TelegramAppsHelper:
         else:
             await manager.append_log(job_id, "未绑定代理，将直连 my.telegram.org（可能因出口 IP 被门户风控）")
 
+        session_connect_failed = False
         if auto_read_code and account and account.has_session and not (manual_code or "").strip():
             try:
                 await manager.append_log(job_id, "预检 Telethon session 授权状态（使用临时副本，不回写 vault）")
                 await cls._assert_session_authorized(account, proxy=proxy)
+            except TelethonConnectTimeout as exc:
+                session_connect_failed = True
+                manager.update(job_id, needs_manual_code=True, status="waiting_code")
+                await manager.append_log(
+                    job_id,
+                    f"⚠️ Telethon connect() 超时（{TELETHON_CONNECT_TIMEOUT:.0f}s）: {exc}。"
+                    "已立即标记 needs_manual_code=True，请在控制台手动提交官方号 777000 的 Web 登录码，"
+                    "避免前端无限等待。",
+                )
             except Exception as exc:
                 manager.update(job_id, status="failed", error=str(exc))
                 await manager.append_log(job_id, f"❌ session 预检失败，已跳过发送 Web 登录码: {exc}")
@@ -760,11 +817,19 @@ class TelegramAppsHelper:
                 await manager.append_log(job_id, "登录验证码已请求，Telegram 会将其发送到该账号已登录的官方客户端")
 
             code = (manual_code or "").strip() or None
-            if not code and auto_read_code and account and account.has_session:
+            if not code and auto_read_code and account and account.has_session and not session_connect_failed:
                 manager.update(job_id, status="waiting_code", needs_manual_code=False)
                 await manager.append_log(job_id, "正在通过 Telethon 读取官方账号 777000 的登录验证码...")
                 try:
                     code = await cls._read_code_via_telethon(account, proxy=proxy)
+                except TelethonConnectTimeout as exc:
+                    await manager.append_log(
+                        job_id,
+                        f"⚠️ Telethon connect() 超时（{TELETHON_CONNECT_TIMEOUT:.0f}s）: {exc}。"
+                        "已立即标记 needs_manual_code=True，请在控制台手动提交，避免前端无限等待。",
+                    )
+                    manager.update(job_id, needs_manual_code=True)
+                    code = None
                 except Exception as exc:
                     await manager.append_log(job_id, f"自动读取验证码失败: {exc}")
                     code = None

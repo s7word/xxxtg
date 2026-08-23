@@ -453,7 +453,10 @@ class ProxySellerAutoSelectRequest(BaseModel):
     target_country: Optional[str] = Field(default=None, description="目标区域 ISO-2 / ISO-3 / 国家名")
     apply_fallback: bool = Field(default=False, description="是否一键写入 config.fallback_proxy")
     probe: bool = Field(default=False, description="是否按顺序测活后挑选")
-    allow_fallback: bool = Field(default=True, description="指定国家无节点时是否智能兜底到其它区域")
+    allow_fallback: bool = Field(
+        default=True,
+        description="指定国家无节点时是否允许调用方降级到配置的 fallback_proxy（不再跨大区抽节点）",
+    )
     refresh: bool = Field(default=False, description="是否绕过本地缓存强制拉取 API")
     api_key: Optional[str] = None
 

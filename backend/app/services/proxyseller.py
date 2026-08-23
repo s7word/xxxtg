@@ -23,8 +23,9 @@ from __future__ import annotations
 import logging
 import time
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
-
 import httpx
+
+from backend.app.services.net_utils import format_httpx_proxy_url
 
 logger = logging.getLogger("MultipathRelayGatewayService")
 
@@ -807,9 +808,11 @@ class ProxySellerService:
         max_probes: int = 3,
         phone: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """按目标国家自动挑选最佳/可用代理，支持测活与跨区域兜底。
+        """按目标国家严格挑选区域代理；禁止把智利/印度等互不相干大区隐式交叉分配。
 
         target_country 为空时可根据 phone（如 +91）推断区域，从而命中印度住宅池。
+        指定区域后若全军覆没，不跨大区强行选节点；由调用方优雅降级到 fallback_proxy。
+        allow_fallback 仅表示「允许调用方使用配置后备」，不再从其它区域池里抽节点。
         """
         country = _norm(target_country) or infer_country_from_phone(phone)
         regional = await self.get_proxy_list(country=country or None, refresh=refresh, include_health=False)
@@ -836,31 +839,24 @@ class ProxySellerService:
             if extras:
                 message += f"（含{' / '.join(extras)}）"
         else:
-            all_items = await self.get_proxy_list(country=None, refresh=False, include_health=False)
-            if country and all_items and allow_fallback:
-                fallback_used = True
-                source = "smart_fallback"
-                candidates = self._rotate(f"fallback:{country}", self._sort_candidates(all_items))
+            candidates = []
+            available: List[str] = []
+            if country:
+                all_items = await self.get_proxy_list(country=None, refresh=False, include_health=False)
                 available = sorted({
                     (item.get("country_code") or item.get("country") or "?").upper()
                     for item in all_items
                 })
                 hint = (
-                    f"目标区域 {country.upper()} 暂无可用 Proxy-Seller 代理；"
-                    f"账户当前区域: {', '.join(available) or '未知'}。已启用智能兜底。"
+                    f"目标区域 {country.upper()} 暂无可用区域代理"
+                    + (f"；账户当前其它区域: {', '.join(available)}" if available else "")
+                    + "。已禁止跨大区隐式兜底，请使用配置的 fallback_proxy。"
                 )
-                message = hint
-            elif country:
-                candidates = []
-                hint = (
-                    f"目标区域 {country.upper()} 暂无可用 Proxy-Seller 代理，"
-                    "且账户下也没有其它活跃节点可兜底。"
-                )
-                message = hint
+                source = "config_fallback_required" if allow_fallback else "strict_region_miss"
             else:
-                candidates = []
                 hint = "Proxy-Seller 账户下没有检索到活跃代理。"
-                message = hint
+                source = "empty_pool"
+            message = hint
 
         selected = None
         probe_results: List[Dict[str, Any]] = []
@@ -967,10 +963,15 @@ class ProxySellerService:
         if not addr or not port:
             return {"success": False, "error": "未配置有效的中继跳点主机地址与端口"}
 
-        proxy_url = f"{proxy_type}://"
-        if username and password:
-            proxy_url += f"{username}:{password}@"
-        proxy_url += f"{addr}:{port}"
+        proxy_url = format_httpx_proxy_url({
+            "proxy_type": proxy_type,
+            "addr": addr,
+            "port": port,
+            "username": username,
+            "password": password,
+        })
+        if not proxy_url:
+            return {"success": False, "error": "未配置有效的中继跳点主机地址与端口"}
 
         client_kwargs = {"verify": False, "timeout": timeout}
         started = time.perf_counter()

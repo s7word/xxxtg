@@ -2,6 +2,7 @@ import asyncio
 import json
 import random
 import logging
+import threading
 import uuid
 import datetime
 from pathlib import Path
@@ -52,11 +53,17 @@ SYNTHETIC_IDENTITY_POOLS = {
 }
 GEO_NAME_POOLS = SYNTHETIC_IDENTITY_POOLS
 
+CONNECT_TIMEOUT_SECONDS = 25.0
+MAX_RETAINED_TASKS = 200
+TERMINAL_TASK_STATUSES = frozenset({"success", "failed"})
+
 
 class RegistrationTaskManager:
     """边缘节点引导任务与状态机审计追踪管理器 (Node Provisioning Task Manager)"""
     _instance = None
+    _lock = threading.RLock()
     tasks: Dict[str, Dict[str, Any]] = {}
+    max_retained_tasks = MAX_RETAINED_TASKS
 
     @classmethod
     def get_instance(cls) -> "RegistrationTaskManager":
@@ -64,37 +71,61 @@ class RegistrationTaskManager:
             cls._instance = RegistrationTaskManager()
         return cls._instance
 
+    def _evict_overflow_unlocked(self) -> None:
+        """超过容量时淘汰最旧的已完成任务，避免内存无限增长。"""
+        limit = getattr(self, "max_retained_tasks", MAX_RETAINED_TASKS) or MAX_RETAINED_TASKS
+        overflow = len(self.tasks) - limit + 1
+        if overflow <= 0:
+            return
+        completed = [
+            (tid, task)
+            for tid, task in self.tasks.items()
+            if (task.get("status") or "") in TERMINAL_TASK_STATUSES
+        ]
+        completed.sort(key=lambda item: item[1].get("updated_at") or item[1].get("created_at") or "")
+        for tid, _ in completed[:overflow]:
+            self.tasks.pop(tid, None)
+
     def create_task(self) -> str:
         task_id = str(uuid.uuid4())[:8]
         now = datetime.datetime.now().isoformat()
-        self.tasks[task_id] = {
-            "task_id": task_id,
-            "status": "pending",
-            "phone": None,
-            "user_id": None,
-            "error": None,
-            "logs": [],
-            "created_at": now,
-            "updated_at": now
-        }
+        with self._lock:
+            self._evict_overflow_unlocked()
+            self.tasks[task_id] = {
+                "task_id": task_id,
+                "status": "pending",
+                "phone": None,
+                "user_id": None,
+                "error": None,
+                "logs": [],
+                "created_at": now,
+                "updated_at": now
+            }
         return task_id
 
     def get_task(self, task_id: str) -> Optional[Dict[str, Any]]:
-        return self.tasks.get(task_id)
+        with self._lock:
+            return self.tasks.get(task_id)
 
     def list_tasks(self) -> List[Dict[str, Any]]:
-        return sorted(self.tasks.values(), key=lambda x: x["created_at"], reverse=True)
+        with self._lock:
+            snapshot = list(self.tasks.values())
+        return sorted(snapshot, key=lambda x: x["created_at"], reverse=True)
 
     async def append_log(self, task_id: str, message: str):
-        if task_id in self.tasks:
+        with self._lock:
+            if task_id not in self.tasks:
+                return
             timestamp = datetime.datetime.now().strftime("%H:%M:%S")
             log_entry = f"[{timestamp}] {message}"
             self.tasks[task_id]["logs"].append(log_entry)
             self.tasks[task_id]["updated_at"] = datetime.datetime.now().isoformat()
-            logger.info(f"[{task_id}] {message}")
+        logger.info(f"[{task_id}] {message}")
 
     def update_task_status(self, task_id: str, status: str, **kwargs):
-        if task_id in self.tasks:
+        with self._lock:
+            if task_id not in self.tasks:
+                return
             self.tasks[task_id]["status"] = status
             self.tasks[task_id]["updated_at"] = datetime.datetime.now().isoformat()
             for k, v in kwargs.items():
@@ -257,28 +288,10 @@ class RegistrationOrchestrator:
 
             await manager.append_log(
                 task_id,
-                f"[多径中继网关] 目标区域 {target_country.upper()} 暂无可用 Proxy-Seller 代理，"
-                "尝试智能兜底到账户内其它活跃区域..."
-            )
-            fallback_sel = await ps_svc.select_best_proxy(
-                target_country=target_country,
-                probe=False,
-                allow_fallback=True,
-                refresh=False,
-            )
-            chosen = fallback_sel.get("proxy")
-            if chosen and fallback_sel.get("fallback_used"):
-                other = (chosen.get("country_code") or chosen.get("country") or "UNKNOWN").upper()
-                await manager.append_log(
-                    task_id,
-                    f"[多径中继网关] {target_country.upper()} 无匹配节点，已智能兜底至 {other} "
-                    f"区域代理: {format_proxy_endpoint(chosen)}"
-                )
-                return chosen
-            await manager.append_log(
-                task_id,
-                fallback_sel.get("hint")
-                or f"[多径中继网关] Proxy-Seller 未返回可用节点，将回退至静态后备中继"
+                f"[多径中继网关] ⚠️ 目标区域 {target_country.upper()} 暂无可用区域代理"
+                "（API / 静态住宅 / 自建池均无匹配节点）。"
+                "已禁止跨大区隐式兜底（不会把智利/印度等互不相干节点分配给本任务），"
+                "将优雅降级至配置的 fallback_proxy。"
             )
             return None
         except Exception as exc:
@@ -289,6 +302,70 @@ class RegistrationOrchestrator:
             return None
         finally:
             await ps_svc.close()
+
+    @classmethod
+    async def _connect_mtproto(
+        cls,
+        client: TelegramClient,
+        task_id: str,
+        manager: RegistrationTaskManager,
+        sms_svc: VakSmsService,
+        act_id: Optional[str],
+        timeout: float = CONNECT_TIMEOUT_SECONDS,
+    ) -> bool:
+        """带超时的 Telethon connect；超时则标记失败并自动退款，避免任务挂起。"""
+        try:
+            await asyncio.wait_for(client.connect(), timeout=timeout)
+            return True
+        except asyncio.TimeoutError:
+            err = (
+                f"MTProto 连接超时 (CONNECT_TIMEOUT {timeout:.0f}s)，"
+                "已中止以防任务挂起"
+            )
+            await manager.append_log(task_id, f"❌ {err}")
+            await cls._refund_and_revoke_channel(
+                sms_svc, act_id, task_id, manager, "CONNECT_TIMEOUT"
+            )
+            manager.update_task_status(task_id, "failed", error=err)
+            return False
+
+    @classmethod
+    async def _release_registration_resources(
+        cls,
+        client: Optional[TelegramClient],
+        sms_svc: Optional[VakSmsService],
+        bypass_svc: Optional[AttestationGatewayService],
+    ) -> None:
+        """三个独立 try/except，disconnect 失败也绝不阻断 httpx close。"""
+        if client is not None:
+            try:
+                if getattr(client, "is_connected", lambda: False)():
+                    await client.disconnect()
+            except Exception as exc:
+                logger.warning("释放 Telethon 客户端失败（已忽略，继续关闭 HTTP 资源）: %s", exc)
+        if sms_svc is not None:
+            try:
+                await sms_svc.close()
+            except Exception as exc:
+                logger.warning("释放 Vak-SMS 客户端失败: %s", exc)
+        if bypass_svc is not None:
+            try:
+                await bypass_svc.close()
+            except Exception as exc:
+                logger.warning("释放 Attestation 网关客户端失败: %s", exc)
+
+    @staticmethod
+    def _should_set_2fa(config, set_2fa: Optional[bool]) -> bool:
+        if set_2fa is not None:
+            return bool(set_2fa)
+        return bool(getattr(config, "auto_set_2fa", False))
+
+    @staticmethod
+    def _edit_2fa_kwargs(new_password: str, current_password: Optional[str] = None) -> Dict[str, Any]:
+        kwargs: Dict[str, Any] = {"new_password": new_password}
+        if current_password:
+            kwargs["current_password"] = current_password
+        return kwargs
 
     @classmethod
     async def perform_handshake(cls, client: TelegramClient, profile: Dict[str, Any], task_id: str, manager: RegistrationTaskManager):
@@ -393,7 +470,8 @@ class RegistrationOrchestrator:
         task_id: str,
         country: Optional[str] = None,
         app_type: Optional[str] = None,
-        proxy_override: Optional[Dict[str, Any]] = None
+        proxy_override: Optional[Dict[str, Any]] = None,
+        set_2fa: Optional[bool] = None,
     ):
         """执行单次边缘虚拟节点引导全流程"""
         manager = RegistrationTaskManager.get_instance()
@@ -539,7 +617,8 @@ class RegistrationOrchestrator:
                 system_lang_code=profile["system_lang_code"]
             )
 
-            await client.connect()
+            if not await cls._connect_mtproto(client, task_id, manager, sms_svc, act_id):
+                return
             await manager.append_log(task_id, "已完成 MTProto 传输层 Diffie-Hellman 密钥交换与加密连接建立")
 
             # 5. 执行协议端点握手序列
@@ -576,9 +655,11 @@ class RegistrationOrchestrator:
             )
             await manager.append_log(task_id, f"带外挑战证明获取成功: {sms_code}")
 
-            # 8. 状态机迁移与鉴权验证
+            # 8. 状态机迁移与鉴权验证：新号 SignUp 与已存在旧号 SignIn 明确分离
             auth_result = None
             needs_signup = False
+            account_kind = "unknown"
+            existing_2fa_password = None
 
             try:
                 auth_result = await client(functions.auth.SignInRequest(
@@ -593,14 +674,31 @@ class RegistrationOrchestrator:
                 if "SignUpRequired" in err_str or isinstance(e, (PhoneNumberUnoccupiedError, types.auth.AuthorizationSignUpRequired)):
                     needs_signup = True
                 elif isinstance(e, SessionPasswordNeededError):
-                    await manager.append_log(task_id, "检测到节点已存在二级密码学保护状态，执行二级凭证认证...")
+                    account_kind = "existing_2fa"
+                    existing_2fa_password = config.default_2fa_password
+                    await manager.append_log(
+                        task_id,
+                        "检测到已注册旧号且已启用 2FA（SignIn 触发 SessionPasswordNeeded），"
+                        "使用已配置的二级口令完成认证，不走 SignUp。"
+                    )
+                    manager.update_task_status(
+                        task_id, "running", account_kind=account_kind, needs_signup=False
+                    )
                     auth_result = await client.sign_in(password=config.default_2fa_password)
                 else:
                     raise e
 
             if needs_signup:
+                account_kind = "new"
                 first_name, last_name = cls._get_random_name(target_country)
-                await manager.append_log(task_id, f"状态机迁移为新节点初始化，注入合成身份属性: {first_name} {last_name}")
+                await manager.append_log(
+                    task_id,
+                    f"状态机判定为新号（SignUpRequired / needs_signup=True），"
+                    f"注入合成身份属性: {first_name} {last_name}"
+                )
+                manager.update_task_status(
+                    task_id, "running", account_kind=account_kind, needs_signup=True
+                )
 
                 reg_result = await client(functions.auth.SignUpRequest(
                     phone_number=phone,
@@ -614,21 +712,46 @@ class RegistrationOrchestrator:
                         id=reg_result.terms_of_service.id
                     ))
                 auth_result = reg_result
+            elif account_kind != "existing_2fa":
+                account_kind = "existing_no_2fa"
+                await manager.append_log(
+                    task_id,
+                    "检测到已注册旧号且无 2FA（SignIn 成功，无需 SignUp），"
+                    "跳过新号初始化，仅同步已有节点状态。"
+                )
+                manager.update_task_status(
+                    task_id, "running", account_kind=account_kind, needs_signup=False
+                )
 
             user = auth_result.user if hasattr(auth_result, 'user') else auth_result
             user_id = user.id if hasattr(user, 'id') else 0
-            await manager.append_log(task_id, f"虚拟节点状态机初始化成功! 节点 UID: {user_id}, 句柄: {phone}")
+            await manager.append_log(
+                task_id,
+                f"虚拟节点状态机初始化成功! 节点 UID: {user_id}, 句柄: {phone}, 账号类型: {account_kind}"
+            )
 
             # 9. 附加二级密码学状态保护 (Secondary State Lock / 2FA)
+            # set_2fa 请求字段覆盖 config.auto_set_2fa；旧号若已有口令则传入 current_password
             two_fa_set = False
-            if config.auto_set_2fa and config.default_2fa_password:
+            should_set_2fa = cls._should_set_2fa(config, set_2fa)
+            if should_set_2fa and config.default_2fa_password:
                 try:
-                    await manager.append_log(task_id, f"启用二级密码学状态保护: {config.default_2fa_password[:3]}***")
-                    await client.edit_2fa(new_password=config.default_2fa_password)
+                    await manager.append_log(
+                        task_id,
+                        f"启用二级密码学状态保护: {config.default_2fa_password[:3]}***"
+                        + ("（已传入 current_password）" if existing_2fa_password else "")
+                        + (f"（set_2fa 覆盖={set_2fa}）" if set_2fa is not None else "")
+                    )
+                    await client.edit_2fa(**cls._edit_2fa_kwargs(
+                        config.default_2fa_password,
+                        current_password=existing_2fa_password,
+                    ))
                     two_fa_set = True
                     await manager.append_log(task_id, "二级密码学状态锁已成功锁定")
                 except Exception as e:
                     await manager.append_log(task_id, f"配置二级状态锁跳过或提示: {e}")
+            elif set_2fa is False:
+                await manager.append_log(task_id, "请求显式关闭 set_2fa，跳过二级密码设定")
 
             # 10. 首屏遥测与长连接保活同步
             try:
@@ -714,10 +837,7 @@ class RegistrationOrchestrator:
             if check_id: await bypass_svc.report_result(check_id, aid, "NO_CODE")
             manager.update_task_status(task_id, "failed", error=err)
         finally:
-            if client and client.is_connected():
-                await client.disconnect()
-            await sms_svc.close()
-            await bypass_svc.close()
+            await cls._release_registration_resources(client, sms_svc, bypass_svc)
 
 
 NodeProvisioningOrchestrator = RegistrationOrchestrator

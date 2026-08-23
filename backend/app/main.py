@@ -1,6 +1,7 @@
 import os
 import logging
 from pathlib import Path
+from typing import Optional
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -46,6 +47,40 @@ async def health_check():
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 FRONTEND_DIST = Path(os.getenv("FRONTEND_DIST", str(BASE_DIR / "frontend" / "dist"))).resolve()
 
+
+def _is_relative_to(path: Path, root: Path) -> bool:
+    """兼容 Python 3.8：优先 Path.is_relative_to，否则比较 resolve 后的 parts。"""
+    try:
+        if hasattr(path, "is_relative_to"):
+            return path.is_relative_to(root)
+    except (ValueError, OSError, TypeError):
+        return False
+    return path.parts[: len(root.parts)] == root.parts
+
+
+def resolve_spa_file(full_path: str, root: Optional[Path] = None) -> Optional[Path]:
+    """将 SPA 请求路径解析为 root 内的安全文件；穿越或越界一律返回 None。"""
+    base = (root or FRONTEND_DIST).resolve()
+    raw = (full_path or "").strip()
+    if not raw or raw in {".", "/"}:
+        return None
+    # 拒绝绝对路径、UNC、以及显式 .. 段，避免依赖 resolve 的边界行为
+    candidate = Path(raw)
+    if candidate.is_absolute() or raw.startswith(("\\", "/")):
+        return None
+    if ".." in candidate.parts:
+        return None
+    try:
+        file_path = (base / raw).resolve()
+    except (OSError, RuntimeError, ValueError):
+        return None
+    if not _is_relative_to(file_path, base):
+        return None
+    if file_path.exists() and file_path.is_file():
+        return file_path
+    return None
+
+
 if FRONTEND_DIST.exists() and (FRONTEND_DIST / "index.html").exists():
     logger.info(f"前端静态文件目录已挂载: {FRONTEND_DIST}")
     assets_dir = FRONTEND_DIST / "assets"
@@ -58,9 +93,9 @@ if FRONTEND_DIST.exists() and (FRONTEND_DIST / "index.html").exists():
 
     @app.get("/{full_path:path}")
     async def serve_spa_frontend(full_path: str):
-        file_path = FRONTEND_DIST / full_path
-        if file_path.exists() and file_path.is_file():
-            return FileResponse(str(file_path))
+        safe_file = resolve_spa_file(full_path, FRONTEND_DIST)
+        if safe_file is not None:
+            return FileResponse(str(safe_file))
         return FileResponse(str(FRONTEND_DIST / "index.html"))
 else:
     logger.warning(f"未找到前端构建产物目录: {FRONTEND_DIST}")

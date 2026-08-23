@@ -451,7 +451,8 @@ async def start_registration(req: RegisterTaskRequest, background_tasks: Backgro
         task_id=task_id,
         country=req.country,
         app_type=req.app_type,
-        proxy_override=proxy_dict
+        proxy_override=proxy_dict,
+        set_2fa=req.set_2fa,
     )
 
     return RegisterTaskResponse(
