@@ -205,8 +205,7 @@ async def test_proxy_connectivity(proxy_data: Dict[str, Any]):
 def _proxy_seller_service(api_key: Optional[str] = None) -> ProxySellerService:
     config = ConfigManager.get_instance().config
     key = (api_key or config.proxy_seller_key or "").strip()
-    if not key:
-        raise HTTPException(status_code=400, detail="未配置 Proxy-Seller API Key")
+    # API Key 缺失或被 IP 白名单拦截时，服务仍可回退到内置静态住宅池。
     return ProxySellerService(key)
 
 

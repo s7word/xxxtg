@@ -65,6 +65,18 @@ PROXY_TYPE_BUCKETS = ("ipv4", "ipv6", "mobile", "isp", "mix", "mix_isp", "reside
 CACHE_TTL_SECONDS = 90.0
 DEFAULT_PROBE_TIMEOUT = 8.0
 
+# 云主机出口 IP 无法固定加入 Proxy-Seller API 白名单时，直接使用这批带账密的
+# 专属住宅/动态节点作为内置候选池，保证自动分配与测活不依赖 API。
+STATIC_RESIDENTIAL_HOST = "res.proxy-seller.com"
+STATIC_RESIDENTIAL_USERNAME = "2c131619348a4a7c"
+STATIC_RESIDENTIAL_PASSWORD = "aU9dcl6IekEYLmtv"
+STATIC_RESIDENTIAL_PORTS = (10000, 10001, 10002, 10003, 10004)
+STATIC_CATALOG_TYPE = "resident_static"
+IP_PROBE_ENDPOINTS = (
+    "https://ipapi.co/json/",
+    "https://ipinfo.io/json",
+)
+
 
 def _norm(value: Any) -> str:
     return str(value or "").strip().lower()
@@ -104,6 +116,30 @@ def country_alpha3(query: Optional[str]) -> Optional[str]:
         if token in family:
             return extras[0].upper()
     return None
+
+
+def _parse_ip_probe_payload(data: Any) -> Optional[Dict[str, Any]]:
+    """兼容 ipapi.co / ipinfo.io 等出口探测响应。"""
+    if not isinstance(data, dict):
+        return None
+    ip = data.get("ip") or data.get("query")
+    if not ip:
+        return None
+    country_code = data.get("country_code") or data.get("countryCode")
+    country = data.get("country_name")
+    raw_country = data.get("country")
+    if not country_code and isinstance(raw_country, str) and len(raw_country.strip()) == 2:
+        country_code = raw_country.strip().upper()
+    if not country:
+        country = raw_country if raw_country and len(str(raw_country)) > 2 else country_code
+    return {
+        "ip": ip,
+        "country": country,
+        "country_code": str(country_code).upper() if country_code else None,
+        "city": data.get("city"),
+        "region": data.get("region") or data.get("region_name"),
+        "org": data.get("org") or data.get("org_name") or data.get("isp"),
+    }
 
 
 def _as_int(value: Any, default: Optional[int] = None) -> Optional[int]:
@@ -260,6 +296,63 @@ def format_proxy_endpoint(proxy: Dict[str, Any]) -> str:
     return f"{protocol}://{proxy.get('addr')}:{proxy.get('port')}"
 
 
+def builtin_static_residential_items() -> List[Dict[str, Any]]:
+    """内置 Proxy-Seller 专属住宅节点（端口 10000-10004，账密鉴权）。
+
+    实测这批节点出口均落在 Chile / Santiago，因此打上 CL 标签，
+    以便 target_country=cl 的自动分配也能直接命中。
+    """
+    collected: List[Dict[str, Any]] = []
+    for port in STATIC_RESIDENTIAL_PORTS:
+        normalized = normalize_proxy_item(
+            {
+                "id": f"static-res-{port}",
+                "ip": STATIC_RESIDENTIAL_HOST,
+                "protocol": "socks5",
+                "port": int(port),
+                "login": STATIC_RESIDENTIAL_USERNAME,
+                "password": STATIC_RESIDENTIAL_PASSWORD,
+                "country": "Chile",
+                "country_alpha3": "CHL",
+                "country_code": "cl",
+                "status": "ACTIVE",
+                "status_type": "ACTIVE",
+                "type": STATIC_CATALOG_TYPE,
+            },
+            bucket=STATIC_CATALOG_TYPE,
+        )
+        if not normalized:
+            continue
+        normalized["source"] = "static_residential"
+        collected.append(normalized)
+    return collected
+
+
+def merge_proxy_pools(*pools: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """按 addr:port 去重合并多个候选池，靠前的池优先保留。"""
+    seen: Set[str] = set()
+    merged: List[Dict[str, Any]] = []
+    for pool in pools:
+        for item in pool or []:
+            if not isinstance(item, dict):
+                continue
+            ident = proxy_identity(item)
+            if not ident or ident in seen:
+                continue
+            seen.add(ident)
+            merged.append(dict(item))
+    return merged
+
+
+def is_static_residential(proxy: Optional[Dict[str, Any]]) -> bool:
+    if not proxy:
+        return False
+    return (
+        _norm(proxy.get("catalog_type")) == STATIC_CATALOG_TYPE
+        or _norm(proxy.get("source")) == "static_residential"
+    )
+
+
 class ProxySellerService:
     """多径传输出口中继网关服务 (Multipath Egress Relay Gateway Provider)"""
 
@@ -270,9 +363,15 @@ class ProxySellerService:
     _health: Dict[str, Dict[str, Any]] = {}
     _rr_cursor: Dict[str, int] = {}
 
-    def __init__(self, api_key: str, cache_ttl: float = CACHE_TTL_SECONDS):
+    def __init__(
+        self,
+        api_key: str,
+        cache_ttl: float = CACHE_TTL_SECONDS,
+        include_static: bool = True,
+    ):
         self.api_key = (api_key or "").strip()
         self.cache_ttl = cache_ttl
+        self.include_static = include_static
         self.client = httpx.AsyncClient(timeout=30.0, follow_redirects=True)
 
     async def close(self):
@@ -346,11 +445,47 @@ class ProxySellerService:
         return collected
 
     async def refresh_pool(self, proxy_type: Optional[str] = None) -> List[Dict[str, Any]]:
-        items = await self._fetch_remote_items(proxy_type=proxy_type)
+        api_items: List[Dict[str, Any]] = []
+        api_error: Optional[str] = None
+        if not self.api_key:
+            api_error = "未配置 Proxy-Seller API Key"
+        else:
+            try:
+                api_items = await self._fetch_remote_items(proxy_type=proxy_type)
+            except Exception as exc:
+                api_error = str(exc)
+                if self.include_static:
+                    logger.warning(
+                        "Proxy-Seller API 不可用（%s），回退到内置静态住宅代理池",
+                        api_error,
+                    )
+                else:
+                    logger.warning("Proxy-Seller API 不可用（%s）", api_error)
+
+        static_items = builtin_static_residential_items() if self.include_static else []
+        items = merge_proxy_pools(api_items, static_items)
+        if not items:
+            if api_error:
+                raise RuntimeError(api_error)
+            raise RuntimeError("Proxy-Seller 账户下没有检索到活跃代理，且未启用内置静态住宅池")
+
+        source = "api+static" if api_items and static_items else (
+            "static_residential" if static_items and not api_items else "api"
+        )
         entry = self._cache_entry()
         entry["items"] = items
         entry["fetched_at"] = time.time()
-        logger.info("已从 Proxy-Seller API 刷新出口中继池: %s 个节点", len(items))
+        entry["api_error"] = api_error
+        entry["api_count"] = len(api_items)
+        entry["static_count"] = len(static_items)
+        entry["source"] = source
+        logger.info(
+            "已刷新出口中继池: 合计 %s 个节点 (API=%s, 静态住宅=%s, source=%s)",
+            len(items),
+            len(api_items),
+            len(static_items),
+            source,
+        )
         return [dict(item) for item in items]
 
     async def _ensure_pool(self, refresh: bool = False, proxy_type: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -417,6 +552,10 @@ class ProxySellerService:
             "cache_age_seconds": round(age, 2) if age is not None else None,
             "cache_ttl_seconds": self.cache_ttl,
             "total_cached": len(entry.get("items") or []),
+            "source": entry.get("source"),
+            "api_error": entry.get("api_error"),
+            "api_count": entry.get("api_count"),
+            "static_count": entry.get("static_count"),
         }
 
     def _sort_candidates(self, proxies: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -460,7 +599,11 @@ class ProxySellerService:
 
         if regional:
             candidates = self._rotate(country or "*", self._sort_candidates(regional))
+            static_hit = any(is_static_residential(item) for item in regional)
+            source = "static_residential" if static_hit and all(is_static_residential(item) for item in regional) else "regional"
             message = f"已匹配到 {len(regional)} 个 {(country or 'ALL').upper()} 区域代理"
+            if static_hit:
+                message += "（含内置静态住宅节点）"
         else:
             all_items = await self.get_proxy_list(country=None, refresh=False, include_health=False)
             if country and all_items and allow_fallback:
@@ -514,6 +657,11 @@ class ProxySellerService:
                 f"已自动分配 {(selected.get('country_code') or country or 'ALL').upper()} "
                 f"区域代理 {format_proxy_endpoint(selected)}"
             )
+
+        if selected and is_static_residential(selected):
+            source = "static_residential"
+            if "内置静态住宅" not in (message or ""):
+                message = f"{message}（内置静态住宅节点）"
 
         return {
             "success": selected is not None,
@@ -590,6 +738,7 @@ class ProxySellerService:
         proxy_url += f"{addr}:{port}"
 
         client_kwargs = {"verify": False, "timeout": timeout}
+        started = time.perf_counter()
         try:
             try:
                 client = httpx.AsyncClient(proxy=proxy_url, **client_kwargs)
@@ -597,20 +746,38 @@ class ProxySellerService:
                 client = httpx.AsyncClient(proxies=proxy_url, **client_kwargs)
 
             async with client:
-                ip_resp = await client.get("https://ipapi.co/json/")
-                ip_data = ip_resp.json()
-                if not isinstance(ip_data, dict) or not ip_data.get("ip"):
-                    return {"success": False, "error": f"出口探测响应异常: {ip_data}"}
+                last_error = None
+                for endpoint in IP_PROBE_ENDPOINTS:
+                    probe_started = time.perf_counter()
+                    try:
+                        ip_resp = await client.get(endpoint)
+                        ip_data = ip_resp.json()
+                    except Exception as exc:
+                        last_error = f"{endpoint}: {exc}"
+                        continue
+                    parsed = _parse_ip_probe_payload(ip_data)
+                    if not parsed:
+                        last_error = f"出口探测响应异常: {ip_data}"
+                        continue
+                    latency_ms = round((time.perf_counter() - probe_started) * 1000, 1)
+                    parsed.update({
+                        "success": True,
+                        "latency_ms": latency_ms,
+                        "total_ms": round((time.perf_counter() - started) * 1000, 1),
+                        "probe_url": endpoint,
+                    })
+                    return parsed
                 return {
-                    "success": True,
-                    "ip": ip_data.get("ip"),
-                    "country": ip_data.get("country_name"),
-                    "country_code": ip_data.get("country_code"),
-                    "city": ip_data.get("city"),
-                    "org": ip_data.get("org"),
+                    "success": False,
+                    "error": last_error or "出口探测全部失败",
+                    "total_ms": round((time.perf_counter() - started) * 1000, 1),
                 }
         except Exception as exc:
-            return {"success": False, "error": str(exc)}
+            return {
+                "success": False,
+                "error": str(exc),
+                "total_ms": round((time.perf_counter() - started) * 1000, 1),
+            }
 
     probe_relay_path_connectivity = test_proxy_connectivity
 

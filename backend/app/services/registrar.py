@@ -152,11 +152,15 @@ class RegistrationOrchestrator:
         选中的动态代理会同时注入 MTProto 通道、Attestation 网关以及 RecaptchaMobile 解题通道，
         以保证手机号国家、语言、时区与出口 IP 拓扑对齐。
         """
-        from backend.app.services.proxyseller import ProxySellerService, format_proxy_endpoint
+        from backend.app.services.proxyseller import (
+            ProxySellerService,
+            format_proxy_endpoint,
+            is_static_residential,
+        )
 
         await manager.append_log(
             task_id,
-            f"[多径中继网关] 正在通过 Proxy-Seller API 检索 {target_country.upper()} 区域代理..."
+            f"[多径中继网关] 正在检索 {target_country.upper()} 区域代理（API + 内置静态住宅池）..."
         )
         ps_svc = ProxySellerService(config.proxy_seller_key)
         try:
@@ -172,9 +176,14 @@ class RegistrationOrchestrator:
                 chosen = selection.get("proxy")
                 if chosen:
                     endpoint = format_proxy_endpoint(chosen)
+                    origin = (
+                        "内置静态住宅代理池"
+                        if is_static_residential(chosen)
+                        else "Proxy-Seller API"
+                    )
                     await manager.append_log(
                         task_id,
-                        f"[多径中继网关] 成功从 Proxy-Seller API 自动匹配到 {target_country.upper()} "
+                        f"[多径中继网关] 成功从 {origin} 自动匹配到 {target_country.upper()} "
                         f"区域代理: {endpoint}"
                     )
                     if chosen.get("egress_ip") or chosen.get("egress_country"):
@@ -191,9 +200,14 @@ class RegistrationOrchestrator:
                     f"节点但未能完成测活选择，回退至列表首个节点"
                 )
                 first = regional[0]
+                origin = (
+                    "内置静态住宅代理池"
+                    if is_static_residential(first)
+                    else "Proxy-Seller API"
+                )
                 await manager.append_log(
                     task_id,
-                    f"[多径中继网关] 成功从 Proxy-Seller API 自动匹配到 {target_country.upper()} "
+                    f"[多径中继网关] 成功从 {origin} 自动匹配到 {target_country.upper()} "
                     f"区域代理: {format_proxy_endpoint(first)}"
                 )
                 return first

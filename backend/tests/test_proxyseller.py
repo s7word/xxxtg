@@ -22,11 +22,17 @@ from backend.app.models.schemas import (  # noqa: E402
 )
 from backend.app.services.proxyseller import (  # noqa: E402
     ProxySellerService,
+    STATIC_RESIDENTIAL_HOST,
+    STATIC_RESIDENTIAL_PORTS,
+    builtin_static_residential_items,
     expand_country_aliases,
     format_proxy_endpoint,
+    is_static_residential,
     match_proxy_country,
+    merge_proxy_pools,
     normalize_proxy_item,
     _extract_raw_items,
+    _parse_ip_probe_payload,
     _pick_protocol_and_port,
 )
 from backend.app.services.registrar import (  # noqa: E402
@@ -167,8 +173,8 @@ class TestProxySellerServicePool(unittest.IsolatedAsyncioTestCase):
         ProxySellerService._health.clear()
         ProxySellerService._rr_cursor.clear()
 
-    async def _svc_with_payload(self, payload):
-        svc = ProxySellerService("test-key", cache_ttl=30)
+    async def _svc_with_payload(self, payload, include_static=False):
+        svc = ProxySellerService("test-key", cache_ttl=30, include_static=include_static)
         svc.client.request = AsyncMock(return_value=DummyResponse(payload))
         return svc
 
@@ -279,6 +285,7 @@ class TestProxySellerServicePool(unittest.IsolatedAsyncioTestCase):
             ok = await ProxySellerService.test_proxy_connectivity(proxy)
         self.assertTrue(ok["success"])
         self.assertEqual(ok["country_code"], "CL")
+        self.assertIn("latency_ms", ok)
 
         empty = await ProxySellerService.test_proxy_connectivity({"proxy_type": "socks5"})
         self.assertFalse(empty["success"])
@@ -333,6 +340,98 @@ class TestProxySellerServicePool(unittest.IsolatedAsyncioTestCase):
                 await svc.get_proxy_list(refresh=True)
         finally:
             await svc.close()
+
+    async def test_static_pool_used_when_api_blocked(self):
+        svc = ProxySellerService("test-key", include_static=True)
+        svc.client.request = AsyncMock(return_value=DummyResponse({
+            "status": "error",
+            "errors": [{"message": "IP address is not allowed"}],
+        }))
+        try:
+            items = await svc.get_proxy_list(country="cl", refresh=True, include_health=False)
+            self.assertEqual(len(items), len(STATIC_RESIDENTIAL_PORTS))
+            self.assertTrue(all(is_static_residential(item) for item in items))
+            self.assertTrue(all(item["addr"] == STATIC_RESIDENTIAL_HOST for item in items))
+            self.assertEqual({item["port"] for item in items}, set(STATIC_RESIDENTIAL_PORTS))
+            meta = svc.cache_meta()
+            self.assertEqual(meta["source"], "static_residential")
+            self.assertIn("IP address is not allowed", meta["api_error"] or "")
+
+            selected = await svc.select_best_proxy(target_country="cl", allow_fallback=False)
+            self.assertTrue(selected["success"])
+            self.assertTrue(selected["matched"])
+            self.assertEqual(selected["source"], "static_residential")
+            self.assertEqual(selected["proxy"]["addr"], STATIC_RESIDENTIAL_HOST)
+            self.assertIn(selected["proxy"]["port"], STATIC_RESIDENTIAL_PORTS)
+        finally:
+            await svc.close()
+
+    async def test_static_pool_merges_with_api_results(self):
+        svc = await self._svc_with_payload({
+            "status": "success",
+            "data": {"ipv4": [_usa_raw()]},
+            "errors": [],
+        }, include_static=True)
+        try:
+            items = await svc.get_proxy_list(refresh=True, include_health=False)
+            self.assertEqual(len(items), 1 + len(STATIC_RESIDENTIAL_PORTS))
+            self.assertEqual(items[0]["addr"], "23.81.44.9")
+            self.assertTrue(any(is_static_residential(item) for item in items))
+            chile = await svc.get_proxy_list(country="cl", include_health=False)
+            self.assertEqual(len(chile), len(STATIC_RESIDENTIAL_PORTS))
+        finally:
+            await svc.close()
+
+    async def test_static_pool_works_without_api_key(self):
+        svc = ProxySellerService("", include_static=True)
+        try:
+            items = await svc.get_proxy_list(refresh=True, include_health=False)
+            self.assertEqual(len(items), len(STATIC_RESIDENTIAL_PORTS))
+            self.assertEqual(svc.cache_meta()["source"], "static_residential")
+        finally:
+            await svc.close()
+
+
+class TestStaticResidentialHelpers(unittest.TestCase):
+    def test_builtin_static_items_are_chile_socks5(self):
+        items = builtin_static_residential_items()
+        self.assertEqual(len(items), 5)
+        self.assertEqual([item["port"] for item in items], list(STATIC_RESIDENTIAL_PORTS))
+        for item in items:
+            self.assertTrue(is_static_residential(item))
+            self.assertEqual(item["addr"], STATIC_RESIDENTIAL_HOST)
+            self.assertEqual(item["proxy_type"], "socks5")
+            self.assertEqual(item["country_code"], "cl")
+            self.assertTrue(item["username"])
+            self.assertTrue(item["password"])
+            self.assertTrue(match_proxy_country(item, "cl"))
+            self.assertTrue(match_proxy_country(item, "chile"))
+
+    def test_merge_proxy_pools_dedupes_identity(self):
+        static = builtin_static_residential_items()
+        duplicate = dict(static[0])
+        duplicate["id"] = "dup"
+        merged = merge_proxy_pools(static, [duplicate, normalize_proxy_item(_usa_raw())])
+        self.assertEqual(len(merged), 6)
+
+    def test_parse_ip_probe_payload(self):
+        ipapi = _parse_ip_probe_payload({
+            "ip": "186.189.99.200",
+            "country_name": "Chile",
+            "country_code": "CL",
+            "city": "Santiago",
+            "org": "WOM SpA",
+        })
+        self.assertEqual(ipapi["ip"], "186.189.99.200")
+        self.assertEqual(ipapi["country_code"], "CL")
+        ipinfo = _parse_ip_probe_payload({
+            "ip": "45.232.95.229",
+            "country": "CL",
+            "city": "Santiago",
+            "org": "AS52341 WOM SpA",
+        })
+        self.assertEqual(ipinfo["country_code"], "CL")
+        self.assertIsNone(_parse_ip_probe_payload({"error": True}))
 
 
 class TestRegistrarProxyAutoMatch(unittest.IsolatedAsyncioTestCase):
