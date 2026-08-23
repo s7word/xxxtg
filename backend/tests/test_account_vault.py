@@ -62,6 +62,11 @@ SAMPLE_LOGIN_MESSAGES = [
     "Web login code. Telegram (my.telegram.org code).\n48291",
     "Your confirmation code: 90311",
     "Код для входа: 11552",
+    (
+        "Web login code. Dear Tester, we received a request from your account to log in "
+        "on my.telegram.org. This is your login code:\nAbC12-xyZ9\n\nDo not give this code "
+        "to anyone, even if they say they are from Telegram."
+    ),
 ]
 
 
@@ -191,6 +196,7 @@ class TestTelegramAppsParsers(unittest.TestCase):
         self.assertEqual(extract_login_code(SAMPLE_LOGIN_MESSAGES[1]), "48291")
         self.assertEqual(extract_login_code(SAMPLE_LOGIN_MESSAGES[2]), "90311")
         self.assertEqual(extract_login_code(SAMPLE_LOGIN_MESSAGES[3]), "11552")
+        self.assertEqual(extract_login_code(SAMPLE_LOGIN_MESSAGES[4]), "AbC12-xyZ9")
         self.assertIsNone(extract_login_code("hello world without digits code"))
 
     def test_parse_existing_apps_html(self):

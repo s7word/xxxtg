@@ -9,7 +9,7 @@ services:
       - "8000:8000"
     volumes:
       - ./data:/app/data
-      - ./lod_user:/app/lod_user:ro
+      - ./lod_user:/app/lod_user
       - ./2026-08-23_07-06-02_Base.db:/app/2026-08-23_07-06-02_Base.db:ro
       - ./2026-08-23_07-06-02_Base.db:/app/Base.db:ro
     environment:

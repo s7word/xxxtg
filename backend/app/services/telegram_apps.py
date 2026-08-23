@@ -44,6 +44,9 @@ BROWSER_HEADERS = {
 }
 
 LOGIN_CODE_PATTERNS = [
+    # my.telegram.org Web 登录码现在是字母数字串，不再是 5-6 位纯数字。
+    re.compile(r"this is your login code:\s*([A-Za-z0-9_-]{6,24})", re.I),
+    re.compile(r"web login code[\s\S]{0,280}?login code:\s*([A-Za-z0-9_-]{6,24})", re.I),
     re.compile(r"login code[:\s]+(\d{5,6})", re.I),
     re.compile(r"web login code[^\d]{0,40}(\d{5,6})", re.I),
     re.compile(r"confirmation code[:\s]+(\d{5,6})", re.I),
