@@ -504,6 +504,7 @@ def normalize_custom_proxy_item(item: Optional[Dict[str, Any]]) -> Optional[Dict
     normalized["last_error"] = item.get("last_error") or item.get("error")
     normalized["checked_at"] = item.get("checked_at")
     normalized["raw_line"] = item.get("raw_line")
+    normalized.pop("raw", None)
     return normalized
 
 
