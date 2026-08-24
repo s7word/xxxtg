@@ -68,6 +68,8 @@ class RegistrationTaskManager:
             "status": "pending",
             "phone": None,
             "user_id": None,
+            "device_email": None,
+            "device_email_provider": None,
             "error": None,
             "logs": [],
             "created_at": now,
@@ -219,6 +221,26 @@ class RegistrationOrchestrator:
                     await manager.append_log(task_id, "⚠️ Attestation Push Token 未返回，回退至标准信道...")
             except Exception as e:
                 await manager.append_log(task_id, f"⚠️ Attestation Push 凭证请求跳过/降级 ({e})，自动切换至标准信道模式")
+
+            # 3.05 设备基础设施增强：可选申请 REGHelp 设备配对邮箱 (iCloud Hide My Email / Gmail OAuth)
+            # 定位与 Push Token / Play Integrity 同层——仅用于增强设备画像一致性，绝非 Telegram 账号找回邮箱，
+            # 默认关闭 (config.reghelp_email_enabled=False)；失败/未启用/策略不匹配均静默降级，不阻塞注册
+            try:
+                device_email_info = await bypass_svc.request_device_email(
+                    profile,
+                    phone,
+                    log_callback=lambda msg: manager.append_log(task_id, msg)
+                )
+            except Exception as e:
+                device_email_info = None
+                await manager.append_log(task_id, f"⚠️ REGHelp 设备邮箱申请异常，降级跳过 ({e})")
+
+            if device_email_info and device_email_info.get("email"):
+                manager.update_task_status(
+                    task_id, "running",
+                    device_email=device_email_info.get("email"),
+                    device_email_provider="reghelp"
+                )
 
             # 3.1 API 凭证策略裁决 (应对 API_ID_PUBLISHED_FLOOD)
             # 官方内置 api_id (如 6 / 21724) 早年已被公开泄露，Telegram 服务端对其 auth.sendCode
@@ -375,6 +397,8 @@ class RegistrationOrchestrator:
                 "phone": phone,
                 "user_id": user_id,
                 "country": target_country,
+                "device_email": device_email_info.get("email") if device_email_info else None,
+                "device_email_provider": "reghelp" if device_email_info and device_email_info.get("email") else None,
                 "secondary_state_key": config.default_2fa_password if two_fa_set else None,
                 "two_fa_password": config.default_2fa_password if two_fa_set else None,
                 "app_id": profile["api_id"],

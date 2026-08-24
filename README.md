@@ -153,3 +153,21 @@ docker compose up -d --build
 ```
 * **控制台仪表盘**: `http://localhost:3000`
 * **API 接口文档 (OpenAPI)**: `http://localhost:8000/docs`
+
+---
+
+## 7. Attestation / REGHelp 设备基础设施 (Device Infrastructure)
+
+`AttestationGatewayService` 统一编排 REGHelp / AntiSafety 两个高可用凭证提供源，为虚拟节点
+补齐 **设备基础设施层** 特征：Push Token（平台推送握手凭证）、Play Integrity（设备完整性凭证）、
+以及可选的 **设备配对邮箱**（iCloud Hide My Email / Gmail OAuth，REGHelp `/email/getEmail` +
+`/email/getStatus`）。三者定位一致——都是"让虚拟节点看起来像一台已登录 Apple/Google 账号的真机"，
+用于增强 Attestation/设备画像一致性，仅在节点引导流程中于申请 Push Token 前后调用。
+
+**该能力与 Telegram 账号安全层（找回邮箱、2FA 密码）完全无关**：获取到的配对邮箱只会记录到
+任务审计日志与密码学上下文快照 (`device_email` 字段)，绝不会写入 `account.updatePasswordSettings`
+等账号安全接口。默认通过 `reghelp_email_enabled=false` 关闭以避免意外扣费，可在控制台
+「REGHelp 高可用 Push/Attestation 凭证提供源」卡片中按 `reghelp_email_when`
+(`ios_only`/`always`/`never`) 策略与邮箱类型 (`icloud`/`gmail`) 开启，并通过
+`POST /api/test/reghelp-email` 探针（需携带 E.164 测试手机号）验证连通性。任一环节失败均
+静默降级、不阻塞注册主流程。

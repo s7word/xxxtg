@@ -135,6 +135,30 @@ class AppConfigModel(BaseModel):
         )
     )
 
+    # ---- REGHelp 设备配对邮箱 (iCloud Hide My Email / Gmail OAuth) 设备基础设施 ----
+    # 定位：与 Push Token / Play Integrity 同层的"设备基础设施"，用于增强 Attestation/设备画像
+    # 一致性；**不是** Telegram 账号找回邮箱/2FA 绑定 (账号安全层)，禁止路由到该职责。
+    reghelp_email_enabled: bool = Field(
+        default=False,
+        description="是否启用 REGHelp 设备配对邮箱 (iCloud Hide My Email / Gmail OAuth) 基础设施；默认关闭以避免意外扣费"
+    )
+    reghelp_email_type: str = Field(
+        default="icloud",
+        description="REGHelp 设备配对邮箱类型: icloud (iCloud Hide My Email) / gmail (Gmail OAuth)"
+    )
+    reghelp_email_when: str = Field(
+        default="ios_only",
+        description=(
+            "REGHelp 设备配对邮箱触发策略: "
+            "ios_only (仅当端点模板 app_device 为 iOS 时申请，推荐) / "
+            "always (每次注册均申请) / never (从不申请，等同关闭)"
+        )
+    )
+    reghelp_email_app_device: Optional[str] = Field(
+        default=None,
+        description="覆盖设备配对邮箱请求使用的 appDevice (Android/iOS)；留空则跟随当前端点模板的 app_device"
+    )
+
 
 class DeviceProfileSchema(BaseModel):
     """边缘节点硬件拓扑与环境指纹模型"""
@@ -198,6 +222,11 @@ class TaskStatusResponse(BaseModel):
     status: str  # pending, running, success, failed
     phone: Optional[str] = Field(default=None, description="绑定的端点通信句柄")
     user_id: Optional[int] = Field(default=None, description="协商确认的分布式节点 UID")
+    device_email: Optional[str] = Field(
+        default=None,
+        description="REGHelp 设备配对邮箱 (iCloud/Gmail)，设备基础设施层字段，用于增强 Attestation 设备画像一致性"
+    )
+    device_email_provider: Optional[str] = Field(default=None, description="设备配对邮箱提供源 (目前仅 reghelp)")
     error: Optional[str] = None
     logs: List[str] = []
     created_at: str
