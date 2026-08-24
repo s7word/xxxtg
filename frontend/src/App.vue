@@ -293,6 +293,57 @@
             <div v-if="testResults.reghelp" :class="['p-3 rounded-lg text-xs', testResults.reghelp.success ? 'bg-green-950/40 border border-green-800/60 text-green-300' : 'bg-red-950/40 border border-red-800/60 text-red-300']">
               <div>{{ testResults.reghelp.message }}</div>
             </div>
+
+            <!-- 设备基础设施：REGHelp 设备配对邮箱 (iCloud/Gmail)，非 Telegram 账号找回邮箱 -->
+            <div class="border-t border-zinc-800 pt-3 space-y-3">
+              <div class="flex items-center gap-2">
+                <input type="checkbox" id="reghelpEmailEnabled" v-model="config.reghelp_email_enabled" class="rounded bg-zinc-900 border-zinc-700" />
+                <label for="reghelpEmailEnabled" class="text-xs text-zinc-300">
+                  启用 REGHelp 设备配对邮箱 (设备基础设施，默认关闭以避免意外扣费)
+                </label>
+              </div>
+
+              <div class="grid grid-cols-2 gap-2">
+                <div>
+                  <label class="block text-[11px] text-zinc-400 mb-1">邮箱类型</label>
+                  <select v-model="config.reghelp_email_type" class="input-field font-mono text-xs">
+                    <option value="icloud">icloud (Hide My Email)</option>
+                    <option value="gmail">gmail (OAuth)</option>
+                  </select>
+                </div>
+                <div>
+                  <label class="block text-[11px] text-zinc-400 mb-1">触发策略</label>
+                  <select v-model="config.reghelp_email_when" class="input-field font-mono text-xs">
+                    <option value="ios_only">ios_only（仅 iOS 端点）</option>
+                    <option value="always">always（每次注册）</option>
+                    <option value="never">never（从不申请）</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label class="block text-[11px] text-zinc-400 mb-1">覆盖 appDevice（留空跟随端点模板）</label>
+                <input v-model="config.reghelp_email_app_device" type="text" class="input-field font-mono text-xs" placeholder="Android / iOS" />
+              </div>
+
+              <div class="p-2.5 rounded-lg bg-zinc-900 border border-zinc-800 text-[11px] text-zinc-500 leading-relaxed">
+                设备基础设施层：GET <code class="text-zinc-300">/email/getEmail</code> → 轮询
+                <code class="text-zinc-300">/email/getStatus</code>，为注册手机号申请配对的临时
+                iCloud Hide My Email / Gmail OAuth 邮箱，用于增强 Attestation/设备画像一致性，
+                <b class="text-zinc-400">并非</b> Telegram 账号找回邮箱/2FA 绑定。
+              </div>
+
+              <div class="flex gap-2">
+                <input v-model="reghelpEmailTestPhone" type="text" class="input-field font-mono text-xs flex-1" placeholder="测试手机号 (E.164，如 +8613800000000)" />
+                <button @click="testRegHelpEmail" :disabled="testing.reghelp_email" class="btn-secondary text-xs py-1 whitespace-nowrap">
+                  {{ testing.reghelp_email ? '测试中...' : '⚡ 配对邮箱探针' }}
+                </button>
+              </div>
+
+              <div v-if="testResults.reghelp_email" :class="['p-3 rounded-lg text-xs', testResults.reghelp_email.success ? 'bg-green-950/40 border border-green-800/60 text-green-300' : 'bg-red-950/40 border border-red-800/60 text-red-300']">
+                <div>{{ testResults.reghelp_email.message }}</div>
+              </div>
+            </div>
           </div>
 
           <!-- Attestation 挑战凭证生成器配置卡片 (AntiSafety) -->
@@ -667,7 +718,11 @@ const config = reactive({
   reghelp_enabled: true,
   reghelp_connect_timeout: 6.0,
   reghelp_total_timeout: 20.0,
-  attestation_provider_mode: 'reghelp_primary'
+  attestation_provider_mode: 'reghelp_primary',
+  reghelp_email_enabled: false,
+  reghelp_email_type: 'icloud',
+  reghelp_email_when: 'ios_only',
+  reghelp_email_app_device: null
 })
 
 // 候选网关地址在界面上以逐行文本编辑，实际持久化为字符串数组
@@ -705,6 +760,7 @@ const testing = reactive({
   vaksms: false,
   antisafety: false,
   reghelp: false,
+  reghelp_email: false,
   proxyseller: false,
   connectivity: false
 })
@@ -713,9 +769,12 @@ const testResults = reactive({
   vaksms: null,
   antisafety: null,
   reghelp: null,
+  reghelp_email: null,
   proxyseller: null,
   connectivity: null
 })
+
+const reghelpEmailTestPhone = ref('')
 
 const isStartingTask = ref(false)
 const isSavingConfig = ref(false)
@@ -906,6 +965,30 @@ const testRegHelp = async () => {
     testResults.reghelp = { success: false, message: e.message }
   } finally {
     testing.reghelp = false
+  }
+}
+
+const testRegHelpEmail = async () => {
+  testing.reghelp_email = true
+  testResults.reghelp_email = null
+  applyBaseUrlsTextToConfig()
+  try {
+    const res = await fetch('/api/test/reghelp-email', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        api_key: config.reghelp_api_key,
+        base_urls: config.reghelp_base_urls,
+        phone: reghelpEmailTestPhone.value,
+        email_type: config.reghelp_email_type,
+        app_device: config.reghelp_email_app_device
+      })
+    })
+    testResults.reghelp_email = await res.json()
+  } catch (e) {
+    testResults.reghelp_email = { success: false, message: e.message }
+  } finally {
+    testing.reghelp_email = false
   }
 }
 
