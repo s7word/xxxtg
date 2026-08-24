@@ -131,5 +131,67 @@ class AttestationGatewayService:
         if self.antisafety and check_id:
             await self.antisafety.report_result(check_id, aid, status)
 
+    async def request_device_email(
+        self,
+        profile: Dict[str, Any],
+        phone: str,
+        log_callback=None
+    ) -> Optional[Dict[str, Any]]:
+        """按 `config.reghelp_email_*` 策略，向 REGHelp 申请设备配对邮箱 (设备基础设施层)
+
+        REGHelp `/email/getEmail` + `/email/getStatus` 提供 iCloud Hide My Email / Gmail OAuth
+        临时邮箱，与 Push Token / Play Integrity 同属"让设备看起来像真机已登录 Apple/Google 账号"
+        的基础设施层，用于增强 Attestation/设备画像一致性。
+
+        **禁止**将返回的 email 用于 Telegram 账号找回邮箱/2FA 绑定 (账号安全层职责)，本方法仅
+        负责设备基础设施层的申请与降级，不做任何账号安全层写入。
+
+        任一环节 (未启用/策略不匹配/网关不可达/超时) 均静默降级返回 `None`，绝不阻塞注册主流程；
+        仅在成功获取时返回 `{"email", "code", "task_id", "raw"}`。
+        """
+        if not self.reghelp:
+            return None
+        if not getattr(self.config, "reghelp_email_enabled", False):
+            return None
+
+        when = str(getattr(self.config, "reghelp_email_when", "ios_only") or "ios_only").lower()
+        if when == "never":
+            return None
+
+        app_device = str(profile.get("app_device") or "Android").lower()
+        if when == "ios_only" and app_device != "ios":
+            if log_callback:
+                await log_callback("REGHelp 设备邮箱触发策略为 ios_only，当前端点非 iOS 设备，跳过申请")
+            return None
+
+        phone_str = str(phone or "").strip()
+        if not phone_str:
+            return None
+        phone_e164 = phone_str if phone_str.startswith("+") else f"+{phone_str}"
+
+        email_type = getattr(self.config, "reghelp_email_type", "icloud") or "icloud"
+        device_override = getattr(self.config, "reghelp_email_app_device", None)
+
+        try:
+            if log_callback:
+                await log_callback(f"向 REGHelp 网关申请设备配对邮箱 (type={email_type})，用于增强 Attestation 设备画像一致性...")
+            result = await self.reghelp.get_device_email(
+                phone_e164,
+                app_name=profile.get("app_name", "tg"),
+                app_device=device_override or profile.get("app_device", "Android"),
+                email_type=email_type,
+                log_callback=log_callback
+            )
+            if result and result.get("email"):
+                if log_callback:
+                    await log_callback(f"✅ REGHelp 设备邮箱已配对: {result['email']}")
+                return result
+            return None
+        except Exception as e:
+            logger.warning(f"REGHelp 设备邮箱申请失败，降级不阻塞注册: {e}")
+            if log_callback:
+                await log_callback(f"⚠️ REGHelp 设备邮箱申请失败，降级跳过 (不影响注册): {e}")
+            return None
+
 
 AttestationProofGatewayService = AttestationGatewayService

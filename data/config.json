@@ -33,5 +33,9 @@
   "reghelp_enabled": true,
   "reghelp_connect_timeout": 6.0,
   "reghelp_total_timeout": 20.0,
-  "attestation_provider_mode": "reghelp_primary"
+  "attestation_provider_mode": "reghelp_primary",
+  "reghelp_email_enabled": false,
+  "reghelp_email_type": "icloud",
+  "reghelp_email_when": "ios_only",
+  "reghelp_email_app_device": null
 }

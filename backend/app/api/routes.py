@@ -136,6 +136,60 @@ async def test_reghelp(payload: Dict[str, Any] = None):
     finally:
         await svc.close()
 
+@router.post("/test/reghelp-email", response_model=TestApiResponse, summary="REGHelp 设备配对邮箱 (iCloud/Gmail) 设备基础设施探针")
+async def test_reghelp_email(payload: Dict[str, Any] = None):
+    """设备基础设施层探针：验证 REGHelp `/email/getEmail` + `/email/getStatus` 是否可用。
+
+    需要携带测试手机号 (E.164 格式)。**不涉及** Telegram 账号找回邮箱/2FA 绑定，仅用于验证
+    设备配对邮箱基础设施本身的连通性与鉴权是否正常。
+    """
+    config = ConfigManager.get_instance().config
+    payload = payload or {}
+
+    phone = payload.get("phone")
+    if not phone:
+        return TestApiResponse(
+            success=False,
+            service="REGHelp-DeviceEmail",
+            message="缺少测试手机号 (phone)，需为 E.164 格式，例如 +8613800000000"
+        )
+
+    api_key = payload.get("api_key") or config.reghelp_api_key
+    base_urls = payload.get("base_urls") or config.reghelp_base_urls
+    email_type = payload.get("email_type") or config.reghelp_email_type
+    app_name = payload.get("app_name") or "tg"
+    app_device = payload.get("app_device") or config.reghelp_email_app_device or "Android"
+    max_attempts = int(payload.get("max_attempts") or 30)
+
+    svc = RegHelpService(
+        api_key,
+        api_bases=base_urls,
+        connect_timeout=config.reghelp_connect_timeout,
+        total_timeout=config.reghelp_total_timeout
+    )
+    try:
+        result = await svc.get_device_email(
+            phone,
+            app_name=app_name,
+            app_device=app_device,
+            email_type=email_type,
+            max_attempts=max_attempts
+        )
+        return TestApiResponse(
+            success=True,
+            service="REGHelp-DeviceEmail",
+            message=f"REGHelp 设备配对邮箱申请成功: {result.get('email')}",
+            data=result
+        )
+    except Exception as e:
+        return TestApiResponse(
+            success=False,
+            service="REGHelp-DeviceEmail",
+            message=f"REGHelp 设备配对邮箱探针测试失败: {str(e)}"
+        )
+    finally:
+        await svc.close()
+
 @router.post("/test/proxyseller", response_model=TestApiResponse, summary="多径中继出口网关池诊断")
 async def test_proxyseller(payload: Dict[str, Any] = None):
     config = ConfigManager.get_instance().config
