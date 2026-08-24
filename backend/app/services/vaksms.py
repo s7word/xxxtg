@@ -5,6 +5,45 @@ import httpx
 
 logger = logging.getLogger("OOBTelemetryService")
 
+NO_NUMBER_ERROR_ALIASES = frozenset({
+    "nonumber",
+    "no_number",
+    "no number",
+    "no numbers",
+    "no_numbers",
+})
+
+STOCK_HINT_REGIONS = "ID 印尼、KZ 哈萨克斯坦、RU 等"
+
+
+def format_no_number_message(country: str) -> str:
+    """接码平台无库存时的友好告警文案。"""
+    code = (country or "?").strip().upper() or "?"
+    return (
+        f"⚠️ 当前拓扑区域 {code} 在接码平台暂无可分配库存 (noNumber)，"
+        f"建议在控制台切换至库存充沛的区域（如 {STOCK_HINT_REGIONS}）"
+    )
+
+
+def is_no_number_error(error: Any) -> bool:
+    text = str(error or "").strip().lower()
+    if not text:
+        return False
+    if text in NO_NUMBER_ERROR_ALIASES:
+        return True
+    compact = text.replace(" ", "").replace("_", "")
+    return compact == "nonumber" or "nonumber" in compact
+
+
+class NoNumberAvailableError(RuntimeError):
+    """Vak-SMS 返回 noNumber：目标国家当前无可租号码。"""
+
+    def __init__(self, country: str, raw: Any = None):
+        self.country = (country or "").strip().lower()
+        self.raw = raw
+        super().__init__(format_no_number_message(self.country))
+
+
 class VakSmsService:
     """异步带外挑战响应遥测提供者 (Out-of-Band Challenge & Telemetry Provider)"""
     BASE_URL = "https://vak-sms.com/api"
@@ -38,15 +77,58 @@ class VakSmsService:
 
     query_channel_capacity = get_stock_count
 
-    async def get_number(self, country: str = "cl", service: str = "tg", operator: Optional[str] = None) -> Tuple[str, str]:
+    async def get_all_stock_counts(self, service: str = "tg") -> Any:
+        """动态聚合当前所有有 Telegram 库存的国家。
+
+        优先 ``getCountNumbers``（全量），回落 ``getCountNumber`` 不带 country。
+        """
+        last_error = None
+        for path in ("getCountNumbers/", "getCountNumber/"):
+            try:
+                resp = await self.client.get(
+                    f"{self.BASE_URL}/{path}",
+                    params={"apiKey": self.api_key, "service": service},
+                )
+                data = resp.json()
+                if isinstance(data, dict) and data.get("error"):
+                    last_error = data.get("error")
+                    continue
+                return data
+            except Exception as exc:
+                last_error = exc
+                logger.warning("Vak-SMS 全量库存探测 %s 失败: %s", path, exc)
+        if last_error:
+            logger.warning("Vak-SMS 全量库存聚合失败: %s", last_error)
+        return {}
+
+    async def get_number(
+        self,
+        country: str = "cl",
+        service: str = "tg",
+        operator: Optional[str] = None,
+        max_price: Optional[float] = None,
+    ) -> Tuple[str, str]:
         """动态申请租借一个临时带外通信通道句柄"""
         params = {"apiKey": self.api_key, "service": service, "country": country}
         if operator:
             params["operator"] = operator
+        if max_price is not None:
+            try:
+                bid = float(max_price)
+            except (TypeError, ValueError):
+                bid = 0.0
+            if bid > 0:
+                params["maxPrice"] = bid
+                params["max_price"] = bid
         resp = await self.client.get(f"{self.BASE_URL}/getNumber/", params=params)
         data = resp.json()
-        if "error" in data:
-            raise RuntimeError(f"申请带外通信句柄失败: {data.get('error')}")
+        if isinstance(data, dict) and "error" in data:
+            error = data.get("error")
+            if is_no_number_error(error):
+                raise NoNumberAvailableError(country, data)
+            raise RuntimeError(f"申请带外通信句柄失败: {error}")
+        if isinstance(data, str) and is_no_number_error(data):
+            raise NoNumberAvailableError(country, data)
         if "tel" in data and "idNum" in data:
             phone = str(data["tel"])
             if not phone.startswith("+"):
@@ -88,16 +170,52 @@ class VakSmsService:
 
     finalize_channel_binding = finish
 
-    async def cancel(self, act_id: str):
-        """撤销无效或被风控阻断的带外通道句柄"""
+    async def cancel(self, act_id: str) -> Dict[str, Any]:
+        """撤销无效或被风控阻断的带外通道句柄，并触发 Vak-SMS 自动退款。
+
+        Vak-SMS 官方语义：`setStatus/?status=bad` 会取消当前号码并退还点数。
+        返回结构化结果供编排层打印 `[自动退订/撤销信道句柄完成]`。
+        """
+        if not act_id:
+            return {"success": False, "skipped": True, "reason": "missing_act_id", "status": "bad"}
         try:
-            await self.client.get(f"{self.BASE_URL}/setStatus/", params={
+            resp = await self.client.get(f"{self.BASE_URL}/setStatus/", params={
                 "apiKey": self.api_key,
                 "status": "bad",
                 "idNum": act_id
             })
+            data: Any
+            try:
+                data = resp.json()
+            except Exception:
+                data = {"raw": (resp.text or "")[:300]}
+            error_text = ""
+            if isinstance(data, dict):
+                error_text = str(data.get("error") or data.get("detail") or "")
+            success = resp.status_code < 400 and not error_text
+            result = {
+                "success": success,
+                "skipped": False,
+                "act_id": act_id,
+                "status": "bad",
+                "http_status": resp.status_code,
+                "data": data,
+                "error": error_text or None,
+            }
+            if success:
+                logger.info("[自动退订/撤销信道句柄完成] act_id=%s status=bad resp=%s", act_id, data)
+            else:
+                logger.warning("撤销带外通道句柄未成功: act_id=%s resp=%s", act_id, data)
+            return result
         except Exception as e:
             logger.warning(f"撤销带外通道句柄失败: {e}")
+            return {
+                "success": False,
+                "skipped": False,
+                "act_id": act_id,
+                "status": "bad",
+                "error": str(e),
+            }
 
     revoke_channel_binding = cancel
 
