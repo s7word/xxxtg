@@ -189,6 +189,15 @@ class ManualSessionStore:
         with self._lock:
             return list(self._sessions.keys())
 
+    def find_task_ids_by_phone(self, phone: str) -> List[str]:
+        """返回当前仍持有活跃 MTProto 连接、且号码匹配的 task_id 列表（用于同号去重）。"""
+        with self._lock:
+            return [
+                tid
+                for tid, sess in self._sessions.items()
+                if sess.phone == phone
+            ]
+
 
 class ManualRegistrationOrchestrator:
     """手动单号调试：发码 → 等待验证码 → 提交 / 取消。"""
@@ -268,6 +277,43 @@ class ManualRegistrationOrchestrator:
                         path.unlink()
                 except OSError as exc:
                     logger.warning("清理未完成凭证失败 %s: %s", path, exc)
+
+    @classmethod
+    async def _cancel_conflicting_sessions(
+        cls, phone: str, manager: RegistrationTaskManager
+    ) -> List[str]:
+        """同号重复 start 前：先取消同号仍处于 waiting_code/logging_in 的旧手动任务。
+
+        单活跃手动槽策略——同一手机号任意时刻只保留一个存活的 waiting_code/logging_in
+        任务，避免用户反复点击「发送验证码」时堆出多个僵尸任务占用任务队列。
+        """
+        store = ManualSessionStore.get_instance()
+        candidate_ids = set(store.find_task_ids_by_phone(phone))
+        for task in manager.list_tasks():
+            if (
+                task.get("mode") == "manual"
+                and task.get("phone") == phone
+                and (task.get("status") or "") in {"waiting_code", "logging_in"}
+            ):
+                candidate_ids.add(task.get("task_id"))
+
+        canceled_ids: List[str] = []
+        for tid in candidate_ids:
+            task = manager.get_task(tid)
+            if not task or task.get("phone") != phone:
+                continue
+            if (task.get("status") or "") not in {"waiting_code", "logging_in"}:
+                continue
+            try:
+                await manager.append_log(
+                    tid,
+                    f"⚠️ 检测到号码 {phone} 发起了新的手动发码请求，本任务作为重复/过期会话被自动取消",
+                )
+                await cls.cancel(tid)
+                canceled_ids.append(tid)
+            except ManualRegisterError as exc:
+                logger.warning("同号去重取消旧任务 %s 失败（忽略）: %s", tid, exc)
+        return canceled_ids
 
     @classmethod
     async def _expire_waiting(cls, task_id: str, wait_seconds: float) -> None:
@@ -439,6 +485,7 @@ class ManualRegistrationOrchestrator:
         """阶段 1：握手 + auth.sendCode，成功后进入 waiting_code。"""
         normalized = normalize_manual_phone(phone)
         manager = RegistrationTaskManager.get_instance()
+        replaced_ids = await cls._cancel_conflicting_sessions(normalized, manager)
         task_id = manager.create_task()
         config = ConfigManager.get_instance().config
         target_country = resolve_manual_country(
@@ -462,6 +509,13 @@ class ManualRegistrationOrchestrator:
             f"[手动调试] 目标拓扑国家: {target_country.upper()}"
             + ("（由手机号推断）" if not str(country or "").strip() else "（用户指定）"),
         )
+        if replaced_ids:
+            await manager.append_log(
+                task_id,
+                f"[手动调试] 号码 {normalized} 存在 {len(replaced_ids)} 个未完成的旧手动任务 "
+                f"({', '.join(replaced_ids)})，已自动取消并释放旧 MTProto 连接，"
+                f"由本任务 {task_id} 继续承接单活跃手动槽",
+            )
 
         bypass_svc = None
         client = None

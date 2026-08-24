@@ -6,6 +6,7 @@ import os
 import sys
 import tempfile
 import unittest
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -286,6 +287,48 @@ class ManualTestBase(unittest.IsolatedAsyncioTestCase):
         self.store.put(live)
         return tid, live
 
+    @contextmanager
+    def _patch_start_dependencies(self, client, bypass=None, sent_code=None):
+        """封装 start() 阶段 1 所需的全部外部依赖 mock，供多个用例复用。"""
+        bypass = bypass or FakeBypass()
+        with patch(
+            "backend.app.services.manual_registrar.ConfigManager.get_instance",
+            return_value=SimpleNamespace(config=self._config()),
+        ), patch(
+            "backend.app.services.manual_registrar.DeviceProfileManager.get_resolved_profile",
+            return_value=dict(SAMPLE_PROFILE),
+        ), patch(
+            "backend.app.services.manual_registrar.DeviceProfileManager.resolve_effective_credentials",
+            return_value=dict(SAMPLE_PROFILE),
+        ), patch(
+            "backend.app.services.manual_registrar.AttestationGatewayService",
+            return_value=bypass,
+        ), patch(
+            "backend.app.services.manual_registrar.TelegramClient",
+            return_value=client,
+        ), patch(
+            "backend.app.services.manual_registrar.RegistrationOrchestrator.resolve_active_proxy",
+            new=AsyncMock(return_value={"proxy_type": "socks5", "addr": "10.0.0.2", "port": 1080}),
+        ), patch(
+            "backend.app.services.manual_registrar.RegistrationOrchestrator._connect_mtproto",
+            new=AsyncMock(return_value=True),
+        ), patch(
+            "backend.app.services.manual_registrar.RegistrationOrchestrator.perform_handshake",
+            new=AsyncMock(),
+        ), patch(
+            "backend.app.services.manual_registrar.RegistrationOrchestrator._send_code_with_recaptcha",
+            new=AsyncMock(return_value=sent_code or _sent_code()),
+        ), patch(
+            "backend.app.services.manual_registrar.PhonePrecheckService.check_phone",
+            new=AsyncMock(return_value=SimpleNamespace(
+                is_registered=False, user_id=None, intercept=False, degraded=False, reason=""
+            )),
+        ), patch(
+            "backend.app.services.manual_registrar.SESSIONS_DIR",
+            self.tmp_path,
+        ):
+            yield
+
 
 class TestCompleteAuth(ManualTestBase):
     async def test_existing_account_signin(self):
@@ -411,6 +454,73 @@ class TestManualStartPhase(ManualTestBase):
             await ManualRegistrationOrchestrator.start(phone="12")
         self.assertEqual(self.manager.tasks, {})
 
+    async def test_duplicate_start_same_phone_cancels_previous_waiting_task(self):
+        """复现用户报告的 bug：同号重复点击「发送验证码」不应堆出多个 waiting_code 任务。"""
+        fake_client_1 = FakeTelegramClient()
+        fake_client_2 = FakeTelegramClient()
+
+        with self._patch_start_dependencies(fake_client_1):
+            first = await ManualRegistrationOrchestrator.start(
+                phone="+56911112222", country="cl", wait_seconds=30
+            )
+        self.assertEqual(first["status"], "waiting_code")
+        # _connect_mtproto 在测试里被 mock 掉，未真正调用 client.connect()；
+        # 手动置位以模拟生产环境下握手成功后的已连接状态。
+        fake_client_1.connected = True
+
+        with self._patch_start_dependencies(fake_client_2):
+            second = await ManualRegistrationOrchestrator.start(
+                phone="+56911112222", country="cl", wait_seconds=30
+            )
+        self.assertEqual(second["status"], "waiting_code")
+
+        self.assertNotEqual(first["task_id"], second["task_id"])
+
+        first_task = self.manager.get_task(first["task_id"])
+        second_task = self.manager.get_task(second["task_id"])
+        self.assertEqual(first_task["status"], "canceled")
+        self.assertEqual(second_task["status"], "waiting_code")
+
+        # 旧任务连接已释放，只有新任务持有活跃 MTProto session
+        self.assertIsNone(self.store.get(first["task_id"]))
+        self.assertIsNotNone(self.store.get(second["task_id"]))
+        self.assertTrue(fake_client_1.disconnected)
+        self.assertFalse(fake_client_2.disconnected)
+
+        waiting = [
+            t for t in self.manager.list_tasks()
+            if t.get("status") == "waiting_code" and t.get("phone") == "+56911112222"
+        ]
+        self.assertEqual(len(waiting), 1)
+        self.assertEqual(waiting[0]["task_id"], second["task_id"])
+
+        # 第二个任务的日志中应说明已自动取消旧任务
+        logs = "\n".join(second["logs"])
+        self.assertIn(first["task_id"], logs)
+        self.assertIn("自动取消", logs)
+
+    async def test_start_after_cancel_creates_fresh_waiting_task(self):
+        """用户先手动取消旧任务后，重新发码应正常进入 waiting_code，不被误判为冲突。"""
+        old_client = FakeTelegramClient()
+        old_client.connected = True
+        old_tid, _old_live = self._seed_waiting(old_client, phone="+56911112222")
+        cancel_result = await ManualRegistrationOrchestrator.cancel(old_tid)
+        self.assertEqual(cancel_result["status"], "canceled")
+
+        new_client = FakeTelegramClient()
+        with self._patch_start_dependencies(new_client):
+            result = await ManualRegistrationOrchestrator.start(
+                phone="+56911112222", country="cl", wait_seconds=30
+            )
+
+        self.assertEqual(result["status"], "waiting_code")
+        self.assertNotEqual(result["task_id"], old_tid)
+        self.assertIsNotNone(self.store.get(result["task_id"]))
+        # 已取消的旧任务不应被再次「取消」或出现在日志替换说明里
+        logs = "\n".join(result["logs"])
+        self.assertNotIn(old_tid, logs)
+        self.assertEqual(self.manager.get_task(old_tid)["status"], "canceled")
+
 
 class TestManualSubmitAndCancel(ManualTestBase):
     async def test_submit_new_account_writes_session_pair(self):
@@ -481,6 +591,22 @@ class TestManualSubmitAndCancel(ManualTestBase):
         self.assertIsNone(self.store.get(tid))
         self.assertTrue(client.disconnected)
         self.assertFalse(live.session_path.exists())
+
+    async def test_cancel_is_idempotent_after_already_canceled(self):
+        """重复调用 cancel（如用户连点取消按钮）必须幂等返回成功，不能 500 或报错。"""
+        client = FakeTelegramClient()
+        client.connected = True
+        tid, _live = self._seed_waiting(client)
+        first = await ManualRegistrationOrchestrator.cancel(tid)
+        self.assertEqual(first["status"], "canceled")
+        second = await ManualRegistrationOrchestrator.cancel(tid)
+        self.assertEqual(second["status"], "canceled")
+        self.assertIn("无需再次取消", second["message"])
+
+    async def test_cancel_missing_task_raises_friendly_404(self):
+        with self.assertRaises(ManualRegisterError) as ctx:
+            await ManualRegistrationOrchestrator.cancel("does-not-exist")
+        self.assertEqual(ctx.exception.status_code, 404)
 
     async def test_submit_missing_task_404(self):
         with self.assertRaises(ManualRegisterError) as ctx:

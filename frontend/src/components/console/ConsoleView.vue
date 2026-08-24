@@ -267,12 +267,16 @@
             <div class="row-wrap">
               <button
                 class="ce-btn"
-                :disabled="isSubmittingCode || !String(manualCode || '').trim()"
+                :disabled="isSubmittingCode || isCancelingManual || !String(manualCode || '').trim()"
                 @click="submitManualCode"
               >
                 {{ isSubmittingCode ? '正在提交...' : '🟢 提交验证码完成注册' }}
               </button>
-              <button class="ce-btn-danger" :disabled="isCancelingManual" @click="cancelManualTask">
+              <button
+                class="ce-btn-danger"
+                :disabled="isCancelingManual || isSubmittingCode"
+                @click="cancelManualTask"
+              >
                 {{ isCancelingManual ? '取消中...' : '❌ 取消任务' }}
               </button>
             </div>
@@ -396,6 +400,14 @@
                   <button class="ce-link" @click="viewTaskLogs(t)">日志</button>
                   <button class="ce-link is-cyan" @click="openTaskDetail(t)">详情</button>
                   <button v-if="t.status === 'failed' || t.status === 'filtered'" class="ce-link" @click="retryTask(t)">重试</button>
+                  <button
+                    v-if="t.status === 'waiting_code' || t.status === 'logging_in'"
+                    class="ce-link is-danger"
+                    :disabled="isCancelingTaskId(t.task_id)"
+                    @click="cancelManualTaskById(t.task_id)"
+                  >
+                    {{ isCancelingTaskId(t.task_id) ? '取消中...' : '取消' }}
+                  </button>
                 </td>
               </tr>
             </tbody>
@@ -475,6 +487,7 @@ const {
   isSendingCode, isSubmittingCode, isCancelingManual, manualError,
   manualSession, manualSuccess, isManualWaiting, deliveryBadgeClass,
   startManualRegistration, submitManualCode, cancelManualTask,
+  cancelManualTaskById, isCancelingTaskId,
   goVaultFromManual, onManualCodeKeydown
 } = useManualRegister()
 
