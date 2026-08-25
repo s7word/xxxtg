@@ -27,6 +27,7 @@ from backend.app.config import ConfigManager, SESSIONS_DIR
 from backend.app.services.device_profile import DeviceProfileManager
 from backend.app.services.vaksms import NoNumberAvailableError, VakSmsService, format_no_number_message
 from backend.app.services.grizzlysms import GrizzlySmsService, PROVIDER_LABEL as GRIZZLY_PROVIDER_LABEL
+from backend.app.services.smsbower import SmsBowerService, PROVIDER_LABEL as SMSBOWER_PROVIDER_LABEL
 from backend.app.services.fivesim import FiveSimService, PROVIDER_LABEL as FIVESIM_PROVIDER_LABEL
 from backend.app.services.attestation_gateway import AttestationGatewayService
 from backend.app.services.reghelp import PUSH_REFUND_WINDOW_SECONDS
@@ -203,6 +204,11 @@ SMS_PROVIDER_ALIASES = {
     "grizzlysms": "grizzlysms",
     "grizzly_sms": "grizzlysms",
     "grizzly-sms": "grizzlysms",
+    "smsbower": "smsbower",
+    "sms-bower": "smsbower",
+    "sms_bower": "smsbower",
+    "bower": "smsbower",
+    "smsbowerapp": "smsbower",
     "vak": "vaksms",
     "vaksms": "vaksms",
     "vak_sms": "vaksms",
@@ -211,6 +217,7 @@ SMS_PROVIDER_ALIASES = {
 SMS_PROVIDER_LABELS = {
     "fivesim": FIVESIM_PROVIDER_LABEL,
     "grizzlysms": GRIZZLY_PROVIDER_LABEL,
+    "smsbower": SMSBOWER_PROVIDER_LABEL,
     "vaksms": "Vak-SMS (vak-sms.com)",
 }
 
@@ -457,6 +464,8 @@ class RegistrationOrchestrator:
             return VakSmsService(getattr(config, "vak_sms_api_key", "") or "")
         if provider == "grizzlysms":
             return GrizzlySmsService(getattr(config, "grizzly_sms_api_key", "") or "")
+        if provider == "smsbower":
+            return SmsBowerService(getattr(config, "smsbower_api_key", "") or "")
         return FiveSimService(getattr(config, "fivesim_api_key", "") or "")
 
     @staticmethod
@@ -481,6 +490,8 @@ class RegistrationOrchestrator:
             cls_name = type(sms_svc).__name__.lower()
             if "vak" in cls_name:
                 name = "vaksms"
+            elif "smsbower" in cls_name or "bower" in cls_name:
+                name = "smsbower"
             elif "grizzly" in cls_name:
                 name = "grizzlysms"
             elif "fivesim" in cls_name or "five" in cls_name:
@@ -668,8 +679,18 @@ class RegistrationOrchestrator:
         if proxy_id and mode == "custom_pool":
             mode = "explicit"
 
+        if proxy_override:
+            from backend.app.services.proxyseller import format_proxy_endpoint
+
+            await manager.append_log(
+                task_id,
+                f"[代理槽位] 1:1 绑定预分配出口 {format_proxy_endpoint(proxy_override)}"
+                f"（同国 {target_country.upper()}，禁止跨区 fallback）",
+            )
+            return dict(proxy_override)
+
         # 使用者决定配对关系：explicit 100% 遵从指定节点，不施加隐式国家约束
-        active_proxy = proxy_override
+        active_proxy = None
         if not active_proxy and (proxy_id or mode == "explicit"):
             if proxy_id:
                 found = find_custom_proxy(proxy_id=proxy_id)
@@ -795,15 +816,42 @@ class RegistrationOrchestrator:
             ProxySellerService,
             format_proxy_endpoint,
             is_custom_proxy,
+            is_resident_tg,
             is_static_residential,
         )
 
         await manager.append_log(
             task_id,
-            f"[多径中继网关] 正在检索 {target_country.upper()} 区域代理（自建池 + API + 内置静态住宅池）..."
+            f"[多径中继网关] 正在检索 {target_country.upper()} 区域代理"
+            "（自建池 + xxxtg 住宅列表 + API + 内置静态住宅池）..."
         )
         ps_svc = ProxySellerService(config.proxy_seller_key)
         try:
+            ensure_fn = getattr(ps_svc, "ensure_tg_resident_list", None)
+            if target_country and callable(ensure_fn):
+                try:
+                    ensured = await ensure_fn(target_country, create=True)
+                    title = ensured.get("title")
+                    created = bool(ensured.get("created"))
+                    n_nodes = len(ensured.get("proxies") or [])
+                    if created and title:
+                        await manager.append_log(
+                            task_id,
+                            f"[多径中继网关] 已自主创建 {title}（{n_nodes} 个节点）",
+                        )
+                    elif n_nodes and title:
+                        await manager.append_log(
+                            task_id,
+                            f"[多径中继网关] 复用已有 {title}（{n_nodes} 个节点）",
+                        )
+                    invalidate = getattr(ps_svc, "invalidate_cache", None)
+                    if callable(invalidate) and (created or n_nodes):
+                        invalidate()
+                except Exception as exc:
+                    await manager.append_log(
+                        task_id,
+                        f"[多径中继网关] 自主拉取 _tg 列表未成功 ({exc})，继续使用现有池",
+                    )
             regional = await ps_svc.get_proxy_list(country=target_country, refresh=True)
             if regional:
                 selection = await ps_svc.select_best_proxy(
@@ -818,6 +866,8 @@ class RegistrationOrchestrator:
                     endpoint = format_proxy_endpoint(chosen)
                     if is_custom_proxy(chosen):
                         origin = "用户自建代理池"
+                    elif is_resident_tg(chosen):
+                        origin = "xxxtg 专用住宅列表"
                     elif is_static_residential(chosen):
                         origin = "内置静态住宅代理池"
                     else:
@@ -843,6 +893,8 @@ class RegistrationOrchestrator:
                 first = regional[0]
                 if is_custom_proxy(first):
                     origin = "用户自建代理池"
+                elif is_resident_tg(first):
+                    origin = "xxxtg 专用住宅列表"
                 elif is_static_residential(first):
                     origin = "内置静态住宅代理池"
                 else:
@@ -857,7 +909,7 @@ class RegistrationOrchestrator:
             await manager.append_log(
                 task_id,
                 f"[多径中继网关] ⚠️ 目标区域 {target_country.upper()} 暂无可用区域代理"
-                "（API / 静态住宅 / 自建池均无匹配节点）。"
+                "（API / xxxtg 住宅列表 / 静态住宅 / 自建池均无匹配节点）。"
                 "已禁止跨大区隐式兜底（不会把智利/印度等互不相干节点分配给本任务），"
                 "将优雅降级至配置的 fallback_proxy。"
             )
@@ -1738,8 +1790,38 @@ class RegistrationOrchestrator:
         max_price: Optional[float] = None,
     ) -> None:
         """使用 Semaphore 异步并行调度一批虚拟节点引导任务。"""
+        from backend.app.services.proxy_slot_pool import (
+            fail_batch_tasks_no_proxy,
+            prepare_batch_proxy_pool,
+        )
+
         manager = RegistrationTaskManager.get_instance()
+        config = ConfigManager.get_instance().config
+        target_country = (country or config.target_country or "").lower()
         limit = max(BATCH_CONCURRENCY_MIN, min(int(concurrency or 1), BATCH_CONCURRENCY_MAX))
+
+        slot_pool = None
+        if not proxy_override and not proxy_id:
+            slot_pool, pool_limit, pool_logs = await prepare_batch_proxy_pool(
+                batch_id=batch_id,
+                country=target_country,
+                slots=limit,
+                config=config,
+                proxy_mode=proxy_mode,
+            )
+            if pool_logs and slot_pool is None and pool_limit == 0:
+                await fail_batch_tasks_no_proxy(task_ids, manager, pool_logs)
+                with manager._lock:
+                    if batch_id in manager.batches:
+                        manager.batches[batch_id]["status"] = "failed"
+                        manager.batches[batch_id]["updated_at"] = datetime.datetime.now().isoformat()
+                return
+            if slot_pool is not None:
+                limit = max(BATCH_CONCURRENCY_MIN, min(pool_limit, limit))
+                for tid in task_ids:
+                    for line in pool_logs:
+                        await manager.append_log(tid, line)
+
         sem = asyncio.Semaphore(limit)
         with manager._lock:
             if batch_id in manager.batches:
@@ -1752,17 +1834,31 @@ class RegistrationOrchestrator:
                     tid,
                     f"[批量编排] batch_id={batch_id} 取得并发槽位 (concurrency={limit})，开始引导"
                 )
-                await cls.run_registration(
-                    task_id=tid,
-                    country=country,
-                    app_type=app_type,
-                    proxy_override=proxy_override,
-                    set_2fa=set_2fa,
-                    proxy_id=proxy_id,
-                    proxy_mode=proxy_mode,
-                    sms_provider=sms_provider,
-                    max_price=max_price,
-                )
+                task_proxy = proxy_override
+                leased = False
+                if slot_pool is not None:
+                    try:
+                        task_proxy = await slot_pool.acquire(tid)
+                        leased = True
+                    except Exception as exc:
+                        await manager.append_log(tid, f"[代理槽位] 获取失败: {exc}")
+                        manager.update_task_status(tid, "failed", message=str(exc))
+                        return
+                try:
+                    await cls.run_registration(
+                        task_id=tid,
+                        country=country,
+                        app_type=app_type,
+                        proxy_override=task_proxy,
+                        set_2fa=set_2fa,
+                        proxy_id=proxy_id,
+                        proxy_mode=proxy_mode,
+                        sms_provider=sms_provider,
+                        max_price=max_price,
+                    )
+                finally:
+                    if slot_pool is not None and leased and task_proxy:
+                        await slot_pool.release(task_proxy, tid)
 
         await asyncio.gather(*[_run_one(tid) for tid in task_ids], return_exceptions=True)
         with manager._lock:
