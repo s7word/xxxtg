@@ -668,6 +668,8 @@ class RegistrationOrchestrator:
             )
 
         if not active_proxy:
+            from backend.app.services.proxyseller import _norm, detect_static_region
+
             fallback = getattr(config, "fallback_proxy", None)
             if hasattr(fallback, "model_dump"):
                 active_proxy = fallback.model_dump()
@@ -679,11 +681,22 @@ class RegistrationOrchestrator:
                     "addr": "127.0.0.1",
                     "port": 10808,
                 }
+            # fallback_proxy 没有 country 字段；反查 host+username 是否命中已知静态区域账密，
+            # 避免用户以为目标国家（如 ZA）的代理已经生效，实际出口仍是 CL/IN 等旧区域。
+            fallback_region = detect_static_region(active_proxy)
+            region_mismatch_note = ""
+            if fallback_region and target_country and fallback_region != _norm(target_country):
+                region_mismatch_note = (
+                    f" ⚠️ 该后备中继实际出口区域为 {fallback_region.upper()}，"
+                    f"与目标区域 {target_country.upper()} 不一致——出口 IP 并非 {target_country.upper()}，"
+                    "仅用于保证任务不中断，不代表已获取目标区域代理"
+                )
             await manager.append_log(
                 task_id,
                 f"[多径中继网关] 使用静态后备中继 {active_proxy.get('proxy_type', 'socks5')}://"
                 f"{active_proxy.get('addr')}:{active_proxy.get('port')}"
                 + (f"（策略={mode}）" if mode == "fallback" else "")
+                + region_mismatch_note
             )
         return active_proxy
 

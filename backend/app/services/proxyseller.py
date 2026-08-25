@@ -401,6 +401,17 @@ def match_proxy_country(proxy: Dict[str, Any], query: Optional[str]) -> bool:
     return any(len(token) >= 4 and token in joined for token in wanted)
 
 
+def _available_country_codes(proxies: Iterable[Dict[str, Any]]) -> List[str]:
+    codes: List[str] = []
+    seen: Set[str] = set()
+    for item in proxies or []:
+        label = (item.get("country_code") or item.get("country_alpha3") or item.get("country") or "").upper()
+        if label and label not in seen:
+            seen.add(label)
+            codes.append(label)
+    return sorted(codes)
+
+
 def proxy_identity(proxy: Dict[str, Any]) -> str:
     """同一 host:port 上不同账密是不同区域隧道，必须带 username 去重。"""
     user = _norm(proxy.get("username"))
@@ -488,6 +499,26 @@ def is_static_residential(proxy: Optional[Dict[str, Any]]) -> bool:
         _norm(proxy.get("catalog_type")) == STATIC_CATALOG_TYPE
         or _norm(proxy.get("source")) == "static_residential"
     )
+
+
+def detect_static_region(proxy: Optional[Dict[str, Any]]) -> Optional[str]:
+    """反查任意代理字典是否命中内置静态住宅池的某个已知区域账密。
+
+    专门用于 fallback_proxy 场景：即便调用方没有显式标注 country_code，
+    只要 host + username 精确匹配某个 STATIC_REGIONAL_POOLS 条目，
+    就能推断出它真实的出口国家，从而在目标区域（如 ZA）没有静态池时，
+    提示用户"当前使用的后备代理其实是 CL/IN，并非目标区域"，避免误判为已拿到目标区域 IP。
+    """
+    if not proxy:
+        return None
+    host = _norm(proxy.get("addr"))
+    user = _norm(proxy.get("username"))
+    if not host or not user or host != STATIC_RESIDENTIAL_HOST:
+        return None
+    for iso2, spec in STATIC_REGIONAL_POOLS.items():
+        if _norm(spec.get("username")) == user:
+            return iso2
+    return None
 
 
 def is_custom_proxy(proxy: Optional[Dict[str, Any]]) -> bool:
@@ -897,14 +928,14 @@ class ProxySellerService:
             available: List[str] = []
             if country:
                 all_items = await self.get_proxy_list(country=None, refresh=False, include_health=False)
-                available = sorted({
-                    (item.get("country_code") or item.get("country") or "?").upper()
-                    for item in all_items
-                })
+                available = _available_country_codes(all_items)
                 hint = (
                     f"目标区域 {country.upper()} 暂无可用区域代理"
                     + (f"；账户当前其它区域: {', '.join(available)}" if available else "")
-                    + "。已禁止跨大区隐式兜底，请使用配置的 fallback_proxy。"
+                    + "。已禁止跨大区隐式兜底，请使用配置的 fallback_proxy"
+                    "（该后备代理出口国家可能与目标区域不一致）。"
+                    "如需真正的该区域出口 IP，请在 Proxy-Seller 后台购买/创建对应国家的住宅代理列表，"
+                    "或到「自建代理池」手动导入该区域节点。"
                 )
                 source = "config_fallback_required" if allow_fallback else "strict_region_miss"
             else:
@@ -974,6 +1005,27 @@ class ProxySellerService:
         import asyncio
 
         proxies = await self.get_proxy_list(country=country, refresh=refresh, include_health=False)
+        if country and not proxies:
+            # 该区域在 API / 静态住宅池 / 自建池里一个候选节点都没有——
+            # 必须与"已经测试、但连通失败"区分开，否则前端把 0/0 展示成
+            # "已完成 0 个节点测活，0 个连通" 会被误读为"拿到 IP 但测试不通"。
+            meta = self.cache_meta()
+            all_items = await self.get_proxy_list(country=None, refresh=False, include_health=False)
+            available = _available_country_codes(all_items)
+            message = f"目标区域 {country.upper()} 当前没有任何候选代理节点（0 个），并非连通性测试失败。"
+            if available:
+                message += f" 账户 API / 静态住宅池 / 自建池当前覆盖区域: {', '.join(available)}。"
+            if meta.get("api_error"):
+                message += f" Proxy-Seller API 不可用（{meta['api_error']}），已回退到静态住宅池/自建池。"
+            message += "请在 Proxy-Seller 后台购买/创建该国家的住宅代理列表，或到「自建代理池」手动导入该区域节点后重试。"
+            return {
+                "success": False,
+                "tested": 0,
+                "healthy": 0,
+                "country": country,
+                "results": [],
+                "message": message,
+            }
         if limit and limit > 0:
             proxies = proxies[:limit]
         semaphore = asyncio.Semaphore(max(1, concurrency))

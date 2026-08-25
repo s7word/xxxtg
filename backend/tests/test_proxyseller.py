@@ -27,7 +27,9 @@ from backend.app.services.proxyseller import (  # noqa: E402
     STATIC_RESIDENTIAL_HOST,
     STATIC_RESIDENTIAL_PORTS,
     STATIC_RESIDENTIAL_USERNAME,
+    STATIC_REGIONAL_POOLS,
     builtin_static_residential_items,
+    detect_static_region,
     expand_country_aliases,
     format_proxy_endpoint,
     infer_country_from_phone,
@@ -413,6 +415,56 @@ class TestProxySellerServicePool(unittest.IsolatedAsyncioTestCase):
         finally:
             await svc.close()
 
+    async def test_za_has_zero_candidates_when_api_blocked(self):
+        """南非(ZA)动态区域池测试不通的根因复现：
+
+        API 被 IP 白名单拦截时回退到内置静态住宅池，但该池只覆盖 CL/IN，
+        南非没有任何候选节点——这不是连通性失败，是账户/静态池压根没有 ZA 节点。
+        """
+        svc = ProxySellerService("test-key", include_static=True)
+        svc.client.request = AsyncMock(return_value=DummyResponse({
+            "status": "error",
+            "errors": [{"message": "IP not allowed 3.139.131.44"}],
+        }))
+        try:
+            za = await svc.get_proxy_list(country="za", refresh=True, include_health=False)
+            self.assertEqual(za, [])
+            cl = await svc.get_proxy_list(country="cl", include_health=False)
+            self.assertTrue(cl)
+            self.assertNotIn("za", STATIC_REGIONAL_POOLS)
+
+            selected = await svc.select_best_proxy(target_country="za", allow_fallback=True)
+            self.assertFalse(selected["success"])
+            self.assertIsNone(selected["proxy"])
+            self.assertIn("暂无可用", selected["message"])
+            self.assertIn("ZA", selected["hint"])
+        finally:
+            await svc.close()
+
+    async def test_test_all_reports_zero_candidates_distinctly_from_failed_probe(self):
+        """test_all 对“该区域零候选节点”与“已测试但连通失败”必须给出不同结论，
+
+        否则前端把 0/0 展示成“已完成 0 个节点测活，0 个连通”会被用户误读为
+        “拿到南非 IP 但测试不通”。
+        """
+        svc = ProxySellerService("test-key", include_static=True)
+        svc.client.request = AsyncMock(return_value=DummyResponse({
+            "status": "error",
+            "errors": [{"message": "IP not allowed 3.139.131.44"}],
+        }))
+        try:
+            result = await svc.test_all(country="za")
+            self.assertFalse(result["success"])
+            self.assertEqual(result["tested"], 0)
+            self.assertEqual(result["healthy"], 0)
+            self.assertEqual(result["results"], [])
+            self.assertIn("没有任何候选代理节点", result["message"])
+            self.assertNotIn("0 个连通", result["message"])
+            self.assertIn("CL", result["message"])
+            self.assertIn("IN", result["message"])
+        finally:
+            await svc.close()
+
     async def test_static_pool_works_without_api_key(self):
         svc = ProxySellerService("", include_static=True)
         try:
@@ -491,6 +543,22 @@ class TestStaticResidentialHelpers(unittest.TestCase):
         merged = merge_proxy_pools(static, [duplicate, normalize_proxy_item(_usa_raw())])
         self.assertEqual(len(merged), 6)
 
+    def test_detect_static_region_matches_known_credentials(self):
+        cl_node = next(item for item in builtin_static_residential_items("cl") if item["port"] == 10000)
+        in_node = next(item for item in builtin_static_residential_items("in") if item["port"] == 10000)
+        self.assertEqual(detect_static_region(cl_node), "cl")
+        self.assertEqual(detect_static_region(in_node), "in")
+        self.assertIsNone(detect_static_region({
+            "addr": STATIC_RESIDENTIAL_HOST,
+            "username": "totally-unknown-za-login",
+        }))
+        self.assertIsNone(detect_static_region({
+            "addr": "custom.host.example",
+            "username": STATIC_RESIDENTIAL_USERNAME,
+        }))
+        self.assertIsNone(detect_static_region(None))
+        self.assertIsNone(detect_static_region({}))
+
     def test_parse_ip_probe_payload(self):
         ipapi = _parse_ip_probe_payload({
             "ip": "186.189.99.200",
@@ -563,6 +631,79 @@ class TestRegistrarProxyAutoMatch(unittest.IsolatedAsyncioTestCase):
             "[多径中继网关] 成功从 Proxy-Seller API 自动匹配到 CL 区域代理: socks5://181.43.10.22:50101",
             logs,
         )
+
+
+class TestFallbackRegionMismatchWarning(unittest.IsolatedAsyncioTestCase):
+    """当目标区域（如 ZA）没有任何候选节点、优雅降级到 config.fallback_proxy 时，
+
+    必须显式提示后备代理真实出口区域（如 CL）与目标区域不一致，
+    否则用户会误以为“已经拿到南非代理”，实际出口 IP 仍是智利。
+    """
+
+    def setUp(self):
+        RegistrationTaskManager._instance = None
+
+    async def test_fallback_to_chile_pool_warns_about_za_mismatch(self):
+        manager = RegistrationTaskManager.get_instance()
+        task_id = manager.create_task()
+
+        cl_pool = STATIC_REGIONAL_POOLS["cl"]
+        config = SimpleNamespace(
+            use_proxy_seller_auto=False,
+            proxy_seller_key="",
+            custom_proxies=[],
+            fallback_proxy=SimpleNamespace(model_dump=lambda: {
+                "proxy_type": "socks5",
+                "addr": STATIC_RESIDENTIAL_HOST,
+                "port": cl_pool["ports"][0],
+                "username": cl_pool["username"],
+                "password": cl_pool["password"],
+            }),
+        )
+
+        active_proxy = await RegistrationOrchestrator.resolve_active_proxy(
+            config=config,
+            target_country="za",
+            task_id=task_id,
+            manager=manager,
+            proxy_mode="custom_pool",
+        )
+        self.assertEqual(active_proxy["addr"], STATIC_RESIDENTIAL_HOST)
+        self.assertEqual(active_proxy["username"], cl_pool["username"])
+
+        logs = "\n".join(manager.get_task(task_id)["logs"])
+        self.assertIn("使用静态后备中继", logs)
+        self.assertIn("实际出口区域为 CL", logs)
+        self.assertIn("与目标区域 ZA 不一致", logs)
+
+    async def test_fallback_matching_target_country_has_no_warning(self):
+        manager = RegistrationTaskManager.get_instance()
+        task_id = manager.create_task()
+
+        cl_pool = STATIC_REGIONAL_POOLS["cl"]
+        config = SimpleNamespace(
+            use_proxy_seller_auto=False,
+            proxy_seller_key="",
+            custom_proxies=[],
+            fallback_proxy=SimpleNamespace(model_dump=lambda: {
+                "proxy_type": "socks5",
+                "addr": STATIC_RESIDENTIAL_HOST,
+                "port": cl_pool["ports"][0],
+                "username": cl_pool["username"],
+                "password": cl_pool["password"],
+            }),
+        )
+
+        await RegistrationOrchestrator.resolve_active_proxy(
+            config=config,
+            target_country="cl",
+            task_id=task_id,
+            manager=manager,
+            proxy_mode="custom_pool",
+        )
+        logs = "\n".join(manager.get_task(task_id)["logs"])
+        self.assertIn("使用静态后备中继", logs)
+        self.assertNotIn("不一致", logs)
 
 
 class TestCustomPoolRouting(unittest.IsolatedAsyncioTestCase):
