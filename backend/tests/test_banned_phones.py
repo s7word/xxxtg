@@ -212,9 +212,10 @@ class TestRunRegistrationBannedCacheTiming(unittest.IsolatedAsyncioTestCase):
         sms.get_number = AsyncMock(return_value=("act-ban", "+6283856982093"))
         gw = MagicMock()
         gw.check_phone_history = AsyncMock(return_value=None)
-        gw.get_push_token = AsyncMock(return_value=("TOKEN", "reghelp"))
+        gw.get_push_token = AsyncMock(return_value=("TOKEN", "push-task-1", "reghelp"))
         gw.close = AsyncMock()
         gw.report_result = AsyncMock()
+        gw.refund_push_token = AsyncMock(return_value=None)
         record = SimpleNamespace(
             reason="PHONE_NUMBER_BANNED",
             source=SOURCE_TELEGRAM_RPC,
@@ -248,9 +249,10 @@ class TestRunRegistrationBannedCacheTiming(unittest.IsolatedAsyncioTestCase):
         sms.get_number = AsyncMock(return_value=("act-live", "+6283856982093"))
         gw = MagicMock()
         gw.check_phone_history = AsyncMock(return_value=None)
-        gw.get_push_token = AsyncMock(return_value=("TOKEN", "reghelp"))
+        gw.get_push_token = AsyncMock(return_value=("TOKEN", "push-task-1", "reghelp"))
         gw.close = AsyncMock()
         gw.report_result = AsyncMock()
+        gw.refund_push_token = AsyncMock(return_value=None)
         clean = PhonePrecheckService.result_from_user(
             "+6283856982093", None, method="resolve_phone"
         )
@@ -311,9 +313,10 @@ class TestAntiSafetyBannedIsRemembered(unittest.IsolatedAsyncioTestCase):
         sms.get_number = AsyncMock(return_value=("act-hist", "+628111111111"))
         gw = MagicMock()
         gw.check_phone_history = AsyncMock(return_value={"id": "chk-1", "statuses": ["BANNED"]})
-        gw.get_push_token = AsyncMock(return_value=("TOKEN", "reghelp"))
+        gw.get_push_token = AsyncMock(return_value=("TOKEN", "push-task-1", "reghelp"))
         gw.close = AsyncMock()
         gw.report_result = AsyncMock()
+        gw.refund_push_token = AsyncMock(return_value=None)
         clean = PhonePrecheckService.result_from_user(
             "+628111111111", None, method="resolve_phone"
         )

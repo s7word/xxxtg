@@ -13,6 +13,7 @@ import datetime
 import json
 import logging
 import threading
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -147,6 +148,9 @@ class ManualLiveSession:
     session_path: Path
     meta_path: Path
     session_filename: str
+    push_task_id: Optional[str] = None
+    push_provider: Optional[str] = None
+    push_token_obtained_at: Optional[float] = None
     first_name: Optional[str] = None
     last_name: Optional[str] = None
     expires_at: Optional[datetime.datetime] = None
@@ -525,6 +529,9 @@ class ManualRegistrationOrchestrator:
         session_path = None
         meta_path = None
         session_filename = None
+        push_task_id = None
+        push_provider = None
+        push_token_obtained_at = None
 
         try:
             active_proxy = await RegistrationOrchestrator.resolve_active_proxy(
@@ -591,20 +598,26 @@ class ManualRegistrationOrchestrator:
                 await manager.append_log(task_id, f"⚠️ 预检探测跳过: {exc}")
 
             push_token = None
+            push_task_id = None
             push_provider = None
+            push_token_obtained_at = None
             try:
                 await manager.append_log(
                     task_id, "向 Attestation 高可用网关请求平台推送握手凭证 (Signed Push Token)..."
                 )
-                push_token, push_provider = await bypass_svc.get_push_token(
+                # ref=task_id：REGHelp 侧必须携带有效 ref，才能事后 setStatus 触发自动退款
+                push_token, push_task_id, push_provider = await bypass_svc.get_push_token(
                     profile,
                     aid=aid,
                     log_callback=lambda msg: manager.append_log(task_id, msg),
+                    ref=task_id,
                 )
                 if push_token:
+                    push_token_obtained_at = time.monotonic()
                     await manager.append_log(
                         task_id,
-                        f"成功获取平台合规签署的 Attestation Push Token (提供源: {push_provider})",
+                        f"成功获取平台合规签署的 Attestation Push Token "
+                        f"(提供源: {push_provider}, task_id={push_task_id or '-'})",
                     )
                 else:
                     await manager.append_log(task_id, "⚠️ Attestation Push Token 未返回，回退至标准信道...")
@@ -729,6 +742,9 @@ class ManualRegistrationOrchestrator:
                 session_path=session_path,
                 meta_path=meta_path,
                 session_filename=session_filename,
+                push_task_id=push_task_id,
+                push_provider=push_provider,
+                push_token_obtained_at=push_token_obtained_at,
                 first_name=first_name,
                 last_name=last_name,
                 expires_at=expires_at,
@@ -764,6 +780,10 @@ class ManualRegistrationOrchestrator:
                 source=SOURCE_TELEGRAM_RPC,
                 country=target_country,
             )
+            await RegistrationOrchestrator._refund_push_token(
+                bypass_svc, push_task_id, push_provider, push_token_obtained_at,
+                normalized, task_id, manager, "PHONE_NUMBER_BANNED",
+            )
             await RegistrationOrchestrator._release_registration_resources(client, None, bypass_svc)
             manager.update_task_status(task_id, "failed", error=err, phone=normalized)
             return cls._snapshot_start(
@@ -784,6 +804,10 @@ class ManualRegistrationOrchestrator:
             sec = getattr(exc, "seconds", 0)
             err = f"触发协议频控与退避限流，需等待 {sec} 秒 (FLOOD_WAIT)"
             await manager.append_log(task_id, f"❌ {err}")
+            await RegistrationOrchestrator._refund_push_token(
+                bypass_svc, push_task_id, push_provider, push_token_obtained_at,
+                normalized, task_id, manager, "FLOOD_WAIT",
+            )
             await RegistrationOrchestrator._release_registration_resources(client, None, bypass_svc)
             manager.update_task_status(task_id, "failed", error=err, phone=normalized)
             return cls._snapshot_start(
@@ -865,6 +889,12 @@ class ManualRegistrationOrchestrator:
                 )
                 user_id = int(outcome["user_id"] or 0)
                 account_kind = outcome["account_kind"]
+                if account_kind == "existing_2fa":
+                    # 旧号已有 2FA：本次 Push Token 对新号验证已无意义，尝试触发 REGHelp 退款
+                    await RegistrationOrchestrator._refund_push_token(
+                        session.bypass_svc, session.push_task_id, session.push_provider,
+                        session.push_token_obtained_at, session.phone, task_id, manager, "existing_2fa",
+                    )
                 await manager.append_log(
                     task_id,
                     f"虚拟节点状态机初始化成功! 节点 UID: {user_id}, 句柄: {session.phone}, "

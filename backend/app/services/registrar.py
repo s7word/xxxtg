@@ -3,6 +3,7 @@ import json
 import random
 import logging
 import threading
+import time
 import uuid
 import datetime
 from pathlib import Path
@@ -28,6 +29,7 @@ from backend.app.services.vaksms import NoNumberAvailableError, VakSmsService, f
 from backend.app.services.grizzlysms import GrizzlySmsService, PROVIDER_LABEL as GRIZZLY_PROVIDER_LABEL
 from backend.app.services.fivesim import FiveSimService, PROVIDER_LABEL as FIVESIM_PROVIDER_LABEL
 from backend.app.services.attestation_gateway import AttestationGatewayService
+from backend.app.services.reghelp import PUSH_REFUND_WINDOW_SECONDS
 from backend.app.services.banned_phones import (
     LOCAL_BANNED_REASON,
     SOURCE_ANTISAFETY,
@@ -513,6 +515,53 @@ class RegistrationOrchestrator:
             task_id,
             f"⚠️ 自动退订/撤销信道句柄未成功 (act_id={act_id}, 原因: {reason}): {detail}"
         )
+
+    @classmethod
+    async def _refund_push_token(
+        cls,
+        bypass_svc: Optional[AttestationGatewayService],
+        push_task_id: Optional[str],
+        push_provider: Optional[str],
+        push_token_obtained_at: Optional[float],
+        phone: Optional[str],
+        task_id: str,
+        manager: RegistrationTaskManager,
+        reason: str,
+    ) -> None:
+        """失败/退订分支尝试触发 REGHelp Push Token `setStatus` 自动退款审计。
+
+        仅当 `push_provider == "reghelp"` 且已持有 `push_task_id` 时才会发起请求；
+        `reason` 未落在 `RegHelpService.PUSH_REFUND_REASON_MAP` 内、已超出退款窗口
+        (`PUSH_REFUND_WINDOW_SECONDS`)、或 REGHelp 未启用时均静默跳过，不影响主流程。
+        setStatus 本身的网络/平台异常由 `RegHelpService.set_push_status` 兜底吞掉，
+        这里额外包一层 try/except 仅为防御式编程，绝不会导致任务失败。
+        """
+        if not bypass_svc or not push_task_id or push_provider != "reghelp":
+            return
+        if push_token_obtained_at is not None:
+            elapsed = time.monotonic() - push_token_obtained_at
+            if elapsed > PUSH_REFUND_WINDOW_SECONDS:
+                await manager.append_log(
+                    task_id,
+                    f"⚠️ [REGHelp 退款] 距 Push Token 签发已 {elapsed:.0f}s，"
+                    f"超出 {PUSH_REFUND_WINDOW_SECONDS:.0f}s 退款窗口，跳过 setStatus id={push_task_id}"
+                )
+                return
+        try:
+            status = await bypass_svc.refund_push_token(
+                push_task_id,
+                phone,
+                reason,
+                log_callback=lambda msg: manager.append_log(task_id, msg),
+            )
+        except Exception as exc:
+            logger.warning("REGHelp Push Token 退款回写异常 (id=%s, reason=%s): %s", push_task_id, reason, exc)
+            return
+        if not status:
+            logger.debug(
+                "REGHelp Push Token 退款跳过 (id=%s, reason=%s): 原因未映射或平台未确认",
+                push_task_id, reason,
+            )
 
     @classmethod
     async def _apply_banned_cache_gate(
@@ -1219,6 +1268,9 @@ class RegistrationOrchestrator:
         check_id = None
         client = None
         phone = None
+        push_task_id = None
+        push_provider = None
+        push_token_obtained_at = None
 
         try:
             await manager.append_log(
@@ -1308,17 +1360,29 @@ class RegistrationOrchestrator:
 
             # 3. 申请 Attestation Push 握手凭证 (可选增强，若不可达平滑降级至标准协议信道)
             # 通过统一网关在 REGHelp / AntiSafety 两个高可用提供源之间按优先级自动选择与容灾切换
+            # ref=task_id：REGHelp 侧必须在 getToken 时携带有效 ref，才能在事后 setStatus 触发自动退款
             push_token = None
-            push_provider = None
             try:
                 await manager.append_log(task_id, "向 Attestation 高可用网关请求平台推送握手凭证 (Signed Push Token)...")
-                push_token, push_provider = await bypass_svc.get_push_token(
+                push_token, push_task_id, push_provider = await bypass_svc.get_push_token(
                     profile,
                     aid=aid,
-                    log_callback=lambda msg: manager.append_log(task_id, msg)
+                    log_callback=lambda msg: manager.append_log(task_id, msg),
+                    ref=task_id,
                 )
                 if push_token:
-                    await manager.append_log(task_id, f"成功获取平台合规签署的 Attestation Push Token (提供源: {push_provider})")
+                    push_token_obtained_at = time.monotonic()
+                    manager.update_task_status(
+                        task_id,
+                        "running",
+                        push_task_id=push_task_id,
+                        push_provider=push_provider,
+                    )
+                    await manager.append_log(
+                        task_id,
+                        f"成功获取平台合规签署的 Attestation Push Token "
+                        f"(提供源: {push_provider}, task_id={push_task_id or '-'})"
+                    )
                 else:
                     await manager.append_log(task_id, "⚠️ Attestation Push Token 未返回，回退至标准信道...")
             except Exception as e:
@@ -1447,6 +1511,11 @@ class RegistrationOrchestrator:
                     )
                     manager.update_task_status(
                         task_id, "running", account_kind=account_kind, needs_signup=False
+                    )
+                    # 旧号已有 2FA：本次 Push Token 对新号验证已无意义，尝试触发 REGHelp 退款
+                    await cls._refund_push_token(
+                        bypass_svc, push_task_id, push_provider, push_token_obtained_at,
+                        phone, task_id, manager, "existing_2fa",
                     )
                     auth_result = await client.sign_in(password=config.default_2fa_password)
                 else:
@@ -1579,6 +1648,10 @@ class RegistrationOrchestrator:
                     country=target_country,
                 )
             await cls._refund_and_revoke_channel(sms_svc, act_id, task_id, manager, "PHONE_NUMBER_BANNED")
+            await cls._refund_push_token(
+                bypass_svc, push_task_id, push_provider, push_token_obtained_at,
+                phone, task_id, manager, "PHONE_NUMBER_BANNED",
+            )
             if check_id: await bypass_svc.report_result(check_id, aid, "BANNED")
             manager.update_task_status(task_id, "failed", error=err)
         except ApiIdPublishedFloodError:
@@ -1599,6 +1672,10 @@ class RegistrationOrchestrator:
             err = f"触发协议频控与退避限流，需等待 {sec} 秒 (FLOOD_WAIT)"
             await manager.append_log(task_id, f"❌ {err}")
             await cls._refund_and_revoke_channel(sms_svc, act_id, task_id, manager, "FLOOD_WAIT")
+            await cls._refund_push_token(
+                bypass_svc, push_task_id, push_provider, push_token_obtained_at,
+                phone, task_id, manager, "FLOOD_WAIT",
+            )
             if check_id: await bypass_svc.report_result(check_id, aid, "FLOOD_WAIT")
             manager.update_task_status(task_id, "failed", error=err)
         except (PhoneCodeInvalidError, PhoneCodeExpiredError, PhoneCodeEmptyError) as e:
@@ -1612,12 +1689,20 @@ class RegistrationOrchestrator:
             err = f"站内信验证码无法被带外通道接收 ({reason}): {str(ex) or repr(ex)}"
             await manager.append_log(task_id, f"❌ {err}")
             await cls._refund_and_revoke_channel(sms_svc, act_id, task_id, manager, reason)
+            await cls._refund_push_token(
+                bypass_svc, push_task_id, push_provider, push_token_obtained_at,
+                phone, task_id, manager, reason,
+            )
             if check_id: await bypass_svc.report_result(check_id, aid, reason)
             manager.update_task_status(task_id, "failed", error=err)
         except TimeoutError as ex:
             err = f"等待带外挑战证明超时 (NO_CODE): {str(ex) or repr(ex)}"
             await manager.append_log(task_id, f"❌ {err}")
             await cls._refund_and_revoke_channel(sms_svc, act_id, task_id, manager, "NO_CODE")
+            await cls._refund_push_token(
+                bypass_svc, push_task_id, push_provider, push_token_obtained_at,
+                phone, task_id, manager, "NO_CODE",
+            )
             if check_id: await bypass_svc.report_result(check_id, aid, "NO_CODE")
             manager.update_task_status(task_id, "failed", error=err)
         except RecaptchaChallengeError as ex:

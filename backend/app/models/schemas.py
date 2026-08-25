@@ -541,6 +541,8 @@ class TaskStatusResponse(BaseModel):
     delivery_type: Optional[str] = Field(default=None, description="验证码分发通道类型")
     session_file: Optional[str] = Field(default=None, description="成功后写入的 .session 文件名")
     expires_at: Optional[str] = Field(default=None, description="手动等待验证码的截止时间")
+    push_task_id: Optional[str] = Field(default=None, description="REGHelp Push Token 任务 id，用于 setStatus 退款审计")
+    push_provider: Optional[str] = Field(default=None, description="本次生效的 Attestation 提供源: reghelp / antisafety")
     created_at: str
     updated_at: str
 

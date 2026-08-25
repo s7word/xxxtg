@@ -115,9 +115,15 @@ class AttestationGatewayService:
         self,
         profile: Dict[str, Any],
         aid: Optional[str] = None,
-        log_callback=None
-    ) -> Tuple[Optional[str], Optional[str]]:
-        """按优先级策略依次尝试各 Attestation 提供源，返回 (token, 生效提供源名称)"""
+        log_callback=None,
+        ref: Optional[str] = None,
+    ) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+        """按优先级策略依次尝试各 Attestation 提供源，返回 (token, task_id, 生效提供源名称)
+
+        `ref` 会透传给 REGHelp `push/getToken`（建议传入注册任务 task_id），使后续
+        `refund_push_token` 能在失败/退订分支对该任务发起 setStatus 自动退款审计。
+        AntiSafety 路径没有等价的 setStatus 能力，`task_id` 恒为 None。
+        """
         mode = getattr(self.config, "attestation_provider_mode", "reghelp_primary") or "reghelp_primary"
         order = self._provider_order()
         if not order:
@@ -126,7 +132,7 @@ class AttestationGatewayService:
                 if mode.startswith("reghelp") and not self.reghelp:
                     hint = "（reghelp_primary/only 已配置，但缺少有效 reghelp_api_key）"
                 await log_callback(f"⚠️ 未启用任何 Attestation / Push 凭证提供源{hint}，将直接以标准信道模式继续")
-            return None, None
+            return None, None, None
 
         if log_callback:
             provider_labels = {"reghelp": "REGHelp", "antisafety": "AntiSafety"}
@@ -146,13 +152,16 @@ class AttestationGatewayService:
                 if log_callback:
                     await log_callback(f"正在使用独立提供源 {name} (候选网关: {bases}) 申请 Push Token...")
                 if name == self.PROVIDER_REGHELP:
-                    token = await svc.get_push_token(profile, log_callback=log_callback)
+                    result = await svc.get_push_token(profile, log_callback=log_callback, ref=ref)
+                    token = result.token if result else None
+                    task_id = result.task_id if result else None
                 else:
                     token = await svc.get_push_token({**profile, "aid": aid}, log_callback=log_callback)
+                    task_id = None
 
                 if token:
                     self.last_used_provider = name
-                    return token, name
+                    return token, task_id, name
 
                 if log_callback:
                     await log_callback(f"⚠️ {name} 提供源未返回有效 Push Token，尝试下一候选提供源...")
@@ -163,7 +172,27 @@ class AttestationGatewayService:
 
         if errors:
             logger.warning(f"全部 Attestation 提供源均未成功获取 Push Token: {errors}")
-        return None, None
+        return None, None, None
+
+    async def refund_push_token(
+        self,
+        task_id: Optional[str],
+        phone: Optional[str],
+        reason: str,
+        log_callback=None,
+    ) -> Optional[str]:
+        """把内部失败原因映射为 REGHelp setStatus 并回写，仅在持有 REGHelp 客户端且有 task_id 时生效。
+
+        AntiSafety 无等价能力，直接跳过并返回 None。永远不会向上抛出异常（由
+        `RegHelpService.set_push_status` 保证幂等/静默失败），不阻塞调用方的主流程。
+        """
+        if not self.reghelp or not task_id:
+            return None
+        try:
+            return await self.reghelp.refund_push_token(task_id, phone, reason, log_callback=log_callback)
+        except Exception as exc:
+            logger.warning(f"REGHelp Push Token 退款回写异常 (id={task_id}, reason={reason}): {exc}")
+            return None
 
     async def get_recaptcha_mobile_token(
         self,

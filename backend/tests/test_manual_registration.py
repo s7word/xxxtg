@@ -54,15 +54,20 @@ class FakeBypass:
     def __init__(self):
         self.closed = False
         self.reported = []
+        self.refunded = []
 
     async def get_push_token(self, *args, **kwargs):
-        return "push-token", "reghelp"
+        return "push-token", "push-task-1", "reghelp"
 
     async def check_phone_history(self, *args, **kwargs):
         return None
 
     async def report_result(self, check_id, aid, status):
         self.reported.append((check_id, aid, status))
+
+    async def refund_push_token(self, task_id, phone, reason, log_callback=None):
+        self.refunded.append((task_id, phone, reason))
+        return None
 
     async def close(self):
         self.closed = True

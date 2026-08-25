@@ -387,9 +387,10 @@ class TestRegistrarGrizzlyPipeline(unittest.IsolatedAsyncioTestCase):
         sms.wait_for_code = AsyncMock(side_effect=TimeoutError("no sms"))
         gw = MagicMock()
         gw.check_phone_history = AsyncMock(return_value=None)
-        gw.get_push_token = AsyncMock(return_value=("TOKEN", "reghelp"))
+        gw.get_push_token = AsyncMock(return_value=("TOKEN", "push-task-1", "reghelp"))
         gw.close = AsyncMock()
         gw.report_result = AsyncMock()
+        gw.refund_push_token = AsyncMock(return_value=None)
         clean = SimpleNamespace(intercept=False, is_registered=False, degraded=False, reason="", user_id=None)
         sent = SimpleNamespace(
             type=type("SentCodeTypeSms", (), {})(),

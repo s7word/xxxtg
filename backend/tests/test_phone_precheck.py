@@ -374,9 +374,10 @@ class TestRunRegistrationPrecheckTiming(unittest.IsolatedAsyncioTestCase):
         sms.get_number = AsyncMock(return_value=("act-reg", "+56911112222"))
         gw = MagicMock()
         gw.check_phone_history = AsyncMock(return_value=None)
-        gw.get_push_token = AsyncMock(return_value=("TOKEN", "reghelp"))
+        gw.get_push_token = AsyncMock(return_value=("TOKEN", "push-task-1", "reghelp"))
         gw.close = AsyncMock()
         gw.report_result = AsyncMock()
+        gw.refund_push_token = AsyncMock(return_value=None)
 
         registered = PhonePrecheckService.result_from_user(
             "+56911112222",
@@ -411,9 +412,10 @@ class TestRunRegistrationPrecheckTiming(unittest.IsolatedAsyncioTestCase):
         sms.wait_for_code = AsyncMock(side_effect=TimeoutError("no sms"))
         gw = MagicMock()
         gw.check_phone_history = AsyncMock(return_value=None)
-        gw.get_push_token = AsyncMock(return_value=("TOKEN", "reghelp"))
+        gw.get_push_token = AsyncMock(return_value=("TOKEN", "push-task-1", "reghelp"))
         gw.close = AsyncMock()
         gw.report_result = AsyncMock()
+        gw.refund_push_token = AsyncMock(return_value=None)
 
         clean = PhonePrecheckService.result_from_user(
             "+56911112222", None, method="resolve_phone"
@@ -457,7 +459,7 @@ class TestRunRegistrationPrecheckTiming(unittest.IsolatedAsyncioTestCase):
         sms = FakeSms()
         sms.get_number = AsyncMock(side_effect=NoNumberAvailableError("cl", {"error": "noNumber"}))
         gw = MagicMock()
-        gw.get_push_token = AsyncMock(return_value=("TOKEN", "reghelp"))
+        gw.get_push_token = AsyncMock(return_value=("TOKEN", "push-task-1", "reghelp"))
         gw.close = AsyncMock()
 
         cfg_mgr = SimpleNamespace(config=self._config())

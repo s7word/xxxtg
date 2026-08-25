@@ -1,5 +1,7 @@
 import asyncio
 import logging
+import time
+from dataclasses import dataclass
 from typing import Optional, Dict, Any, List, Tuple
 import httpx
 
@@ -12,6 +14,50 @@ from backend.app.services.attestation_urls import (
 from backend.app.services.net_utils import create_httpx_client
 
 logger = logging.getLogger("RegHelpService")
+
+# REGHelp /push/setStatus 允许的枚举值。仅在对应 getToken 请求携带了有效 ref 时生效，
+# 平台会在窗口期内（官方文档描述约 60~180 秒）对已标记为无效的 Push Token 触发自动退款审计。
+PUSH_STATUS_VALUES = frozenset({"NOSMS", "FLOOD", "BANNED", "2FA"})
+PUSH_REFUND_WINDOW_SECONDS = 180.0
+PUSH_REF_MAX_LENGTH = 50
+
+# 内部失败原因 -> REGHelp setStatus 枚举映射表 (与 registrar.py 中 _refund_and_revoke_channel /
+# 各异常分支使用的同一套内部原因标识保持一致，避免退款审计与接码平台自动退订语义割裂)：
+#
+#   内部失败原因 (reason)                          REGHelp setStatus
+#   ----------------------------------------------  -----------------
+#   PHONE_NUMBER_BANNED (Telegram RPC 封禁)          BANNED
+#   PHONE_PREAUDIT_BANNED (AntiSafety 历史审计封禁)   BANNED
+#   LOCAL_BANNED_PHONE_CACHE (本地封禁库命中)         BANNED
+#   FLOOD_WAIT (PhoneNumberFloodError/FloodWaitError) FLOOD
+#   NO_CODE (等待带外验证码超时)                       NOSMS
+#   SENT_CODE_TYPE_APP (验证码下发到已登录客户端)      NOSMS
+#   existing_2fa (旧号已启用 2FA，SignIn 即完成)       2FA
+#
+# 未出现在此表中的原因 (如 WRONG_CODE / API_ID_PUBLISHED_FLOOD / RECAPTCHA_CHECK / 通用异常)
+# 均不代表 Push Token 本身无效，不会触发 setStatus。
+PUSH_REFUND_REASON_MAP: Dict[str, str] = {
+    "PHONE_NUMBER_BANNED": "BANNED",
+    "PHONE_PREAUDIT_BANNED": "BANNED",
+    "LOCAL_BANNED_PHONE_CACHE": "BANNED",
+    "FLOOD_WAIT": "FLOOD",
+    "NO_CODE": "NOSMS",
+    "SENT_CODE_TYPE_APP": "NOSMS",
+    "existing_2fa": "2FA",
+}
+
+
+@dataclass
+class PushTokenResult:
+    """`get_push_token` 成功时的返回结构，携带退款闭环所需的 task_id/provider/时间戳。"""
+
+    token: Optional[str]
+    task_id: Optional[str]
+    provider: str = "reghelp"
+    obtained_at: Optional[float] = None
+
+    def __bool__(self) -> bool:
+        return bool(self.token)
 
 
 class RegHelpService:
@@ -132,8 +178,25 @@ class RegHelpService:
         ref: Optional[str] = None,
         webhook: Optional[str] = None,
         request_id: Optional[str] = None
-    ) -> Optional[str]:
-        """向 REGHelp Key API 请求平台推送握手凭证 (Push Token)"""
+    ) -> Optional[PushTokenResult]:
+        """向 REGHelp Key API 请求平台推送握手凭证 (Push Token)
+
+        `ref` 应传入调用方稳定标识 (推荐使用注册任务 task_id，≤50 字符)：仅当创建任务时
+        携带了有效 ref，之后才能通过 `set_push_status`/`refund_push_token` 触发自动退款审计，
+        否则平台会静默忽略 setStatus 请求。未提供 ref 时仍会正常发起任务 (不影响本次取号)，
+        但会记录一条日志提示退款闭环不可用。
+
+        成功时返回 `PushTokenResult(token, task_id, provider="reghelp", obtained_at=<monotonic>)`；
+        `task_id` 与 `obtained_at` 供调用方在失败/退订分支据此调用 `set_push_status`/
+        `refund_push_token`（`obtained_at` 用于自行判断是否已超出退款窗口）。
+        """
+        if ref is not None:
+            ref = str(ref).strip()[:PUSH_REF_MAX_LENGTH] or None
+        if not ref:
+            logger.warning(
+                "REGHelp Push Token 请求未携带 ref，本次任务事后无法通过 setStatus 触发自动退款审计"
+            )
+
         app_device = self._normalize_device(profile.get("app_device", "Android"))
         params = {
             "apiKey": self.api_key,
@@ -148,7 +211,7 @@ class RegHelpService:
         if log_callback:
             await log_callback(
                 f"向 REGHelp 网关发起 Push Token 生成任务 (App: {params['appName']}/{app_device}, "
-                f"候选网关: {', '.join(self.api_bases)})..."
+                f"候选网关: {', '.join(self.api_bases)}, ref={ref or '未提供'})..."
             )
 
         try:
@@ -184,7 +247,12 @@ class RegHelpService:
             res = check_resp.json()
             status = res.get("status")
             if status == "done":
-                return res.get("token")
+                return PushTokenResult(
+                    token=res.get("token"),
+                    task_id=task_id,
+                    provider="reghelp",
+                    obtained_at=time.monotonic(),
+                )
             if status == "error":
                 raise RuntimeError(f"REGHelp Push Token 签署失败: {res.get('message')}")
 
@@ -192,11 +260,22 @@ class RegHelpService:
 
     request_push_token = get_push_token
 
-    async def set_push_status(self, task_id: str, number: str, status: str):
+    async def set_push_status(self, task_id: str, number: str, status: str) -> bool:
         """标记一次已获取的 Push Token 为无效 (NOSMS/FLOOD/BANNED/2FA)，触发平台自动退款审计
 
         仅在对应 getToken 请求携带了有效且已启用的 ref 时可用，否则平台会静默忽略。
+        本方法保持幂等：网络/平台侧任何异常都只记录 warning，绝不向上抛出，
+        因此调用方（退款闭环）永远不会因为 setStatus 失败而影响主注册流程。
         """
+        if not task_id:
+            logger.warning("REGHelp Push 状态回写跳过：缺少 task_id")
+            return False
+        normalized_status = str(status or "").strip().upper()
+        if normalized_status not in PUSH_STATUS_VALUES:
+            logger.warning(
+                "REGHelp Push 状态回写收到未知 status=%s（允许值: %s），仍按原样提交",
+                status, ", ".join(sorted(PUSH_STATUS_VALUES)),
+            )
         try:
             await self._get_with_fallback("/push/setStatus", {
                 "apiKey": self.api_key,
@@ -204,8 +283,38 @@ class RegHelpService:
                 "number": number,
                 "status": status
             })
+            return True
         except Exception as e:
-            logger.debug(f"REGHelp Push 状态回写异常: {e}")
+            logger.warning(f"REGHelp Push 状态回写异常 (id={task_id}, status={status}): {e}")
+            return False
+
+    @staticmethod
+    def resolve_refund_status(reason: str) -> Optional[str]:
+        """将内部失败原因标识映射为 REGHelp setStatus 枚举，未收录的原因返回 None。"""
+        return PUSH_REFUND_REASON_MAP.get(str(reason or "").strip())
+
+    async def refund_push_token(
+        self,
+        task_id: Optional[str],
+        phone: Optional[str],
+        reason: str,
+        log_callback=None,
+    ) -> Optional[str]:
+        """按内部失败原因自动映射并回写 setStatus，返回实际提交的状态；未匹配/无 task_id 则跳过并返回 None。
+
+        本方法自身不做退款窗口 (60~180s) 判断——调用方 (通常是 AttestationGatewayService /
+        registrar.py) 若已记录 Push Token 签发时间，应在调用前自行判断是否已超窗，避免向已经
+        失效的任务发起大概率被忽略的请求。
+        """
+        if not task_id:
+            return None
+        status = self.resolve_refund_status(reason)
+        if not status:
+            return None
+        ok = await self.set_push_status(task_id, phone or "", status)
+        if ok and log_callback:
+            await log_callback(f"[REGHelp 退款] setStatus id={task_id} status={status} act_id={phone or '-'}")
+        return status if ok else None
 
     async def get_integrity_token(
         self,
