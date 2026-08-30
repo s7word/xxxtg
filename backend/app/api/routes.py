@@ -1045,6 +1045,7 @@ async def start_registration(req: RegisterTaskRequest, background_tasks: Backgro
         sms_provider=req.sms_provider,
         max_price=req.max_price,
         max_number_attempts=req.max_number_attempts,
+        no_number_retries=req.no_number_retries,
     )
 
     return RegisterTaskResponse(
@@ -1078,6 +1079,7 @@ async def start_batch_registration(req: BatchRegisterRequest, background_tasks: 
         sms_provider=req.sms_provider,
         max_price=req.max_price,
         max_number_attempts=req.max_number_attempts,
+        no_number_retries=req.no_number_retries,
     )
     return BatchRegisterResponse(
         batch_id=batch_id,

@@ -199,26 +199,26 @@
           <div class="between">
             <label class="ce-check">
               <input type="checkbox" v-model="huntMode" />
-              循环试号（复用 Push Token）
+              猎号扫平台（成功即停 / 否则拉黑）
             </label>
             <span class="ce-badge is-warn">hunt</span>
           </div>
           <div v-if="huntMode" class="stack" style="margin-top:10px">
             <div>
-              <div class="ce-label">每任务最大换号次数</div>
+              <div class="ce-label">每任务最多取号次数</div>
               <div class="ce-seg">
                 <button
-                  v-for="n in [5, 10, 20, 30]"
+                  v-for="n in [50, 100, 200, 500]"
                   :key="n"
                   :class="{ 'is-on': huntAttempts === n }"
                   @click="huntAttempts = n"
-                >{{ n }} 次</button>
+                >{{ n }}</button>
               </div>
             </div>
             <p class="ce-tiny">
-              每个任务内部循环取号：验证码下发到绑定客户端（<code>SentCodeTypeApp</code>）、黑名单或预检已注册时退订换号，
-              不 setStatus 退 Push，继续用<strong>本任务</strong>同一 Token 测其它号码。
-              叠加并发时：10 个任务 = 最多 10 个 Push，各自独立换号（不是共用一个 Push）。
+              目的只有两个：① 注册成功立刻停止；② 尽量扫接码平台号码，不可用号（APP/已注册/封禁）拉黑后退订换号。
+              无库存默认软重试 20 次。代理约每 5 次 sendCode 轮换；设备约每 8 次换指纹并换新 Push（Push 与设备绑定）。
+              同一任务内优先复用 Push。可与并发批量叠加：每路独立猎号。
             </p>
           </div>
         </div>
@@ -250,8 +250,8 @@
           @click="startRegistrationTask"
         >
           <span v-if="isStartingTask">正在调度状态机编排流水线...</span>
-          <span v-else-if="huntMode && batchMode">并发 {{ batchCount }} 路 × 每路最多换号 {{ huntAttempts }} 次</span>
-          <span v-else-if="huntMode">开始循环试号（最多 {{ huntAttempts }} 次换号 · 复用 Push）</span>
+          <span v-else-if="huntMode && batchMode">并发 {{ batchCount }} 路猎号 × 每路最多 {{ huntAttempts }} 号</span>
+          <span v-else-if="huntMode">开始猎号（最多 {{ huntAttempts }} 号 · 成功即停）</span>
           <span v-else-if="batchMode">并发启动 {{ batchCount }} 个引导任务</span>
           <span v-else>启动虚拟节点引导仿真</span>
         </button>

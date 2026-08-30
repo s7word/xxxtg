@@ -10,7 +10,7 @@ const batchMode = ref(false)
 const batchCount = ref(3)
 const batchConcurrency = ref(3)
 const huntMode = ref(false)
-const huntAttempts = ref(10)
+const huntAttempts = ref(100)
 const currentBatch = ref(null)
 const taskFilter = ref('all')
 const selectedTaskIds = ref([])
@@ -200,7 +200,8 @@ export const startRegistrationTask = async () => {
       payload.proxy_id = form.proxy_id
     }
     if (useHunt) {
-      payload.max_number_attempts = Math.max(2, Math.min(50, Number(huntAttempts.value) || 10))
+      payload.max_number_attempts = Math.max(2, Math.min(500, Number(huntAttempts.value) || 100))
+      payload.no_number_retries = 20
     }
     if (useBatch) {
       payload.count = Number(batchCount.value)

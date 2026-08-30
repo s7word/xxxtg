@@ -241,7 +241,12 @@ SMS_NEXT_TYPE_NAMES = frozenset({
 })
 
 
-MAX_NUMBER_ATTEMPTS_CAP = 50
+MAX_NUMBER_ATTEMPTS_CAP = 500
+# 猎号默认策略：成功即停；否则尽量扫平台号码并拉黑。无库存软重试与出口/指纹轮换上限。
+DEFAULT_HUNT_NO_NUMBER_RETRIES = 20
+DEFAULT_HUNT_NO_NUMBER_DELAY_SEC = 2.0
+DEFAULT_HUNT_PROXY_MAX_USES = 5
+DEFAULT_HUNT_DEVICE_MAX_USES = 8
 
 
 class SentCodeAppDeliveryError(Exception):
@@ -1395,6 +1400,73 @@ class RegistrationOrchestrator:
                 ) from retry_err
 
     @classmethod
+
+    @classmethod
+    def _resolve_hunt_limits(cls, config, no_number_retries: Optional[int] = None) -> Dict[str, Any]:
+        def _int(name, default):
+            try:
+                return int(getattr(config, name, default) or default)
+            except (TypeError, ValueError):
+                return default
+
+        def _float(name, default):
+            try:
+                return float(getattr(config, name, default) or default)
+            except (TypeError, ValueError):
+                return default
+
+        retries = no_number_retries
+        if retries is None:
+            retries = _int("hunt_no_number_retries", DEFAULT_HUNT_NO_NUMBER_RETRIES)
+        try:
+            retries = int(retries)
+        except (TypeError, ValueError):
+            retries = DEFAULT_HUNT_NO_NUMBER_RETRIES
+        retries = max(0, min(retries, 100))
+        return {
+            "no_number_retries": retries,
+            "no_number_delay": max(0.0, min(_float("hunt_no_number_retry_delay_sec", DEFAULT_HUNT_NO_NUMBER_DELAY_SEC), 60.0)),
+            "proxy_max_uses": max(1, min(_int("hunt_proxy_max_uses", DEFAULT_HUNT_PROXY_MAX_USES), 50)),
+            "device_max_uses": max(1, min(_int("hunt_device_max_uses", DEFAULT_HUNT_DEVICE_MAX_USES), 50)),
+        }
+
+    @classmethod
+    async def _lease_number_with_retries(
+        cls,
+        sms_svc,
+        target_country: str,
+        lease_max_price: Optional[float],
+        task_id: str,
+        manager: RegistrationTaskManager,
+        *,
+        hunt_enabled: bool,
+        no_number_retries: int,
+        no_number_delay: float,
+    ):
+        """取号；猎号模式下无库存时软重试，耗尽后抛出 NoNumberAvailableError。"""
+        attempts = (no_number_retries + 1) if hunt_enabled else 1
+        last_exc: Optional[BaseException] = None
+        for nr in range(1, attempts + 1):
+            try:
+                return await sms_svc.get_number(
+                    country=target_country,
+                    service="tg",
+                    max_price=lease_max_price,
+                )
+            except NoNumberAvailableError as ex:
+                last_exc = ex
+                if nr >= attempts:
+                    break
+                await manager.append_log(
+                    task_id,
+                    f"[猎号] 平台暂无可用号码（NO_NUMBERS），软重试 {nr}/{no_number_retries}"
+                    f"（{no_number_delay:.1f}s 后）…"
+                )
+                if no_number_delay > 0:
+                    await asyncio.sleep(no_number_delay)
+        assert last_exc is not None
+        raise last_exc
+
     async def run_registration(
         cls,
         task_id: str,
@@ -1407,11 +1479,14 @@ class RegistrationOrchestrator:
         sms_provider: Optional[str] = None,
         max_price: Optional[float] = None,
         max_number_attempts: Optional[int] = None,
+        no_number_retries: Optional[int] = None,
     ):
         """执行单次边缘虚拟节点引导全流程。
 
-        max_number_attempts>1 时启用循环试号：遇 SentCodeTypeApp / 黑名单 / 预检已注册
-        / 预审封禁 / PHONE_NUMBER_BANNED 时退订换号，并在同任务内复用已取得的 Push Token。
+        猎号（max_number_attempts>1）目标只有两个：
+        1) 注册成功 → 停止；
+        2) 尽量扫接码平台号码并拉黑不可用号（APP/已注册/封禁等）。
+        无库存默认软重试；代理/设备按次数轮换以降低 FLOOD。
         """
         manager = RegistrationTaskManager.get_instance()
         manager.update_task_status(task_id, "running")
@@ -1429,6 +1504,8 @@ class RegistrationOrchestrator:
         except (TypeError, ValueError):
             max_attempts = 1
         max_attempts = max(1, min(max_attempts, MAX_NUMBER_ATTEMPTS_CAP))
+        hunt_enabled = max_attempts > 1
+        hunt_limits = cls._resolve_hunt_limits(config, no_number_retries=no_number_retries)
 
         active_proxy = await cls.resolve_active_proxy(
             config=config,
@@ -1460,6 +1537,8 @@ class RegistrationOrchestrator:
         meta_path = None
         phone_code_hash = None
         sms_poll_attempts = DEFAULT_SMS_POLL_ATTEMPTS
+        proxy_send_uses = 0
+        device_send_uses = 0
 
         try:
             await manager.append_log(
@@ -1484,12 +1563,13 @@ class RegistrationOrchestrator:
             await manager.append_log(task_id, f"绑定硬件特征: {profile['device_model']} ({profile['system_version']}), App: {profile['app_version']}")
             await manager.append_log(task_id, f"网络语言拓扑: {profile['system_lang_code']}, 时区偏置: {profile.get('tz_offset', -14400)}")
 
-            if max_attempts > 1:
+            if hunt_enabled:
                 await manager.append_log(
                     task_id,
-                    f"[循环试号] 已启用，最多换号 {max_attempts} 次；"
-                    "SentCodeTypeApp / 黑名单 / 预检已注册 / 预审封禁时退订换号，"
-                    "并复用同一 Push Token（不提前 setStatus 退款）"
+                    f"[猎号] 目标：注册成功即停，否则扫号拉黑。"
+                    f"最多取号 {max_attempts} 次；无库存软重试 {hunt_limits['no_number_retries']} 次；"
+                    f"代理每 {hunt_limits['proxy_max_uses']} 次 sendCode 轮换；"
+                    f"设备每 {hunt_limits['device_max_uses']} 次 sendCode 换指纹+Push"
                 )
                 manager.update_task_status(task_id, "running", hunt_max=max_attempts)
 
@@ -1512,10 +1592,52 @@ class RegistrationOrchestrator:
                 if max_attempts > 1:
                     await manager.append_log(
                         task_id,
-                        f"[循环试号] 第 {attempt_idx}/{max_attempts} 次取号尝试"
+                        f"[猎号] 第 {attempt_idx}/{max_attempts} 次取号尝试"
                     )
                     manager.update_task_status(
                         task_id, "running", hunt_attempt=attempt_idx, hunt_max=max_attempts
+                    )
+
+                # 出口/设备轮换：sendCode 次数达到上限后降低 FLOOD 风险
+                if hunt_enabled and proxy_send_uses >= hunt_limits["proxy_max_uses"] and not proxy_override and not proxy_id:
+                    await manager.append_log(
+                        task_id,
+                        f"[猎号] 当前代理已用于 sendCode {proxy_send_uses} 次，达到上限 "
+                        f"{hunt_limits['proxy_max_uses']}，轮换出口（保留设备与 Push）"
+                    )
+                    active_proxy = await cls.resolve_active_proxy(
+                        config=config,
+                        target_country=target_country,
+                        task_id=task_id,
+                        manager=manager,
+                        proxy_override=None,
+                        proxy_id=None,
+                        proxy_mode=proxy_mode,
+                    )
+                    proxy_send_uses = 0
+
+                if hunt_enabled and device_send_uses >= hunt_limits["device_max_uses"]:
+                    await manager.append_log(
+                        task_id,
+                        f"[猎号] 当前设备指纹已用于 sendCode {device_send_uses} 次，达到上限 "
+                        f"{hunt_limits['device_max_uses']}，重采样设备并更换 Push"
+                    )
+                    if push_token or push_task_id:
+                        await cls._refund_push_token(
+                            bypass_svc, push_task_id, push_provider, push_token_obtained_at,
+                            phone, task_id, manager, "HUNT_DEVICE_ROTATE",
+                        )
+                    push_token = None
+                    push_task_id = None
+                    push_provider = None
+                    push_token_obtained_at = None
+                    credentials_resolved = False
+                    profile = DeviceProfileManager.get_resolved_profile(active_app, target_country)
+                    aid = profile["aid"]
+                    device_send_uses = 0
+                    await manager.append_log(
+                        task_id,
+                        f"[猎号] 新设备: {profile['device_model']} ({profile['system_version']}), App: {profile['app_version']}"
                     )
 
                 # 1. 租用带外通信句柄（热门/稀缺国家需携带 maxPrice 动态竞价，否则卡在底价空桶）
@@ -1531,10 +1653,15 @@ class RegistrationOrchestrator:
                         f"正在向带外遥测提供者申请拓扑代码 '{target_country.upper()}' 的信道句柄"
                         "（未设置最高出价，使用平台底价；热门国家可能 NO_NUMBERS）..."
                     )
-                act_id, phone = await sms_svc.get_number(
-                    country=target_country,
-                    service="tg",
-                    max_price=lease_max_price,
+                act_id, phone = await cls._lease_number_with_retries(
+                    sms_svc,
+                    target_country,
+                    lease_max_price,
+                    task_id,
+                    manager,
+                    hunt_enabled=hunt_enabled,
+                    no_number_retries=hunt_limits["no_number_retries"],
+                    no_number_delay=hunt_limits["no_number_delay"],
                 )
                 manager.update_task_status(task_id, "running", phone=phone)
                 await manager.append_log(task_id, f"成功获取端点通信句柄: {phone} (Session Handle ID: {act_id})")
@@ -1550,7 +1677,7 @@ class RegistrationOrchestrator:
                     if attempt_idx < max_attempts:
                         await manager.append_log(
                             task_id,
-                            f"[循环试号] 号码 {phone} 命中黑名单，换号继续（尚未消耗 Push Token）"
+                            f"[猎号] 号码 {phone} 命中黑名单，换号继续（尚未消耗 Push Token）"
                         )
                         manager.update_task_status(task_id, "running")
                         continue
@@ -1569,7 +1696,7 @@ class RegistrationOrchestrator:
                     if attempt_idx < max_attempts:
                         await manager.append_log(
                             task_id,
-                            f"[循环试号] 号码 {phone} 预检已注册，换号继续（尚未消耗 Push Token）"
+                            f"[猎号] 号码 {phone} 预检已注册，换号继续（尚未消耗 Push Token）"
                         )
                         manager.update_task_status(task_id, "running")
                         continue
@@ -1593,7 +1720,7 @@ class RegistrationOrchestrator:
                         if attempt_idx < max_attempts:
                             await manager.append_log(
                                 task_id,
-                                f"[循环试号] 预审封禁 {phone}，换号继续（Push Token 保持复用）"
+                                f"[猎号] 预审封禁 {phone}，换号继续（Push Token 保持复用）"
                             )
                             manager.update_task_status(task_id, "running")
                             continue
@@ -1630,7 +1757,7 @@ class RegistrationOrchestrator:
                 else:
                     await manager.append_log(
                         task_id,
-                        f"[循环试号] 复用已持有 Push Token "
+                        f"[猎号] 复用已持有 Push Token "
                         f"(提供源: {push_provider or '-'}, task_id={push_task_id or '-'})，不重新申请"
                     )
 
@@ -1740,10 +1867,32 @@ class RegistrationOrchestrator:
                     session_path = None
                     meta_path = None
                     if attempt_idx < max_attempts:
+                        proxy_send_uses += 1
+                        device_send_uses += 1
                         await manager.append_log(
                             task_id,
-                            f"[循环试号] SentCodeTypeApp（{reason}）号码 {phone} 已退订入库，"
-                            f"复用 Push Token 换号继续 ({attempt_idx}/{max_attempts})"
+                            f"[猎号] SentCodeTypeApp（{reason}）号码 {phone} 已拉黑退订，"
+                            f"换号继续 ({attempt_idx}/{max_attempts})；"
+                            f"代理已用 {proxy_send_uses}/{hunt_limits['proxy_max_uses']}，"
+                            f"设备已用 {device_send_uses}/{hunt_limits['device_max_uses']}"
+                        )
+                        manager.update_task_status(task_id, "running")
+                        continue
+                    raise
+                except (PhoneNumberFloodError, FloodWaitError) as flood_ex:
+                    sec = getattr(flood_ex, "seconds", 0) or 0
+                    await cls._refund_and_revoke_channel(sms_svc, act_id, task_id, manager, "FLOOD_WAIT")
+                    await cls._disconnect_client_quiet(client)
+                    client = None
+                    cls._discard_incomplete_session(session_path, meta_path)
+                    session_path = None
+                    meta_path = None
+                    if hunt_enabled and attempt_idx < max_attempts and sec < 3600:
+                        proxy_send_uses = hunt_limits["proxy_max_uses"]  # 强制下一轮换代理
+                        await manager.append_log(
+                            task_id,
+                            f"[猎号] FLOOD_WAIT {sec}s，强制轮换代理后换号继续 "
+                            f"({attempt_idx}/{max_attempts})"
                         )
                         manager.update_task_status(task_id, "running")
                         continue
@@ -1765,10 +1914,12 @@ class RegistrationOrchestrator:
                     session_path = None
                     meta_path = None
                     if attempt_idx < max_attempts:
+                        proxy_send_uses += 1
+                        device_send_uses += 1
                         await manager.append_log(
                             task_id,
-                            f"[循环试号] PHONE_NUMBER_BANNED 号码 {phone} 已退订，"
-                            f"复用 Push Token 换号继续 ({attempt_idx}/{max_attempts})"
+                            f"[猎号] PHONE_NUMBER_BANNED 号码 {phone} 已拉黑退订，"
+                            f"换号继续 ({attempt_idx}/{max_attempts})"
                         )
                         manager.update_task_status(task_id, "running")
                         continue
@@ -1792,19 +1943,19 @@ class RegistrationOrchestrator:
                 if max_attempts > 1:
                     await manager.append_log(
                         task_id,
-                        f"[循环试号] 第 {attempt_idx} 次号码已进入短信/OTP 通道，停止换号"
+                        f"[猎号] 第 {attempt_idx} 次号码进入短信/OTP 通道，停止扫号，继续完成注册"
                     )
                 break
             else:
                 # while 正常耗尽且未 break：全部被闸门拦截
                 await manager.append_log(
                     task_id,
-                    f"[循环试号] 已用尽 {max_attempts} 次换号仍未进入可接码通道"
+                    f"[猎号] 已用尽 {max_attempts} 次取号仍未注册成功（平台号码已尽量扫完并拉黑）"
                 )
                 manager.update_task_status(
                     task_id,
                     "failed",
-                    error=f"HUNT_EXHAUSTED: 循环试号 {max_attempts} 次均未进入短信通道",
+                    error=f"HUNT_EXHAUSTED: 猎号 {max_attempts} 次未注册成功",
                 )
                 return
 
@@ -2101,6 +2252,7 @@ class RegistrationOrchestrator:
         sms_provider: Optional[str] = None,
         max_price: Optional[float] = None,
         max_number_attempts: Optional[int] = None,
+        no_number_retries: Optional[int] = None,
     ) -> None:
         """使用 Semaphore 异步并行调度一批虚拟节点引导任务。"""
         from backend.app.services.proxy_slot_pool import (
@@ -2169,6 +2321,7 @@ class RegistrationOrchestrator:
                         sms_provider=sms_provider,
                         max_price=max_price,
                         max_number_attempts=max_number_attempts,
+                        no_number_retries=no_number_retries,
                     )
                 finally:
                     if slot_pool is not None and leased and task_proxy:

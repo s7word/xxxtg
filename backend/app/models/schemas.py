@@ -282,6 +282,39 @@ class AppConfigModel(BaseModel):
         default=True,
         description="REGHelp 新签发成功后是否写入本地 Push Token 库存（与是否开启复用无关）",
     )
+    hunt_no_number_retries: int = Field(
+        default=20,
+        ge=0,
+        le=100,
+        description="猎号模式下 get_number 返回无库存时的软重试次数（默认 20）",
+    )
+    hunt_no_number_retry_delay_sec: float = Field(
+        default=2.0,
+        ge=0.0,
+        le=60.0,
+        description="无库存软重试间隔秒数",
+    )
+    hunt_proxy_max_uses: int = Field(
+        default=5,
+        ge=1,
+        le=50,
+        description="同一出口代理在猎号任务内最多用于 auth.sendCode 的次数，达到后轮换代理（保留设备与 Push）",
+    )
+    hunt_device_max_uses: int = Field(
+        default=8,
+        ge=1,
+        le=50,
+        description=(
+            "同一设备指纹在猎号任务内最多用于 sendCode 的次数；达到后重采样设备并换新 Push "
+            "（Push 与设备绑定，不能只换机不换 Token）"
+        ),
+    )
+    hunt_default_max_attempts: int = Field(
+        default=100,
+        ge=1,
+        le=500,
+        description="前端启用猎号时的默认最大取号次数（扫平台号码上限）",
+    )
     phone_precheck_enabled: bool = Field(
         default=True,
         description=(
@@ -566,11 +599,17 @@ class RegisterTaskRequest(BaseModel):
     max_number_attempts: Optional[int] = Field(
         default=None,
         ge=1,
-        le=50,
+        le=500,
         description=(
-            "循环试号：同一任务内最多换号次数（1=关闭）。"
-            "遇 SentCodeTypeApp / 黑名单 / 预检已注册等可换号原因时退订并复用同一 Push Token"
+            "猎号：同一任务内最多取号次数（1=关闭）。目标：注册成功即停，或尽量扫平台号码并拉黑；"
+            "SentCodeTypeApp / 黑名单 / 预检已注册等退订换号，优先复用 Push"
         ),
+    )
+    no_number_retries: Optional[int] = Field(
+        default=None,
+        ge=0,
+        le=100,
+        description="猎号时无库存软重试次数；为空则用全局 hunt_no_number_retries（默认 20）",
     )
 
     @field_validator("proxy_mode", mode="before")
