@@ -220,15 +220,55 @@ class TestHuntRetryAppPush(unittest.IsolatedAsyncioTestCase):
 
 class TestHuntSchema(unittest.TestCase):
     def test_max_number_attempts_bounds(self):
-        ok = RegisterTaskRequest(country="cl", max_number_attempts=10)
-        self.assertEqual(ok.max_number_attempts, 10)
+        ok = RegisterTaskRequest(country="cl", max_number_attempts=100)
+        self.assertEqual(ok.max_number_attempts, 100)
         from pydantic import ValidationError
 
         with self.assertRaises(ValidationError):
             RegisterTaskRequest(country="cl", max_number_attempts=0)
         with self.assertRaises(ValidationError):
-            RegisterTaskRequest(country="cl", max_number_attempts=51)
+            RegisterTaskRequest(country="cl", max_number_attempts=501)
+
+    def test_no_number_retries_field(self):
+        ok = RegisterTaskRequest(country="cl", no_number_retries=20)
+        self.assertEqual(ok.no_number_retries, 20)
 
 
-if __name__ == "__main__":
-    unittest.main()
+class TestHuntLimitsHelpers(unittest.IsolatedAsyncioTestCase):
+    def test_resolve_hunt_limits_defaults(self):
+        cfg = SimpleNamespace()
+        limits = RegistrationOrchestrator._resolve_hunt_limits(cfg)
+        self.assertEqual(limits["no_number_retries"], 20)
+        self.assertEqual(limits["proxy_max_uses"], 5)
+        self.assertEqual(limits["device_max_uses"], 8)
+
+    async def test_lease_number_retries_then_raises(self):
+        from backend.app.services.vaksms import NoNumberAvailableError
+
+        calls = {"n": 0}
+
+        class Sms:
+            async def get_number(self, **kwargs):
+                calls["n"] += 1
+                raise NoNumberAvailableError("NO_NUMBERS")
+
+        manager = RegistrationTaskManager()
+        manager.tasks = {}
+        prev = RegistrationTaskManager._instance
+        RegistrationTaskManager._instance = manager
+        tid = manager.create_task()
+        try:
+            with self.assertRaises(NoNumberAvailableError):
+                await RegistrationOrchestrator._lease_number_with_retries(
+                    Sms(),
+                    "cl",
+                    None,
+                    tid,
+                    manager,
+                    hunt_enabled=True,
+                    no_number_retries=2,
+                    no_number_delay=0.0,
+                )
+            self.assertEqual(calls["n"], 3)
+        finally:
+            RegistrationTaskManager._instance = prev
