@@ -126,6 +126,8 @@ class AttestationGatewayService:
 
         若 `config.push_token_reuse_enabled`，优先从本地库存按 use_count 升序复用
         （未使用 → 用过 1 次）；命中时 provider 标记为 `reghelp_reuse`，跳过平台退款窗口逻辑。
+        复用与新签发都会把 `ref`（注册任务 id）登记为该令牌的租约持有者，其它任务在租约有效
+        期内既租不走它，也无法 retire / setStatus 掉它。
         """
         from backend.app.services.push_token_vault import PushTokenVault, REUSE_PROVIDER
 
@@ -143,8 +145,11 @@ class AttestationGatewayService:
                 if log_callback:
                     await log_callback(
                         f"♻️ 复用本地 Push Token 库存: id={cached.get('id')} "
-                        f"use_count={cached.get('use_count')} "
+                        f"use_count {cached.get('use_count_before')} → {cached.get('use_count')}"
+                        f"（上限 {max_uses}） "
+                        f"签发于 {cached.get('created_at') or '-'} "
                         f"reghelp_task={cached.get('reghelp_task_id') or '-'} "
+                        f"租约持有者={cached.get('lease_task_id') or '-'} "
                         f"(排序: 未使用优先，其次 1 次使用)"
                     )
                 return cached.get("token"), cached.get("reghelp_task_id"), REUSE_PROVIDER

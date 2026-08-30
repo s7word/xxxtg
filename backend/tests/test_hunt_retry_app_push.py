@@ -10,9 +10,11 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from backend.app.models.schemas import RegisterTaskRequest
+from backend.app.services.banned_phones import CATEGORY_APP_DELIVERY
 from backend.app.services.registrar import (
     DEFAULT_SMS_POLL_ATTEMPTS,
     HUNT_MIN_SMS_POLL_ATTEMPTS,
+    HUNT_PUSH_TOKEN_MAX_AGE_SECONDS,
     RegistrationOrchestrator,
     RegistrationTaskManager,
     SentCodeAppDeliveryError,
@@ -207,8 +209,13 @@ class TestHuntRetryAppPush(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sms.cancel_calls, ["act-1"])
         gw.refund_push_token.assert_not_awaited()
         remember.assert_called()
+        # APP 投递只临时拉黑（TTL），不得再写永久 already_registered
+        kwargs = remember.call_args.kwargs
+        self.assertEqual(kwargs["category"], CATEGORY_APP_DELIVERY)
+        self.assertEqual(kwargs["ttl_hours"], 48.0)
         logs = "\n".join(self.manager.get_task(self.task_id)["logs"])
-        self.assertIn("已拉黑退订，换号继续", logs)
+        self.assertIn("APP 投递不可用（未必已注册）", logs)
+        self.assertIn("换号继续", logs)
         task = self.manager.get_task(self.task_id)
         self.assertEqual(task["status"], "failed")
         self.assertTrue(task.get("no_number"))
@@ -624,6 +631,297 @@ class TestHuntNoDoubleCancel(HuntRunMixin, unittest.IsolatedAsyncioTestCase):
         self.assertGreaterEqual(sms.poll_attempts[-1], HUNT_MIN_SMS_POLL_ATTEMPTS)
         logs = "\n".join(self.manager.get_task(self.task_id)["logs"])
         self.assertIn("先退旧 Token 再申请新的", logs)
+
+
+class TestHuntAppDeliveryFuse(HuntRunMixin, unittest.IsolatedAsyncioTestCase):
+    """连续 APP 投递是系统性失败，不该把整个取号预算烧完。"""
+
+    async def asyncSetUp(self):
+        self.manager = RegistrationTaskManager()
+        self.manager.tasks = {}
+        self.manager.batches = {}
+        self._prev = RegistrationTaskManager._instance
+        RegistrationTaskManager._instance = self.manager
+        self.task_id = self.manager.create_task()
+
+    async def asyncTearDown(self):
+        RegistrationTaskManager._instance = self._prev
+
+    async def test_consecutive_app_deliveries_trip_the_fuse(self):
+        sms = FakeSms([(f"act-{i}", f"+5691111000{i}") for i in range(1, 9)])
+        gw = make_gateway()
+        with self._run_ctx(
+            sms=sms,
+            gw=gw,
+            config=make_config(hunt_app_delivery_fuse=3),
+            send_code=AsyncMock(
+                side_effect=SentCodeAppDeliveryError("app only", reason="SENT_CODE_TYPE_APP")
+            ),
+            extra=[
+                patch.object(RegistrationOrchestrator, "_resolve_custom_proxy", new=AsyncMock(return_value=None)),
+                patch("backend.app.services.registrar.BannedPhonesCache.remember"),
+            ],
+        ):
+            await RegistrationOrchestrator.run_registration(
+                task_id=self.task_id,
+                country="cl",
+                max_number_attempts=8,
+                no_number_retries=0,
+            )
+
+        task = self.manager.get_task(self.task_id)
+        self.assertEqual(len(sms.cancel_calls), 3, "熔断后不得继续租号")
+        self.assertEqual(task["status"], "failed")
+        self.assertIn("HUNT_APP_FUSE", task.get("error", ""))
+        logs = "\n".join(task["logs"])
+        self.assertIn("熔断阈值 3", logs)
+
+    async def test_fuse_disabled_runs_full_budget(self):
+        sms = FakeSms([(f"act-{i}", f"+5691111000{i}") for i in range(1, 5)])
+        gw = make_gateway()
+        with self._run_ctx(
+            sms=sms,
+            gw=gw,
+            config=make_config(hunt_app_delivery_fuse=0),
+            send_code=AsyncMock(
+                side_effect=SentCodeAppDeliveryError("app only", reason="SENT_CODE_TYPE_APP")
+            ),
+            extra=[
+                patch.object(RegistrationOrchestrator, "_resolve_custom_proxy", new=AsyncMock(return_value=None)),
+                patch("backend.app.services.registrar.BannedPhonesCache.remember"),
+            ],
+        ):
+            await RegistrationOrchestrator.run_registration(
+                task_id=self.task_id,
+                country="cl",
+                max_number_attempts=4,
+                no_number_retries=0,
+            )
+
+        task = self.manager.get_task(self.task_id)
+        self.assertEqual(len(sms.cancel_calls), 4)
+        self.assertIn("HUNT_EXHAUSTED", task.get("error", ""))
+
+    async def test_non_app_round_resets_the_streak(self):
+        """APP → 封禁 → APP：连续计数被打断，不该在第 2 次 APP 就熔断。"""
+        from telethon.errors import PhoneNumberBannedError
+
+        sms = FakeSms([(f"act-{i}", f"+5691111000{i}") for i in range(1, 4)])
+        gw = make_gateway()
+        calls = {"n": 0}
+
+        async def send_code_impl(**kwargs):
+            calls["n"] += 1
+            if calls["n"] == 2:
+                raise PhoneNumberBannedError(request=None)
+            raise SentCodeAppDeliveryError("app only", reason="SENT_CODE_TYPE_APP")
+
+        with self._run_ctx(
+            sms=sms,
+            gw=gw,
+            config=make_config(hunt_app_delivery_fuse=2),
+            send_code=AsyncMock(side_effect=send_code_impl),
+            extra=[
+                patch.object(RegistrationOrchestrator, "_resolve_custom_proxy", new=AsyncMock(return_value=None)),
+                patch("backend.app.services.registrar.BannedPhonesCache.remember"),
+            ],
+        ):
+            await RegistrationOrchestrator.run_registration(
+                task_id=self.task_id,
+                country="cl",
+                max_number_attempts=3,
+                no_number_retries=0,
+            )
+
+        task = self.manager.get_task(self.task_id)
+        self.assertEqual(calls["n"], 3)
+        self.assertIn("HUNT_EXHAUSTED", task.get("error", ""))
+
+
+class TestHuntSwappableSendErrors(HuntRunMixin, unittest.IsolatedAsyncioTestCase):
+    """可换号的 sendCode 异常必须继续扫号，而不是烧掉剩余预算。"""
+
+    async def asyncSetUp(self):
+        self.manager = RegistrationTaskManager()
+        self.manager.tasks = {}
+        self.manager.batches = {}
+        self._prev = RegistrationTaskManager._instance
+        RegistrationTaskManager._instance = self.manager
+        self.task_id = self.manager.create_task()
+
+    async def asyncTearDown(self):
+        RegistrationTaskManager._instance = self._prev
+
+    async def test_invalid_phone_continues_hunting(self):
+        from telethon.errors import PhoneNumberInvalidError
+
+        sms = FakeSms([
+            ("act-1", "+56911110001"),
+            ("act-2", "+56911110002"),
+            ("act-3", "+56911110003"),
+        ])
+        gw = make_gateway()
+        with self._run_ctx(
+            sms=sms,
+            gw=gw,
+            send_code=AsyncMock(side_effect=PhoneNumberInvalidError(request=None)),
+            extra=[
+                patch.object(RegistrationOrchestrator, "_resolve_custom_proxy", new=AsyncMock(return_value=None)),
+                patch("backend.app.services.registrar.BannedPhonesCache.remember"),
+            ],
+        ):
+            await RegistrationOrchestrator.run_registration(
+                task_id=self.task_id,
+                country="cl",
+                max_number_attempts=3,
+                no_number_retries=0,
+            )
+
+        task = self.manager.get_task(self.task_id)
+        self.assertEqual(sms.cancel_calls, ["act-1", "act-2", "act-3"])
+        self.assertEqual(task.get("hunt_scanned"), 3)
+        self.assertEqual(task.get("hunt_last_reason"), "PHONE_NUMBER_INVALID")
+        self.assertIn("HUNT_EXHAUSTED", task.get("error", ""))
+        # 只申请过一次 Push Token：坏号不该连带把 Token 换掉
+        self.assertEqual(gw.get_push_token.await_count, 1)
+
+    async def test_api_id_published_flood_still_terminates(self):
+        """凭证层的全局故障换号也救不了，保持终止而不是继续烧预算。"""
+        from telethon.errors import ApiIdPublishedFloodError
+
+        sms = FakeSms([
+            ("act-1", "+56911110001"),
+            ("act-2", "+56911110002"),
+        ])
+        gw = make_gateway()
+        with self._run_ctx(
+            sms=sms,
+            gw=gw,
+            send_code=AsyncMock(side_effect=ApiIdPublishedFloodError(request=None)),
+            extra=[
+                patch.object(RegistrationOrchestrator, "_resolve_custom_proxy", new=AsyncMock(return_value=None)),
+                patch("backend.app.services.registrar.BannedPhonesCache.remember"),
+            ],
+        ):
+            await RegistrationOrchestrator.run_registration(
+                task_id=self.task_id,
+                country="cl",
+                max_number_attempts=5,
+                no_number_retries=0,
+            )
+
+        task = self.manager.get_task(self.task_id)
+        self.assertEqual(sms.cancel_calls, ["act-1"])
+        self.assertEqual(task["status"], "failed")
+        self.assertIn("API_ID_PUBLISHED_FLOOD", task.get("error", ""))
+
+
+class TestPrecheckPoolAlert(HuntRunMixin, unittest.IsolatedAsyncioTestCase):
+    """预检探测池全不可用时必须显式告警，不能静默降级。"""
+
+    async def asyncSetUp(self):
+        self.manager = RegistrationTaskManager()
+        self.manager.tasks = {}
+        self.manager.batches = {}
+        self._prev = RegistrationTaskManager._instance
+        RegistrationTaskManager._instance = self.manager
+        self.task_id = self.manager.create_task()
+
+    async def asyncTearDown(self):
+        RegistrationTaskManager._instance = self._prev
+
+    async def test_unauthorized_probe_pool_warns_once(self):
+        sms = FakeSms([
+            ("act-1", "+56911110001"),
+            ("act-2", "+56911110002"),
+        ])
+        gw = make_gateway()
+        degraded = SimpleNamespace(
+            intercept=False,
+            is_registered=None,
+            degraded=True,
+            reason="PRECHECK_SESSION_UNAUTHORIZED",
+            user_id=None,
+        )
+        with self._run_ctx(
+            sms=sms,
+            gw=gw,
+            precheck=degraded,
+            send_code=AsyncMock(
+                side_effect=SentCodeAppDeliveryError("app only", reason="SENT_CODE_TYPE_APP")
+            ),
+            extra=[
+                patch.object(RegistrationOrchestrator, "_resolve_custom_proxy", new=AsyncMock(return_value=None)),
+                patch("backend.app.services.registrar.BannedPhonesCache.remember"),
+            ],
+        ):
+            await RegistrationOrchestrator.run_registration(
+                task_id=self.task_id,
+                country="cl",
+                max_number_attempts=2,
+                no_number_retries=0,
+            )
+
+        task = self.manager.get_task(self.task_id)
+        logs = task["logs"]
+        alerts = [line for line in logs if "白号预检探测池当前整体不可用" in line]
+        self.assertEqual(len(alerts), 1, "显式告警必须有，且每任务只播报一次")
+        self.assertIn("PRECHECK_SESSION_UNAUTHORIZED", alerts[0])
+        self.assertTrue(task.get("precheck_pool_alerted"))
+
+
+class TestPollWindowReuseAging(unittest.TestCase):
+    """复用令牌的老化判断不能因 provider != reghelp 就整枚跳过。"""
+
+    def test_reuse_token_age_triggers_rotation(self):
+        self.assertTrue(
+            RegistrationOrchestrator._push_token_window_exhausted(
+                "reghelp_reuse",
+                time.monotonic() - 1.0,
+                DEFAULT_SMS_POLL_ATTEMPTS,
+                token_age_seconds=HUNT_PUSH_TOKEN_MAX_AGE_SECONDS + 5.0,
+            )
+        )
+
+    def test_fresh_reuse_token_is_kept(self):
+        self.assertFalse(
+            RegistrationOrchestrator._push_token_window_exhausted(
+                "reghelp_reuse",
+                time.monotonic() - 1.0,
+                DEFAULT_SMS_POLL_ATTEMPTS,
+                token_age_seconds=5.0,
+            )
+        )
+
+    def test_reuse_token_age_reads_vault_created_at(self):
+        import tempfile
+        from datetime import datetime, timedelta, timezone
+
+        from backend.app.services.push_token_vault import PushTokenVault
+
+        prev = PushTokenVault._instance
+        with tempfile.TemporaryDirectory() as tmp:
+            vault = PushTokenVault.reset_for_tests(path=Path(tmp) / "vault.json")
+            try:
+                row = vault.store_issued(token="TOKEN-OLD", reghelp_task_id="task-old")
+                aged = (datetime.now(timezone.utc) - timedelta(seconds=600)).isoformat()
+                vault._items[0]["created_at"] = aged
+                age = RegistrationOrchestrator._push_token_age_seconds(
+                    "reghelp_reuse", time.monotonic() - 1.0, "task-old", "TOKEN-OLD"
+                )
+                self.assertIsNotNone(age)
+                self.assertGreater(age, 500.0)
+                self.assertTrue(
+                    RegistrationOrchestrator._push_token_window_exhausted(
+                        "reghelp_reuse",
+                        time.monotonic() - 1.0,
+                        DEFAULT_SMS_POLL_ATTEMPTS,
+                        token_age_seconds=age,
+                    )
+                )
+                self.assertEqual(row["use_count"], 0)
+            finally:
+                PushTokenVault._instance = prev
 
 
 class TestHuntPollWindowFloor(unittest.TestCase):

@@ -1,10 +1,11 @@
-"""Push Token 本地库存：入库、按 use_count 复用、退款/成功退役。"""
+"""Push Token 本地库存：入库、按 use_count 复用、退款/成功退役、跨任务租约互斥。"""
 from __future__ import annotations
 
 import os
 import sys
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -22,6 +23,7 @@ from backend.app.services.push_token_vault import (  # noqa: E402
     STATUS_AVAILABLE,
     STATUS_CONSUMED,
     STATUS_REFUNDED,
+    STATUS_RETIRED,
 )
 from backend.app.services.reghelp import PushTokenResult  # noqa: E402
 
@@ -66,6 +68,99 @@ class TestPushTokenVault(unittest.TestCase):
         items = self.vault.list_items()
         self.assertEqual(items[0]["status"], STATUS_AVAILABLE)
         self.assertEqual(items[0]["use_count"], 1)
+
+
+class TestPushTokenLease(unittest.TestCase):
+    """Push Token 与设备指纹绑定，同一枚不得被两个任务同时持有。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.path = Path(self.tmp.name) / "vault.json"
+        self.vault = PushTokenVault.reset_for_tests(self.path)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+        PushTokenVault.reset_for_tests(Path(self.tmp.name) / "gone.json")
+
+    def _row(self, vault_id):
+        return next(row for row in self.vault.list_items() if row["id"] == vault_id)
+
+    def test_two_tasks_cannot_hold_same_reuse_token(self):
+        self.vault.store_issued(token="tok-a", reghelp_task_id="t-a")
+        first = self.vault.acquire_for_reuse(max_uses=3, lease_task_id="task-A")
+        self.assertIsNotNone(first)
+        self.assertEqual(first["lease_task_id"], "task-A")
+        self.assertEqual(first["use_count_before"], 0)
+        self.assertEqual(first["use_count"], 1)
+        # 库里只有这一枚，且已被 A 持有：B 只能拿到 None，不能转租
+        self.assertIsNone(self.vault.acquire_for_reuse(max_uses=3, lease_task_id="task-B"))
+        # A 自己再取（同一任务续用）不受租约限制
+        self.assertIsNotNone(self.vault.acquire_for_reuse(max_uses=3, lease_task_id="task-A"))
+
+    def test_freshly_issued_token_is_owned_by_requesting_task(self):
+        row = self.vault.store_issued(
+            token="tok-new", reghelp_task_id="t-new", source_task_id="task-A"
+        )
+        self.assertEqual(row["lease_task_id"], "task-A")
+        self.assertIsNone(self.vault.acquire_for_reuse(max_uses=3, lease_task_id="task-B"))
+        # 非持有者也不能通过 mark_attempt 抢走
+        self.assertIsNone(
+            self.vault.mark_attempt(vault_id=row["id"], lease_task_id="task-B")
+        )
+
+    def test_non_holder_cannot_retire_or_refund(self):
+        row = self.vault.store_issued(token="tok-a", reghelp_task_id="t-a")
+        self.vault.acquire_for_reuse(max_uses=3, lease_task_id="task-A")
+
+        self.assertIsNone(
+            self.vault.mark_retired(reghelp_task_id="t-a", lease_task_id="task-B")
+        )
+        self.assertIsNone(
+            self.vault.mark_refunded(reghelp_task_id="t-a", lease_task_id="task-B")
+        )
+        self.assertIsNone(
+            self.vault.mark_failed_keep(reghelp_task_id="t-a", lease_task_id="task-B")
+        )
+        self.assertFalse(self.vault.release_lease(reghelp_task_id="t-a", lease_task_id="task-B"))
+        current = self._row(row["id"])
+        self.assertEqual(current["status"], STATUS_AVAILABLE)
+        self.assertEqual(current["lease_task_id"], "task-A")
+
+        # 持有者本人 retire 生效，并顺带释放租约
+        self.assertIsNotNone(
+            self.vault.mark_retired(reghelp_task_id="t-a", lease_task_id="task-A")
+        )
+        retired = self._row(row["id"])
+        self.assertEqual(retired["status"], STATUS_RETIRED)
+        self.assertIsNone(retired["lease_task_id"])
+
+    def test_release_task_leases_frees_tokens_for_others(self):
+        self.vault.store_issued(token="tok-a", reghelp_task_id="t-a")
+        self.vault.acquire_for_reuse(max_uses=3, lease_task_id="task-A")
+        self.assertIsNone(self.vault.acquire_for_reuse(max_uses=3, lease_task_id="task-B"))
+        self.assertEqual(self.vault.release_task_leases("task-A"), 1)
+        picked = self.vault.acquire_for_reuse(max_uses=3, lease_task_id="task-B")
+        self.assertIsNotNone(picked)
+        self.assertEqual(picked["lease_task_id"], "task-B")
+
+    def test_expired_lease_can_be_taken_over(self):
+        self.vault.store_issued(token="tok-a", reghelp_task_id="t-a")
+        self.vault.acquire_for_reuse(max_uses=3, lease_task_id="task-crashed")
+        # 模拟持有任务被 kill：租约到期后其它任务可以接管，令牌不会永久卡死
+        stale = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
+        self.vault._items[0]["leased_until"] = stale
+        picked = self.vault.acquire_for_reuse(max_uses=3, lease_task_id="task-B")
+        self.assertIsNotNone(picked)
+        self.assertEqual(picked["lease_task_id"], "task-B")
+
+    def test_summary_reports_leased_and_excludes_from_reusable(self):
+        self.vault.store_issued(token="tok-a", reghelp_task_id="t-a")
+        self.vault.store_issued(token="tok-b", reghelp_task_id="t-b")
+        self.vault.acquire_for_reuse(max_uses=3, lease_task_id="task-A")
+        summary = self.vault.summary()
+        self.assertEqual(summary["available"], 2)
+        self.assertEqual(summary["leased"], 1)
+        self.assertEqual(summary["reusable"], 1)
 
 
 class TestGatewayReuse(unittest.IsolatedAsyncioTestCase):
