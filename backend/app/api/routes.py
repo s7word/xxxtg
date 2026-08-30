@@ -1095,8 +1095,16 @@ async def get_batch_status(batch_id: str):
 
 @router.get("/register/tasks", summary="获取节点任务队列列表")
 @router.get("/provision/tasks", summary="获取节点任务队列列表 (学术规范路径)")
-async def list_tasks(batch_id: Optional[str] = None):
-    return RegistrationTaskManager.get_instance().list_tasks(batch_id=batch_id)
+async def list_tasks(
+    batch_id: Optional[str] = None,
+    include_logs: bool = False,
+    active_task_id: Optional[str] = None,
+):
+    return RegistrationTaskManager.get_instance().list_tasks(
+        batch_id=batch_id,
+        include_logs=include_logs,
+        active_task_id=active_task_id,
+    )
 
 @router.get("/register/tasks/{task_id}", response_model=TaskStatusResponse, summary="获取指定节点状态机审计详情")
 @router.get("/provision/tasks/{task_id}", response_model=TaskStatusResponse, summary="获取指定节点状态机审计详情 (学术规范路径)")

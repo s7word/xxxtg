@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 import random
 import logging
 import threading
@@ -30,7 +31,7 @@ from backend.app.services.grizzlysms import GrizzlySmsService, PROVIDER_LABEL as
 from backend.app.services.smsbower import SmsBowerService, PROVIDER_LABEL as SMSBOWER_PROVIDER_LABEL
 from backend.app.services.fivesim import FiveSimService, PROVIDER_LABEL as FIVESIM_PROVIDER_LABEL
 from backend.app.services.attestation_gateway import AttestationGatewayService
-from backend.app.services.reghelp import PUSH_REFUND_WINDOW_SECONDS
+from backend.app.services.reghelp import PUSH_REFUND_MIN_SECONDS, PUSH_REFUND_WINDOW_SECONDS
 from backend.app.services.banned_phones import (
     LOCAL_BANNED_REASON,
     SOURCE_ANTISAFETY,
@@ -188,6 +189,8 @@ MAX_RETAINED_TASKS = 200
 TERMINAL_TASK_STATUSES = frozenset({"success", "failed", "filtered", "canceled"})
 MAX_RESEND_WAIT_SECONDS = 90.0
 DEFAULT_SMS_POLL_ATTEMPTS = 30
+SMS_POLL_INTERVAL_SECONDS = 4.0
+PUSH_REFUND_SETSTATUS_RESERVE_SECONDS = 25.0
 FAST_FAIL_SMS_POLL_ATTEMPTS = 3
 BATCH_COUNT_MIN = 1
 BATCH_COUNT_MAX = 10
@@ -403,12 +406,39 @@ class RegistrationTaskManager:
             snapshot = [self._enrich_batch_unlocked(b) for b in self.batches.values()]
         return sorted(snapshot, key=lambda x: x.get("created_at") or "", reverse=True)
 
-    def list_tasks(self, batch_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    def list_tasks(
+        self,
+        batch_id: Optional[str] = None,
+        *,
+        include_logs: bool = False,
+        active_task_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """列出任务快照。
+
+        默认不回传全量 logs（轮询场景下数百任务 × 长日志会拖垮前后端）。
+        仅对 active_task_id 或 include_logs=True 保留完整日志；其余只带 last_log / log_count。
+        """
         with self._lock:
-            snapshot = list(self.tasks.values())
+            snapshot = [dict(item) for item in self.tasks.values()]
         if batch_id:
             snapshot = [item for item in snapshot if item.get("batch_id") == batch_id]
-        return sorted(snapshot, key=lambda x: x["created_at"], reverse=True)
+        if include_logs:
+            return sorted(snapshot, key=lambda x: x["created_at"], reverse=True)
+
+        slim: List[Dict[str, Any]] = []
+        active = (active_task_id or "").strip()
+        for item in snapshot:
+            logs = list(item.get("logs") or [])
+            row = dict(item)
+            row["log_count"] = len(logs)
+            row["last_log"] = logs[-1] if logs else None
+            if active and item.get("task_id") == active:
+                row["logs"] = logs
+            else:
+                # 列表/徽章只需要状态；保留末尾几行供合并视图冷启动
+                row["logs"] = logs[-3:] if logs else []
+            slim.append(row)
+        return sorted(slim, key=lambda x: x["created_at"], reverse=True)
 
     async def append_log(self, task_id: str, message: str):
         with self._lock:
@@ -528,6 +558,24 @@ class RegistrationOrchestrator:
         )
 
     @classmethod
+    def _sms_poll_attempts_for_push_window(
+        cls,
+        requested_attempts: int,
+        push_provider: Optional[str],
+        push_token_obtained_at: Optional[float],
+        interval: float = SMS_POLL_INTERVAL_SECONDS,
+    ) -> int:
+        """REGHelp 路径把短信轮询截断到退款窗口内，给 setStatus 留出余量。"""
+        requested = max(1, int(requested_attempts or 1))
+        if push_provider != "reghelp" or push_token_obtained_at is None:
+            return requested
+        elapsed = time.monotonic() - push_token_obtained_at
+        remain = PUSH_REFUND_WINDOW_SECONDS - PUSH_REFUND_SETSTATUS_RESERVE_SECONDS - elapsed
+        if remain <= interval:
+            return 1
+        return min(requested, max(1, int(remain // interval)))
+
+    @classmethod
     async def _refund_push_token(
         cls,
         bypass_svc: Optional[AttestationGatewayService],
@@ -541,25 +589,36 @@ class RegistrationOrchestrator:
     ) -> None:
         """失败/退订分支尝试触发 REGHelp Push Token `setStatus` 自动退款审计。
 
-        仅当 `push_provider == "reghelp"` 且已持有 `push_task_id` 时才会发起请求；
-        `reason` 未落在 `RegHelpService.PUSH_REFUND_REASON_MAP` 内、已超出退款窗口
-        (`PUSH_REFUND_WINDOW_SECONDS`)、或 REGHelp 未启用时均静默跳过，不影响主流程。
-        setStatus 本身的网络/平台异常由 `RegHelpService.set_push_status` 兜底吞掉，
-        这里额外包一层 try/except 仅为防御式编程，绝不会导致任务失败。
+        仅当 `push_provider == "reghelp"` 且已持有 `push_task_id` 时才会发起请求。
+        Token 签发未满 60s 时先等待再 setStatus；超 180s 仍会尝试（平台可能拒绝）。
+        未映射原因与平台拒绝会写进任务日志，绝不导致任务失败。
         """
         if not bypass_svc or not push_task_id or push_provider != "reghelp":
             return
         if push_token_obtained_at is not None:
             elapsed = time.monotonic() - push_token_obtained_at
+            if elapsed < PUSH_REFUND_MIN_SECONDS:
+                wait_s = PUSH_REFUND_MIN_SECONDS - elapsed
+                skip_wait = os.getenv("EDGENODE_SKIP_PUSH_REFUND_WAIT", "").strip().lower() in {
+                    "1", "true", "yes", "on",
+                }
+                if wait_s > 0.05 and not skip_wait:
+                    await manager.append_log(
+                        task_id,
+                        f"[REGHelp 退款] Token 签发仅 {elapsed:.0f}s，等待 {wait_s:.0f}s "
+                        f"至官方 {int(PUSH_REFUND_MIN_SECONDS)}s 窗口后再 setStatus id={push_task_id}"
+                    )
+                    await asyncio.sleep(wait_s)
+                    elapsed = time.monotonic() - push_token_obtained_at
             if elapsed > PUSH_REFUND_WINDOW_SECONDS:
                 await manager.append_log(
                     task_id,
                     f"⚠️ [REGHelp 退款] 距 Push Token 签发已 {elapsed:.0f}s，"
-                    f"超出 {PUSH_REFUND_WINDOW_SECONDS:.0f}s 退款窗口，跳过 setStatus id={push_task_id}"
+                    f"超过官方约 {PUSH_REFUND_WINDOW_SECONDS:.0f}s 窗口，"
+                    f"仍尝试 setStatus id={push_task_id}"
                 )
-                return
         try:
-            status = await bypass_svc.refund_push_token(
+            await bypass_svc.refund_push_token(
                 push_task_id,
                 phone,
                 reason,
@@ -567,11 +626,9 @@ class RegistrationOrchestrator:
             )
         except Exception as exc:
             logger.warning("REGHelp Push Token 退款回写异常 (id=%s, reason=%s): %s", push_task_id, reason, exc)
-            return
-        if not status:
-            logger.debug(
-                "REGHelp Push Token 退款跳过 (id=%s, reason=%s): 原因未映射或平台未确认",
-                push_task_id, reason,
+            await manager.append_log(
+                task_id,
+                f"⚠️ [REGHelp 退款] setStatus 异常 id={push_task_id} reason={reason}: {exc}"
             )
 
     @classmethod
@@ -1333,8 +1390,9 @@ class RegistrationOrchestrator:
             pack_alias = profile.get("device_pack_alias")
             pack_country = (profile.get("device_pack_country") or "").upper()
             pack_match = profile.get("device_pack_match") or "none"
+            pack_auto = bool(profile.get("device_pack_auto"))
             if pack_alias:
-                match_label = "国家精确匹配" if pack_match == "country" else "跨库回退采样"
+                match_label = DeviceProfileManager.describe_pack_match(pack_match, pack_auto)
                 await manager.append_log(
                     task_id,
                     f"硬件指纹包: {pack_alias}"
@@ -1524,6 +1582,20 @@ class RegistrationOrchestrator:
                 task_id=task_id,
                 manager=manager,
             )
+            capped_attempts = cls._sms_poll_attempts_for_push_window(
+                sms_poll_attempts, push_provider, push_token_obtained_at
+            )
+            if capped_attempts < sms_poll_attempts:
+                elapsed = (
+                    time.monotonic() - push_token_obtained_at
+                    if push_token_obtained_at is not None else 0.0
+                )
+                await manager.append_log(
+                    task_id,
+                    f"[REGHelp 退款] 短信轮询由 {sms_poll_attempts} 次截断为 {capped_attempts} 次"
+                    f"（Token 已签发 {elapsed:.0f}s，需在 {int(PUSH_REFUND_WINDOW_SECONDS)}s 内 setStatus）"
+                )
+            sms_poll_attempts = capped_attempts
             phone_code_hash = sent_code.phone_code_hash
 
             # 7. 异步等待带外挑战证明
@@ -1717,6 +1789,10 @@ class RegistrationOrchestrator:
             )
             await manager.append_log(task_id, f"❌ {err}")
             await cls._refund_and_revoke_channel(sms_svc, act_id, task_id, manager, "API_ID_PUBLISHED_FLOOD")
+            await cls._refund_push_token(
+                bypass_svc, push_task_id, push_provider, push_token_obtained_at,
+                phone, task_id, manager, "API_ID_PUBLISHED_FLOOD",
+            )
             if check_id: await bypass_svc.report_result(check_id, aid, "API_ID_PUBLISHED_FLOOD")
             manager.update_task_status(task_id, "failed", error=err)
         except (PhoneNumberFloodError, FloodWaitError) as e:
@@ -1761,6 +1837,10 @@ class RegistrationOrchestrator:
             err = f"RECAPTCHA_CHECK 人机挑战未能突破: {str(ex) or repr(ex)}"
             await manager.append_log(task_id, f"❌ {err}")
             await cls._refund_and_revoke_channel(sms_svc, act_id, task_id, manager, "RECAPTCHA_CHECK")
+            await cls._refund_push_token(
+                bypass_svc, push_task_id, push_provider, push_token_obtained_at,
+                phone, task_id, manager, "RECAPTCHA_CHECK",
+            )
             if check_id: await bypass_svc.report_result(check_id, aid, "RECAPTCHA_CHECK")
             manager.update_task_status(task_id, "failed", error=err)
         except Exception as ex:
@@ -1769,6 +1849,10 @@ class RegistrationOrchestrator:
             err = f"状态机引导流程异常: {str(ex) or repr(ex)}"
             await manager.append_log(task_id, f"❌ {err}")
             await cls._refund_and_revoke_channel(sms_svc, act_id, task_id, manager, reason)
+            await cls._refund_push_token(
+                bypass_svc, push_task_id, push_provider, push_token_obtained_at,
+                phone, task_id, manager, reason,
+            )
             if check_id: await bypass_svc.report_result(check_id, aid, "NO_CODE")
             manager.update_task_status(task_id, "failed", error=err)
         finally:

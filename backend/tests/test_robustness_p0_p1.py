@@ -268,6 +268,9 @@ class TestStrictRegionalProxy(unittest.IsolatedAsyncioTestCase):
         svc.get_proxy_list = AsyncMock(side_effect=lambda country=None, **kwargs: (
             [] if country in {"id", "cl", "in"} else [usa]
         ))
+        svc.ensure_tg_resident_list = AsyncMock(return_value={
+            "success": False, "created": False, "proxies": [], "title": None,
+        })
         try:
             selected = await svc.select_best_proxy(target_country="id", allow_fallback=True)
             self.assertFalse(selected["success"])
@@ -332,6 +335,22 @@ class TestTaskManagerCapacityAndIteration(unittest.TestCase):
         manager.create_task()
         self.assertEqual(len(snapshot), 2)
         self.assertEqual(len(manager.list_tasks()), 3)
+
+    def test_list_tasks_strips_logs_by_default(self):
+        manager = RegistrationTaskManager()
+        manager.tasks = {}
+        tid = manager.create_task()
+        for i in range(8):
+            manager.tasks[tid]["logs"].append(f"line-{i}")
+        slim = manager.list_tasks()
+        self.assertEqual(len(slim), 1)
+        self.assertEqual(slim[0]["log_count"], 8)
+        self.assertEqual(len(slim[0]["logs"]), 3)
+        self.assertTrue(str(slim[0]["last_log"]).endswith("line-7"))
+        full = manager.list_tasks(include_logs=True)
+        self.assertEqual(len(full[0]["logs"]), 8)
+        active = manager.list_tasks(active_task_id=tid)
+        self.assertEqual(len(active[0]["logs"]), 8)
 
     def test_evicts_oldest_completed_when_over_capacity(self):
         manager = RegistrationTaskManager()

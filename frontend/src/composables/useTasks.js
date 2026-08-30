@@ -16,7 +16,7 @@ const mergedLogView = ref(false)
 const isStartingTask = ref(false)
 const startError = ref('')
 export const activeTask = ref(null)
-const taskList = ref([])
+export const taskList = ref([])
 const sessions = ref([])
 export const deviceProfiles = ref([])
 export const dbStats = ref({ total_count: 0, is_loaded: false, sample_models: [] })
@@ -87,6 +87,46 @@ const scrollTerminal = () => {
   })
 }
 
+let lastPolledLogFingerprint = ''
+
+export const fetchTasks = async () => {
+  try {
+    const params = new URLSearchParams()
+    if (taskFilter.value === 'batch' && currentBatch.value?.batch_id) {
+      params.set('batch_id', currentBatch.value.batch_id)
+    }
+    if (activeTask.value?.task_id) {
+      params.set('active_task_id', activeTask.value.task_id)
+    }
+    const qs = params.toString() ? `?${params.toString()}` : ''
+    const res = await fetch(`/api/register/tasks${qs}`)
+    taskList.value = await res.json()
+    if (currentBatch.value?.batch_id) {
+      try {
+        const bres = await fetch(`/api/register/batches/${currentBatch.value.batch_id}`)
+        if (bres.ok) {
+          currentBatch.value = await bres.json()
+        }
+      } catch (e) {
+        console.error('Fetch batch error:', e)
+      }
+    }
+    if (activeTask.value?.task_id) {
+      const found = taskList.value.find((t) => t.task_id === activeTask.value.task_id)
+      if (found) {
+        activeTask.value = found
+        const fp = `${found.task_id}:${(found.logs || []).length}:${found.status}:${found.updated_at || ''}`
+        if (fp !== lastPolledLogFingerprint) {
+          lastPolledLogFingerprint = fp
+          scrollTerminal()
+        }
+      }
+    }
+  } catch (e) {
+    console.error('Fetch tasks error:', e)
+  }
+}
+
 export const fetchDbStats = async () => {
   try {
     const res = await fetch('/api/device-db-stats')
@@ -122,33 +162,6 @@ export const fetchPhonePrecheckStatus = async () => {
     }
   } catch (e) {
     console.error('Fetch phone precheck status error:', e)
-  }
-}
-
-export const fetchTasks = async () => {
-  try {
-    const qs = (taskFilter.value === 'batch' && currentBatch.value?.batch_id)
-      ? `?batch_id=${encodeURIComponent(currentBatch.value.batch_id)}`
-      : ''
-    const res = await fetch(`/api/register/tasks${qs}`)
-    taskList.value = await res.json()
-    if (currentBatch.value?.batch_id) {
-      try {
-        const bres = await fetch(`/api/register/batches/${currentBatch.value.batch_id}`)
-        if (bres.ok) {
-          currentBatch.value = await bres.json()
-        }
-      } catch (e) {
-        console.error('Fetch batch error:', e)
-      }
-    }
-    if (activeTask.value) {
-      const found = taskList.value.find((t) => t.task_id === activeTask.value.task_id)
-      if (found) activeTask.value = found
-    }
-    scrollTerminal()
-  } catch (e) {
-    console.error('Fetch tasks error:', e)
   }
 }
 
@@ -229,6 +242,22 @@ export const startRegistrationTask = async () => {
     pushToast('danger', `任务提交失败: ${e.message}`)
   } finally {
     isStartingTask.value = false
+  }
+}
+
+export const applyIncomingBatch = (data) => {
+  currentBatch.value = data
+  taskFilter.value = 'batch'
+  selectedTaskIds.value = [...(data.task_ids || [])]
+  mergedLogView.value = true
+  const firstId = (data.task_ids || [])[0]
+  activeTask.value = {
+    task_id: firstId,
+    status: 'pending',
+    batch_id: data.batch_id,
+    logs: [
+      `[${new Date().toLocaleTimeString()}] 并发批次 ${data.batch_id} 已提交：${(data.task_ids || []).join(', ')} (concurrency=${data.concurrency})`
+    ]
   }
 }
 
@@ -327,6 +356,7 @@ export const useTasks = () => ({
   fetchPhonePrecheckStatus,
   fetchTasks,
   startRegistrationTask,
+  applyIncomingBatch,
   viewTaskLogs,
   toggleTaskSelection,
   toggleSelectVisibleTasks,

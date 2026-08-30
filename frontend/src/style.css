@@ -130,7 +130,8 @@ code, pre, .mono, .font-mono {
   min-height: var(--header-h);
   padding: 12px 20px 0;
   background: rgba(5, 13, 10, 0.78);
-  backdrop-filter: blur(18px) saturate(1.2);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
   border-bottom: 1px solid var(--border);
   box-shadow: 0 10px 40px rgba(0, 0, 0, 0.35);
 }
@@ -421,8 +422,7 @@ code, pre, .mono, .font-mono {
 
 /* ========== Panel ========== */
 .ce-panel {
-  background: var(--panel);
-  backdrop-filter: blur(16px);
+  background: var(--panel-strong);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 16px;
@@ -637,6 +637,12 @@ code, pre, .mono, .font-mono {
   box-shadow: none;
 }
 
+.ce-btn-sm {
+  padding: 5px 9px;
+  font-size: 11px;
+  border-radius: 8px;
+}
+
 .ce-link {
   color: var(--mint);
   background: none;
@@ -814,7 +820,12 @@ code, pre, .mono, .font-mono {
 }
 
 /* ========== Tables / lists ========== */
-.ce-table-wrap { overflow-x: auto; }
+.ce-copy-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.ce-copy-row .ce-input { flex: 1; min-width: 0; }
 .ce-table {
   width: 100%;
   border-collapse: collapse;
@@ -839,8 +850,9 @@ code, pre, .mono, .font-mono {
   background: rgba(16, 185, 129, 0.05);
 }
 
-.ce-table tr.is-on td {
-  background: rgba(16, 185, 129, 0.08);
+.ce-table td.nowrap,
+.ce-table th.nowrap {
+  white-space: nowrap;
 }
 
 .ce-list {
@@ -985,13 +997,21 @@ code, pre, .mono, .font-mono {
 }
 
 @keyframes pulse-glow {
-  0%, 100% { opacity: 1; box-shadow: 0 0 6px rgba(52, 211, 153, 0.4); }
-  50% { opacity: 0.55; box-shadow: 0 0 16px rgba(52, 211, 153, 0.85); }
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
 }
 
 @keyframes pulse-glow-amber {
-  0%, 100% { opacity: 1; box-shadow: 0 0 6px rgba(245, 158, 11, 0.35); }
-  50% { opacity: 0.55; box-shadow: 0 0 16px rgba(245, 158, 11, 0.7); }
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ce-dot.is-ok,
+  .ce-dot.is-warn,
+  .ce-badge.is-pulse {
+    animation: none !important;
+  }
 }
 
 /* ========== Live stock country picker ========== */
@@ -1005,4 +1025,82 @@ code, pre, .mono, .font-mono {
 .ce-stock-select {
   font-family: var(--font-sans);
   min-height: 40px;
+}
+
+/* ========== Auth / login ========== */
+.ce-boot {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  color: var(--text-mute);
+  font-size: 13px;
+  letter-spacing: 0.04em;
+}
+
+.ce-login {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background:
+    radial-gradient(900px 420px at 50% -8%, rgba(16, 185, 129, 0.18), transparent 62%),
+    var(--bg-0);
+}
+
+.ce-login-card {
+  width: min(420px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 28px 24px 22px;
+}
+
+.ce-login-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.ce-login-brand h1 {
+  font-family: var(--font-display);
+  font-size: 15px;
+  letter-spacing: 0.1em;
+  font-weight: 650;
+}
+
+.ce-login-brand .sub {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--text-mute);
+}
+
+.ce-login-submit {
+  width: 100%;
+  margin-top: 8px;
+  min-height: 38px;
+}
+
+.ce-login-health {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 10px;
+  font-size: 11px;
+  color: var(--text-mute);
+}
+
+.ce-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.ce-session {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
