@@ -289,6 +289,58 @@ class TestSmsallSniper(unittest.TestCase):
         self.assertEqual(records[0]["reason"], "not_telegram")
 
 
+class TestSniperConfigSurface(unittest.TestCase):
+    """新配置项必须同时在后端模型、前端默认值和设置页里存在，否则前端存不住也看不见。"""
+
+    @staticmethod
+    def _sniper_fields():
+        from backend.app.models.schemas import AppConfigModel
+
+        return [name for name in AppConfigModel.model_fields if name.startswith("smsall_sniper_")]
+
+    def test_backend_defaults_match_product_intent(self):
+        from backend.app.models.schemas import AppConfigModel
+
+        cfg = AppConfigModel()
+        self.assertTrue(cfg.smsall_sniper_enabled)
+        self.assertEqual(cfg.smsall_sniper_count, 10)
+        self.assertEqual(cfg.smsall_sniper_concurrency, 10)
+        self.assertEqual(cfg.smsall_sniper_max_number_attempts, 20)
+        self.assertEqual(cfg.smsall_sniper_cooldown_seconds, 60)
+        self.assertEqual(cfg.smsall_sniper_max_countries, 3)
+        self.assertIsNone(cfg.smsall_sniper_max_price_usd)
+        self.assertTrue(cfg.smsall_sniper_use_item_price_as_max)
+
+    def test_overrides_survive_serialization_roundtrip(self):
+        from backend.app.models.schemas import AppConfigModel
+
+        model = AppConfigModel(
+            smsall_sniper_enabled=False,
+            smsall_sniper_count=4,
+            smsall_sniper_max_number_attempts=50,
+            smsall_sniper_max_price_usd=0.4,
+            smsall_sniper_use_item_price_as_max=False,
+        )
+        again = AppConfigModel(**json.loads(model.model_dump_json()))
+        self.assertFalse(again.smsall_sniper_enabled)
+        self.assertEqual(again.smsall_sniper_count, 4)
+        self.assertEqual(again.smsall_sniper_max_number_attempts, 50)
+        self.assertEqual(again.smsall_sniper_max_price_usd, 0.4)
+        self.assertFalse(again.smsall_sniper_use_item_price_as_max)
+
+    def test_frontend_defaults_and_panel_cover_every_field(self):
+        # 后端镜像只带 frontend/dist，源码不在容器里；这时跳过而不是假装通过
+        defaults_path = REPO_ROOT / "frontend/src/composables/useConfig.js"
+        panel_path = REPO_ROOT / "frontend/src/components/settings/SettingsView.vue"
+        if not defaults_path.exists() or not panel_path.exists():
+            self.skipTest("前端源码不在当前运行环境（后端容器只有 dist）")
+        defaults = defaults_path.read_text(encoding="utf-8")
+        panel = panel_path.read_text(encoding="utf-8")
+        for name in self._sniper_fields():
+            self.assertIn(f"{name}:", defaults, f"useConfig.js 缺少默认值 {name}")
+            self.assertIn(f"config.{name}", panel, f"设置页没有绑定 {name}")
+
+
 class TestSmsallHttp(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
