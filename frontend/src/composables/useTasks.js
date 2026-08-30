@@ -184,7 +184,7 @@ export const startRegistrationTask = async () => {
       }
     }
     const useHunt = huntMode.value && Number(huntAttempts.value) > 1
-    const useBatch = !useHunt && batchMode.value && Number(batchCount.value) > 1
+    const useBatch = batchMode.value && Number(batchCount.value) > 1
     const endpoint = useBatch ? '/api/register/batch' : '/api/register/start'
     const payload = {
       country: form.country,
@@ -228,6 +228,9 @@ export const startRegistrationTask = async () => {
         logs: [
           ...bootLogs,
           `[${new Date().toLocaleTimeString()}] 并发批次 ${data.batch_id} 已提交：${(data.task_ids || []).join(', ')} (concurrency=${data.concurrency})`
+          + (useHunt
+            ? ` · 每任务循环试号最多 ${payload.max_number_attempts} 次（各自复用本任务 Push）`
+            : '')
         ]
       }
     } else {
