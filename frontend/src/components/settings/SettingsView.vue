@@ -3,11 +3,159 @@
     <div class="ce-page-head">
       <div>
         <h2>⚙️ 参数拓扑 & 探针审计</h2>
-        <p>Grizzly SMS / Vak-SMS / REGHelp / AntiSafety / RecaptchaMobile / 2FA 一键探针，实时返回可见。</p>
+        <p>SMS Bower / Grizzly SMS / Vak-SMS / REGHelp / AntiSafety / RecaptchaMobile / 2FA 一键探针，实时返回可见。</p>
       </div>
       <button class="ce-btn" :disabled="isSavingConfig" @click="saveConfig">
         {{ isSavingConfig ? '正在保存...' : '持久化全局配置' }}
       </button>
+    </div>
+
+    <div class="ce-panel stack">
+      <div class="ce-panel-head">
+        <div class="row">
+          <h3>📡 SMSBazaar 通知 → 半自动注册</h3>
+          <span class="ce-badge" :class="config.smsall_auto_register ? 'is-danger' : 'is-info'">
+            {{ config.smsall_auto_register ? '全自动开跑' : '半自动：只收通知' }}
+          </span>
+        </div>
+        <button class="ce-btn-ghost" :disabled="smsallLoading" @click="refreshSmsallStatus">
+          {{ smsallLoading ? '刷新中...' : '刷新通知' }}
+        </button>
+      </div>
+      <p class="ce-tiny">
+        前期先半自动：Webhook 只记账，你在下表确认国家后再一键测试。
+        确认流程没问题，再打开「通知后自动注册」。
+      </p>
+      <div class="ce-alert is-info">
+        把下面两项原样填到 SMSBazaar「设置 → 程序推送」。Secret 是当前实际校验用的对接凭证。
+      </div>
+      <div>
+        <label class="ce-label">Webhook URL</label>
+        <div class="ce-copy-row">
+          <input :value="smsallWebhookUrl" class="ce-input mono" readonly @focus="$event.target.select()" />
+          <button type="button" class="ce-btn-ghost ce-btn-sm" @click="copyText(smsallWebhookUrl, 'Webhook URL')">复制</button>
+        </div>
+      </div>
+      <div>
+        <label class="ce-label">对接凭证 Secret</label>
+        <div class="ce-copy-row">
+          <input
+            :value="smsallLiveSecret"
+            :type="secretVisible ? 'text' : 'password'"
+            class="ce-input mono"
+            readonly
+            :placeholder="smsallLiveSecret ? '' : '尚未生成，刷新通知后会出现'"
+            @focus="$event.target.select()"
+          />
+          <button type="button" class="ce-btn-ghost ce-btn-sm" @click="secretVisible = !secretVisible">
+            {{ secretVisible ? '隐藏' : '显示' }}
+          </button>
+          <button type="button" class="ce-btn ce-btn-sm" :disabled="!smsallLiveSecret" @click="copyText(smsallLiveSecret, 'Secret')">
+            复制
+          </button>
+        </div>
+      </div>
+      <label class="ce-check">
+        <input type="checkbox" v-model="config.smsall_auto_register" />
+        通知后自动注册（确认好了再开；默认关）
+      </label>
+      <div v-if="config.smsall_auto_register" class="ce-alert is-warn">
+        全自动已开：单价不超过阈值的 Telegram 补货/新上架会直接开跑。先半自动测几轮再开更稳。
+      </div>
+      <div v-if="config.smsall_auto_register" class="grid-2">
+        <div>
+          <label class="ce-label">自动开跑最高单价 USD</label>
+          <input v-model.number="config.smsall_auto_max_price_usd" type="number" min="0" step="0.01" class="ce-input mono" />
+        </div>
+        <div>
+          <label class="ce-label">冷却秒数 / 同国</label>
+          <input v-model.number="config.smsall_auto_cooldown_seconds" type="number" min="0" class="ce-input mono" />
+        </div>
+        <div>
+          <label class="ce-label">自动任务数</label>
+          <input v-model.number="config.smsall_auto_count" type="number" min="1" max="10" class="ce-input mono" />
+        </div>
+        <div>
+          <label class="ce-label">自动并发</label>
+          <input v-model.number="config.smsall_auto_concurrency" type="number" min="1" max="10" class="ce-input mono" />
+        </div>
+      </div>
+      <div class="grid-2">
+        <div>
+          <label class="ce-label">一键测试 · 任务数</label>
+          <input v-model.number="trialCount" type="number" min="1" max="10" class="ce-input mono" />
+        </div>
+        <div>
+          <label class="ce-label">一键测试 · 线程 / 并发</label>
+          <input v-model.number="trialConcurrency" type="number" min="1" max="10" class="ce-input mono" />
+        </div>
+      </div>
+      <div class="ce-tiny">当前接码源 {{ smsProviderLabel(config.sms_provider) }} · 改完开关请点右上角保存 · 通知 {{ smsallEventCount }} 条</div>
+      <div v-if="smsallEvents.length" class="stack">
+        <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+          <button class="ce-btn-danger ce-btn-sm" :disabled="!selectedEventIds.length || deleteBusy" @click="deleteSelected">
+            删除选中（{{ selectedEventIds.length }}）
+          </button>
+          <button class="ce-btn-ghost ce-btn-sm" :disabled="deleteBusy" @click="deleteAll">清空全部</button>
+        </div>
+        <div class="ce-table-wrap">
+          <table class="ce-table">
+            <thead>
+              <tr>
+                <th class="nowrap">
+                  <input type="checkbox" :checked="allEventsSelected" @change="toggleSelectAll" />
+                </th>
+                <th class="nowrap">时间</th>
+                <th>国家</th>
+                <th class="nowrap">类型</th>
+                <th class="nowrap">单价</th>
+                <th class="nowrap">库存</th>
+                <th>平台</th>
+                <th class="nowrap">状态</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="ev in smsallEvents" :key="ev.id || ev.at">
+                <td>
+                  <input type="checkbox" :checked="selectedEventIds.includes(ev.id)" :disabled="!ev.id" @change="toggleEvent(ev.id)" />
+                </td>
+                <td class="nowrap mono ce-tiny">{{ ev.received_at || formatEventTime(ev.at) }}</td>
+                <td>
+                  <strong>{{ countryFlag(ev.country) }} {{ (ev.country_name || ev.country || '—').toString() }}</strong>
+                  <div v-if="ev.country" class="ce-tiny mono">{{ String(ev.country).toUpperCase() }}</div>
+                </td>
+                <td class="nowrap">{{ eventTypeLabel(ev.type) }}</td>
+                <td class="nowrap mono">{{ ev.price_usd != null ? '$' + Number(ev.price_usd).toFixed(2) : '—' }}</td>
+                <td class="nowrap mono">{{ formatStockChange(ev) }}</td>
+                <td class="ce-tiny">{{ ev.provider || '—' }}</td>
+                <td class="nowrap">
+                  <span class="ce-badge" :class="eventBadgeClass(ev)">{{ eventStatusLabel(ev) }}</span>
+                  <div v-if="ev.batch_id" class="ce-tiny mono">{{ ev.batch_id }}</div>
+                </td>
+                <td>
+                  <div style="display:flex;flex-wrap:wrap;gap:6px">
+                    <button
+                      class="ce-btn ce-btn-sm"
+                      :disabled="!ev.country || trialBusy[ev.id]"
+                      @click="trialRegister(ev)"
+                    >
+                      {{ trialBusy[ev.id] ? '提交中...' : '一键测试注册' }}
+                    </button>
+                    <button class="ce-btn-ghost ce-btn-sm" :disabled="!ev.country" @click="openInConsole(ev)">
+                      去控制台
+                    </button>
+                    <button class="ce-btn-danger ce-btn-sm" :disabled="!ev.id || deleteBusy" @click="deleteOne(ev)">
+                      删除
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <p v-else class="ce-tiny">还没有收到推送。在 SMSBazaar 点「发送测试」会来一条 IN / $0.12 / restock，然后你可以指定线程数点「一键测试注册」。</p>
     </div>
 
     <div class="grid-2">
@@ -125,6 +273,7 @@
           <select v-model="config.sms_provider" class="ce-select">
             <option value="fivesim">5SIM (推荐)</option>
             <option value="grizzlysms">Grizzly SMS</option>
+            <option value="smsbower">SMS Bower</option>
             <option value="vaksms">Vak-SMS</option>
           </select>
         </div>
@@ -201,6 +350,34 @@
       <div class="ce-panel stack">
         <div class="ce-panel-head">
           <div class="row">
+            <h3>📩 SMS Bower 接码平台 (smsbower.app)</h3>
+            <span class="ce-badge is-info">备选</span>
+          </div>
+          <button class="ce-btn-ghost" :disabled="probeTesting.smsbower" @click="testSmsBower">
+            {{ probeTesting.smsbower ? '测试中...' : '余额/连通性探针' }}
+          </button>
+        </div>
+        <div>
+          <label class="ce-label">SMS Bower API Key</label>
+          <input v-model="config.smsbower_api_key" type="password" class="ce-input mono" placeholder="SMS Bower API Key" />
+        </div>
+        <div class="ce-tiny">
+          协议与 SMS-Activate / Grizzly 兼容，Telegram 服务码 <code>tg</code>。
+          将上方「当前接码提供源」切到 SMS Bower 后生效。失败路径自动 <code>setStatus=8</code> 退款。
+        </div>
+        <div v-if="testResults.smsbower" class="ce-alert" :class="testResults.smsbower.success ? 'is-ok' : 'is-danger'">
+          <div>{{ testResults.smsbower.message }}</div>
+          <div v-if="testResults.smsbower.data" class="mono ce-tiny">
+            余额: {{ testResults.smsbower.data.balance }} {{ testResults.smsbower.data.currency || '账户结算币种' }}
+            | 拓扑 {{ testResults.smsbower.data.country }} (id={{ testResults.smsbower.data.country_id }})
+            | 库存: {{ testResults.smsbower.data.telegram_stock }}
+          </div>
+        </div>
+      </div>
+
+      <div class="ce-panel stack">
+        <div class="ce-panel-head">
+          <div class="row">
             <h3>📩 Vak-SMS 带外挑战源</h3>
             <span class="ce-badge is-info">备选</span>
           </div>
@@ -236,6 +413,19 @@
           <input type="checkbox" v-model="config.phone_precheck_enabled" />
           启用号码注册状态预检探测（租号后、申请 Push Token 前拦截已注册二手号）
         </label>
+        <label class="ce-check">
+          <input type="checkbox" v-model="config.push_token_save_issued" />
+          REGHelp 新签发 Push Token 写入本地库存（失败未退款的可供复用）
+        </label>
+        <label class="ce-check">
+          <input type="checkbox" v-model="config.push_token_reuse_enabled" />
+          允许复用本地旧 Push Token（优先未使用，其次用过 1 次）
+        </label>
+        <div>
+          <label class="ce-label">旧令牌最大使用次数</label>
+          <input v-model.number="config.push_token_reuse_max_uses" type="number" min="1" max="5" class="ce-input mono w-sm" />
+          <p class="ce-tiny ce-muted" style="margin-top:6px">达到上限后不再被选取。库存详情见「Push 令牌库」页。</p>
+        </div>
         <div>
           <label class="ce-label">Attestation / Push 高可用调度策略</label>
           <select v-model="config.attestation_provider_mode" class="ce-select">
@@ -273,13 +463,214 @@
 </template>
 
 <script setup>
-import { useConfig } from '../../composables/useConfig'
+import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
+import { useConfig, smsProviderLabel } from '../../composables/useConfig'
 import { useProbes } from '../../composables/useProbes'
+import { countryFlag } from '../../composables/useShared'
+import { applyIncomingBatch, fetchTasks } from '../../composables/useTasks'
+import { goTab, pushToast } from '../../composables/useUi'
 import LiveStockCountryPicker from '../console/LiveStockCountryPicker.vue'
 
 const {
   config, isSavingConfig, saveConfig, reghelpBaseUrlsText,
-  antisafetyBaseUrlsText, antisafetyReportingBaseUrlsText
+  antisafetyBaseUrlsText, antisafetyReportingBaseUrlsText, form
 } = useConfig()
-const { probeTesting, testResults, testRegHelp, testAntiSafety, testFiveSim, testGrizzlySms, testVakSms } = useProbes()
+const { probeTesting, testResults, testRegHelp, testAntiSafety, testFiveSim, testGrizzlySms, testSmsBower, testVakSms } = useProbes()
+
+const smsallLoading = ref(false)
+const smsallEvents = ref([])
+const smsallEventCount = ref(0)
+const smsallLiveSecret = ref('')
+const secretVisible = ref(true)
+const selectedEventIds = ref([])
+const deleteBusy = ref(false)
+const trialCount = ref(1)
+const trialConcurrency = ref(1)
+const trialBusy = reactive({})
+const smsallWebhookUrl = computed(() => `${window.location.origin}/hooks/smsall`)
+let smsallPoll = null
+
+const allEventsSelected = computed(() => {
+  const ids = smsallEvents.value.map((ev) => ev.id).filter(Boolean)
+  return ids.length > 0 && ids.every((id) => selectedEventIds.value.includes(id))
+})
+
+const clampTrial = (value, fallback = 1) => {
+  const n = Number(value)
+  if (!Number.isFinite(n)) return fallback
+  return Math.max(1, Math.min(10, Math.trunc(n)))
+}
+
+const formatEventTime = (at) => {
+  const ts = Number(at)
+  if (!Number.isFinite(ts) || ts <= 0) return '—'
+  return new Date(ts * 1000).toISOString().replace('T', ' ').slice(0, 19) + ' UTC'
+}
+
+const eventTypeLabel = (type) => {
+  if (type === 'restock') return '补货'
+  if (type === 'new_listing') return '新上架'
+  return type || '—'
+}
+
+const formatStockChange = (ev) => {
+  if (ev.stock_from == null && ev.stock_to == null) return '—'
+  return `${ev.stock_from ?? 0} → ${ev.stock_to ?? 0}`
+}
+
+const eventStatusLabel = (ev) => {
+  if (ev.action === 'trial') return '已手动测试'
+  if (ev.action === 'launch') return '已自动开跑'
+  if (ev.action === 'received') return '待确认'
+  if (ev.reason === 'price_above_cap') return '超阈值'
+  if (ev.reason === 'awaiting_confirm' || ev.reason === 'auto_disabled') return '待确认'
+  if (ev.action === 'ignored') return '已忽略'
+  return ev.reason || ev.action || '已收'
+}
+
+const eventBadgeClass = (ev) => {
+  if (ev.action === 'trial' || ev.action === 'launch') return 'is-success'
+  if (ev.action === 'received') return 'is-info'
+  if (ev.reason === 'price_above_cap') return 'is-warn'
+  if (ev.action === 'ignored') return 'is-warn'
+  return 'is-info'
+}
+
+const refreshSmsallStatus = async () => {
+  smsallLoading.value = true
+  try {
+    const res = await fetch('/api/smsall/status?limit=200')
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.detail || '读取失败')
+    smsallEvents.value = data.events || []
+    smsallEventCount.value = data.event_count ?? smsallEvents.value.length
+    if (data.webhook_secret) {
+      smsallLiveSecret.value = data.webhook_secret
+    }
+    const alive = new Set(smsallEvents.value.map((ev) => ev.id).filter(Boolean))
+    selectedEventIds.value = selectedEventIds.value.filter((id) => alive.has(id))
+  } catch (e) {
+    smsallEvents.value = []
+  } finally {
+    smsallLoading.value = false
+  }
+}
+
+const copyText = async (text, label) => {
+  const value = String(text || '')
+  if (!value) {
+    pushToast('warn', `${label} 还是空的`)
+    return
+  }
+  try {
+    await navigator.clipboard.writeText(value)
+    pushToast('ok', `已复制${label}`)
+  } catch (e) {
+    const box = document.createElement('textarea')
+    box.value = value
+    document.body.appendChild(box)
+    box.select()
+    document.execCommand('copy')
+    box.remove()
+    pushToast('ok', `已复制${label}`)
+  }
+}
+
+const toggleEvent = (id) => {
+  if (!id) return
+  const set = new Set(selectedEventIds.value)
+  if (set.has(id)) set.delete(id)
+  else set.add(id)
+  selectedEventIds.value = [...set]
+}
+
+const toggleSelectAll = () => {
+  if (allEventsSelected.value) {
+    selectedEventIds.value = []
+    return
+  }
+  selectedEventIds.value = smsallEvents.value.map((ev) => ev.id).filter(Boolean)
+}
+
+const deleteEvents = async (payload) => {
+  deleteBusy.value = true
+  try {
+    const res = await fetch('/api/smsall/events/delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.detail || data.message || '删除失败')
+    pushToast('ok', data.message || '已删除')
+    selectedEventIds.value = []
+    await refreshSmsallStatus()
+  } catch (e) {
+    pushToast('danger', `删除失败: ${e.message}`)
+  } finally {
+    deleteBusy.value = false
+  }
+}
+
+const deleteOne = async (ev) => {
+  if (!ev?.id) return
+  await deleteEvents({ event_ids: [ev.id] })
+}
+
+const deleteSelected = async () => {
+  if (!selectedEventIds.value.length) return
+  await deleteEvents({ event_ids: [...selectedEventIds.value] })
+}
+
+const deleteAll = async () => {
+  if (!smsallEvents.value.length) return
+  if (!window.confirm(`清空全部 ${smsallEventCount.value || smsallEvents.value.length} 条通知？`)) return
+  await deleteEvents({ clear_all: true })
+}
+
+const trialRegister = async (ev) => {
+  const country = String(ev?.country || '').toLowerCase()
+  if (!country) return
+  const count = clampTrial(trialCount.value, 1)
+  const concurrency = Math.min(clampTrial(trialConcurrency.value, 1), count)
+  trialBusy[ev.id] = true
+  try {
+    const res = await fetch('/api/smsall/trial', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        event_id: ev.id || null,
+        country,
+        count,
+        concurrency
+      })
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.detail || data.message || '提交失败')
+    form.country = country
+    applyIncomingBatch(data)
+    pushToast('ok', data.message || `${country.toUpperCase()} 测试已提交`)
+    await Promise.all([refreshSmsallStatus(), fetchTasks()])
+    goTab('console')
+  } catch (e) {
+    pushToast('danger', `测试注册失败: ${e.message}`)
+  } finally {
+    trialBusy[ev.id] = false
+  }
+}
+
+const openInConsole = (ev) => {
+  const country = String(ev?.country || '').toLowerCase()
+  if (country) form.country = country
+  goTab('console')
+}
+
+onMounted(() => {
+  refreshSmsallStatus()
+  smsallPoll = setInterval(refreshSmsallStatus, 8000)
+})
+
+onUnmounted(() => {
+  if (smsallPoll) clearInterval(smsallPoll)
+})
 </script>

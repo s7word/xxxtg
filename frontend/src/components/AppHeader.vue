@@ -12,18 +12,24 @@
         </div>
       </div>
 
-      <div class="ce-chips">
-        <div class="ce-chip" :class="engineChipClass">
-          <span class="ce-dot" :class="engineDotClass"></span>
-          <span>引擎 {{ engineHealth.status === 'ok' ? '就绪' : (engineHealth.status === 'off' ? '离线' : '探测中') }} · 8000</span>
+      <div class="ce-header-actions">
+        <div class="ce-chips">
+          <div class="ce-chip" :class="engineChipClass">
+            <span class="ce-dot" :class="engineDotClass"></span>
+            <span>引擎 {{ engineHealth.status === 'ok' ? '就绪' : (engineHealth.status === 'off' ? '离线' : '探测中') }} · 8000</span>
+          </div>
+          <div class="ce-chip" :class="precheckChipClass">
+            <span class="ce-dot" :class="precheckDotClass"></span>
+            <span>白号预检 {{ precheckLabel }}</span>
+          </div>
+          <div class="ce-chip" :class="proxyChipClass">
+            <span class="ce-dot" :class="proxyDotClass"></span>
+            <span>代理池 {{ customProxySummaryText }} · 动态 {{ proxyPool.length }}</span>
+          </div>
         </div>
-        <div class="ce-chip" :class="precheckChipClass">
-          <span class="ce-dot" :class="precheckDotClass"></span>
-          <span>白号预检 {{ precheckLabel }}</span>
-        </div>
-        <div class="ce-chip" :class="proxyChipClass">
-          <span class="ce-dot" :class="proxyDotClass"></span>
-          <span>代理池 {{ customProxySummaryText }} · 动态 {{ proxyPool.length }}</span>
+        <div class="ce-session">
+          <span class="ce-chip">{{ authUser || 'console' }}</span>
+          <button type="button" class="ce-btn-ghost" @click="onLogout">退出</button>
         </div>
       </div>
     </div>
@@ -45,18 +51,24 @@
 
 <script setup>
 import { computed } from 'vue'
-import { Zap, Shield, Globe, SlidersHorizontal, Smartphone } from 'lucide-vue-next'
+import { Zap, Shield, Globe, SlidersHorizontal, Smartphone, KeyRound } from 'lucide-vue-next'
 import { useUi } from '../composables/useUi'
 import { useTasks } from '../composables/useTasks'
 import { useProxy } from '../composables/useProxy'
+import { authUser, logout } from '../composables/useAuth'
 
 const { tabs, activeTab, engineHealth, goTab } = useUi()
 const { phonePrecheckStatus } = useTasks()
 const { customProxySummaryText, proxyPool, customProxies } = useProxy()
 
+const onLogout = () => {
+  logout()
+}
+
 const iconMap = {
   zap: Zap,
   shield: Shield,
+  key: KeyRound,
   globe: Globe,
   sliders: SlidersHorizontal,
   smartphone: Smartphone

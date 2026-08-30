@@ -560,8 +560,9 @@ class ManualRegistrationOrchestrator:
             pack_alias = profile.get("device_pack_alias")
             pack_country = (profile.get("device_pack_country") or "").upper()
             pack_match = profile.get("device_pack_match") or "none"
+            pack_auto = bool(profile.get("device_pack_auto"))
             if pack_alias:
-                match_label = "国家精确匹配" if pack_match == "country" else "跨库回退采样"
+                match_label = DeviceProfileManager.describe_pack_match(pack_match, pack_auto)
                 await manager.append_log(
                     task_id,
                     f"硬件指纹包: {pack_alias}"
@@ -945,6 +946,16 @@ class ManualRegistrationOrchestrator:
                         await session.bypass_svc.report_result(session.check_id, session.aid, "REGISTERED")
                     except Exception:
                         pass
+
+                try:
+                    from backend.app.services.push_token_vault import PushTokenVault
+
+                    if session.push_task_id:
+                        PushTokenVault.get_instance().mark_success(
+                            reghelp_task_id=session.push_task_id
+                        )
+                except Exception:
+                    pass
 
                 store.pop(task_id)
                 await cls._release_live(session, unlink_artifacts=False)

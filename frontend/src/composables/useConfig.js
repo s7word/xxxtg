@@ -14,7 +14,16 @@ const config = reactive({
   sms_provider: 'fivesim',
   fivesim_api_key: '',
   grizzly_sms_api_key: '',
+  smsbower_api_key: '',
   sms_max_price: null,
+  smsall_webhook_secret: '',
+  smsall_auto_register: false,
+  smsall_auto_max_price_usd: 0.5,
+  smsall_auto_count: 3,
+  smsall_auto_concurrency: 3,
+  smsall_auto_cooldown_seconds: 600,
+  smsall_auto_min_stock: 1,
+  smsall_auto_max_countries: 2,
   target_country: 'cl',
   proxy_seller_key: '',
   use_proxy_seller_auto: false,
@@ -41,6 +50,9 @@ const config = reactive({
   reghelp_connect_timeout: 6.0,
   reghelp_total_timeout: 20.0,
   attestation_provider_mode: 'reghelp_primary',
+  push_token_reuse_enabled: false,
+  push_token_reuse_max_uses: 2,
+  push_token_save_issued: true,
   phone_precheck_enabled: true
 })
 
@@ -68,9 +80,10 @@ const smsStock = reactive({
 const countrySearch = ref('')
 
 export const smsProviderLabel = (provider) => {
-  const token = String(provider || '').toLowerCase()
+  const token = String(provider || '').toLowerCase().replace(/[-_]/g, '')
   if (token === 'vaksms') return 'Vak-SMS'
   if (token === 'grizzlysms') return 'Grizzly SMS'
+  if (token === 'smsbower' || token === 'smsbowerapp' || token === 'bower') return 'SMS Bower'
   return '5SIM'
 }
 

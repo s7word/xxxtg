@@ -593,7 +593,15 @@ class RegistrationOrchestrator:
         Token 签发未满 60s 时先等待再 setStatus；超 180s 仍会尝试（平台可能拒绝）。
         未映射原因与平台拒绝会写进任务日志，绝不导致任务失败。
         """
+        from backend.app.services.push_token_vault import PushTokenVault, REUSE_PROVIDER
+
+        vault = PushTokenVault.get_instance()
+        if push_provider == REUSE_PROVIDER:
+            vault.mark_failed_keep(reghelp_task_id=push_task_id, reason=reason)
+            return
         if not bypass_svc or not push_task_id or push_provider != "reghelp":
+            if push_task_id or push_provider == "reghelp":
+                vault.mark_failed_keep(reghelp_task_id=push_task_id, reason=reason)
             return
         if push_token_obtained_at is not None:
             elapsed = time.monotonic() - push_token_obtained_at
@@ -618,14 +626,19 @@ class RegistrationOrchestrator:
                     f"仍尝试 setStatus id={push_task_id}"
                 )
         try:
-            await bypass_svc.refund_push_token(
+            refund_status = await bypass_svc.refund_push_token(
                 push_task_id,
                 phone,
                 reason,
                 log_callback=lambda msg: manager.append_log(task_id, msg),
             )
+            if refund_status:
+                vault.mark_refunded(reghelp_task_id=push_task_id)
+            else:
+                vault.mark_failed_keep(reghelp_task_id=push_task_id, reason=reason)
         except Exception as exc:
             logger.warning("REGHelp Push Token 退款回写异常 (id=%s, reason=%s): %s", push_task_id, reason, exc)
+            vault.mark_failed_keep(reghelp_task_id=push_task_id, reason=reason)
             await manager.append_log(
                 task_id,
                 f"⚠️ [REGHelp 退款] setStatus 异常 id={push_task_id} reason={reason}: {exc}"
@@ -1738,6 +1751,14 @@ class RegistrationOrchestrator:
             await sms_svc.finish(act_id)
             if check_id:
                 await bypass_svc.report_result(check_id, aid, "REGISTERED")
+
+            try:
+                from backend.app.services.push_token_vault import PushTokenVault
+
+                if push_task_id:
+                    PushTokenVault.get_instance().mark_success(reghelp_task_id=push_task_id)
+            except Exception:
+                pass
 
             manager.update_task_status(task_id, "success", phone=phone, user_id=user_id)
 

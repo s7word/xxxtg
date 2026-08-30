@@ -1,6 +1,6 @@
 # xxxtg AI 接手文档
 
-> 供新开 Cursor / Cloud Agent 窗口时快速恢复上下文。最后更新：2026-08-25。
+> 供新开 Cursor / Cloud Agent 窗口时快速恢复上下文。最后更新：2026-08-26。
 
 ## 1. 项目是什么
 
@@ -19,13 +19,23 @@
 
 ## 2. 用户的工作方式（必读）
 
-用户把当前 AI 定位为 **「指挥者 / Orchestrator」**：
+**2026-08-26 起：远程开发，当前模型自己完成，禁止委派。**
 
-1. **不要自己大量读代码**——复杂实现交给高级模型（Sonnet 5 / Grok 4.6，备选 Grok 4.5）
-2. 用 `Task` 工具派发子任务，写清背景、文件路径、验收标准
-3. 子任务完成后：补 PR、汇总中文结论、处理 follow-up
+1. 工作区就是这台服务器：`/opt/xxxtg`（Cursor Remote-SSH）
+2. 自己读代码、改代码、跑测试、重建 Docker、用 curl / 浏览器验证
+3. **禁止**用 `Task` 委派其他模型或子代理（项目规则 `.cursor/rules/remote-dev.mdc`）
 4. 与用户用 **简体中文** 沟通
-5. Cloud Agent 分支命名：`cursor/<descriptive-name>-9abd`（全小写，必须带 `-9abd` 后缀）
+5. 分支命名仍可用：`cursor/<descriptive-name>-9abd`（全小写，必须带 `-9abd` 后缀）
+6. 未要求时不要 commit / push；密钥只写 `data/config.json`，不进 Git
+
+### Remote Control（手机 / Web 遥控这台机器）
+
+服务器已常驻 worker：`xxxtg@srv1884560`（systemd `cursor-agent-worker-xxxtg`，开机自启）。
+
+- 机器入口：https://cursor.com/agents#workerId=23e7e6dc-4fbd-432f-b0e7-87054a3de4cf
+- 本机健康检查：`curl http://127.0.0.1:18789/readyz`
+- 当前对话交给手机：Agents Window → Settings → Agents 打开 **Remote Control**，输入框发 `/remote-control`
+- 新任务：cursor.com/agents 或 iOS App 选这台机器 `xxxtg@srv1884560`
 
 ---
 
@@ -53,7 +63,7 @@
 | 项 | 值 |
 |----|-----|
 | IP | `187.127.218.157` |
-| SSH | `root@187.127.218.157`（密码由用户保管，**勿写入 Git**） |
+| SSH | `root@187.127.218.157:22`（公钥登录；**勿把私钥/密码写入 Git**） |
 | 项目路径 | `/opt/xxxtg` |
 | 当前分支 | `cursor/reghelp-push-refund-9abd` @ `fad2357` |
 | 后端 | http://187.127.218.157:8000 |
@@ -83,6 +93,10 @@ curl http://127.0.0.1:8000/api/health
 - `data/banned_phones_cache.json` — 封禁号本地缓存
 
 云机已打包同步过；后续改 config 需在服务器与 Git 之外单独备份。
+
+### 控制台登录
+
+前端 `:3100` 需登录后才能调 `/api/*`（`/api/health` 仍公开，docker healthcheck 不受影响）。账号密码读环境变量 `EDGENODE_AUTH_USER` / `EDGENODE_AUTH_PASSWORD`，未设置时使用代码 fallback。Session cookie 名 `edgenode_session`；secret 优先 `EDGENODE_AUTH_SECRET`，否则写入 `data/edgenode_auth_secret`（已 gitignore）。仅测试可设 `EDGENODE_AUTH_DISABLED=1`。
 
 ---
 
@@ -122,6 +136,7 @@ backend/app/
     fivesim.py / grizzlysms.py / vak_sms 等 SMS 网关
     device_db_manager.py     # 设备指纹库管理
     account_vault.py         # 金库上传/探针
+    auth.py                  # 控制台 Session 登录
 ```
 
 ### 注册主流程（简化）
@@ -149,9 +164,11 @@ backend/app/
 
 ## 8. 已确认的产品/协议结论（勿重复踩坑）
 
-### Push Token 不要缓存复用
+### Push Token 默认不复用；可选本地库存
 
-REGHelp Push Token 一次性消耗，**不可**存下来给下一号用。正确优化是接上 `setStatus` 退款（已实现）。
+REGHelp Push Token 官方按一次性计费。平台侧正确优化仍是 `setStatus` 退款。
+另支持**可选**本地库存：新签发可入库；失败且未退款的可按开关复用（优先未使用，其次用过 1 次）。
+默认 `push_token_reuse_enabled=false`。详见「Push 令牌库」页。
 
 ### 「直接登录探测」不能替代预检
 
@@ -219,11 +236,24 @@ git push -u origin cursor/my-feature-9abd
 
 ## 12. 新开窗口时 AI 应做的第一件事
 
-1. 读本文档
+1. 读本文档与 `.cursor/rules/remote-dev.mdc`
 2. `git branch` 确认分支；优先 `cursor/reghelp-push-refund-9abd` 或用户指定
-3. 确认运行环境：云机 `/workspace` 还是服务器 `/opt/xxxtg`
-4. 问用户本轮目标，**指挥高级模型**执行，自己负责 PR 与汇总
-5. 需要服务器操作时 SSH `root@187.127.218.157`（向用户索取凭证，勿假设密码仍有效）
+3. 确认工作区是服务器 `/opt/xxxtg`（远程开发），不是云机 `/workspace`
+4. 问用户本轮目标后 **自己执行**，不要派 Task
+5. 本机已在服务器上时直接操作；不要再 SSH 一遍
+
+本地 Cursor 连接本机（已装 `~/.cursor-server`）：
+
+```
+Host xxxtg
+  HostName 187.127.218.157
+  User root
+  Port 22
+  IdentityFile ~/.ssh/id_ed25519
+  ForwardAgent no
+```
+
+命令面板：`Remote-SSH: Connect to Host` → `xxxtg` → 打开文件夹 `/opt/xxxtg`。
 
 ---
 
@@ -247,4 +277,4 @@ git push -u origin cursor/my-feature-9abd
 
 ---
 
-*本文档由指挥者 AI 生成，随项目演进请增量更新 `docs/AI_HANDOVER.md` 并 push。*
+*随项目演进请增量更新 `docs/AI_HANDOVER.md`。未要求不要擅自 push。*

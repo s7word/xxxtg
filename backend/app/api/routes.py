@@ -58,6 +58,11 @@ from backend.app.models.schemas import (
     ToggleVaultProbeResponse,
     VaultAccountBulkRequest,
     VaultDeleteResponse,
+    PushTokenVaultListResponse,
+    PushTokenVaultSummary,
+    PushTokenVaultItem,
+    PushTokenVaultPurgeRequest,
+    PushTokenVaultActionResponse,
     DeviceDbGenerateRequest,
     DeviceDbListResponse,
     DeviceDbPackResponse,
@@ -1310,6 +1315,70 @@ async def delete_vault_accounts(req: VaultAccountBulkRequest):
     if not result.success:
         raise HTTPException(status_code=400, detail=result.message)
     return result
+
+
+@router.get(
+    "/push-tokens",
+    response_model=PushTokenVaultListResponse,
+    summary="查看本地 REGHelp Push Token 库存与使用次数",
+)
+async def list_push_tokens():
+    from backend.app.services.push_token_vault import PushTokenVault
+
+    config = ConfigManager.get_instance().config
+    vault = PushTokenVault.get_instance()
+    summary = PushTokenVaultSummary(**vault.summary())
+    items = [PushTokenVaultItem(**row) for row in vault.list_items(include_token=False)]
+    return PushTokenVaultListResponse(
+        success=True,
+        summary=summary,
+        items=items,
+        reuse_enabled=bool(getattr(config, "push_token_reuse_enabled", False)),
+        reuse_max_uses=int(getattr(config, "push_token_reuse_max_uses", 2) or 2),
+        save_issued=bool(getattr(config, "push_token_save_issued", True)),
+    )
+
+
+@router.delete(
+    "/push-tokens/{item_id}",
+    response_model=PushTokenVaultActionResponse,
+    summary="删除单条本地 Push Token",
+)
+async def delete_push_token(item_id: str):
+    from backend.app.services.push_token_vault import PushTokenVault
+
+    vault = PushTokenVault.get_instance()
+    ok = vault.delete(item_id)
+    return PushTokenVaultActionResponse(
+        success=ok,
+        message="已删除" if ok else "未找到该令牌",
+        deleted=1 if ok else 0,
+        summary=PushTokenVaultSummary(**vault.summary()),
+    )
+
+
+@router.post(
+    "/push-tokens/purge",
+    response_model=PushTokenVaultActionResponse,
+    summary="清理已退款/已成功消耗/已达复用上限的 Push Token",
+)
+async def purge_push_tokens(req: PushTokenVaultPurgeRequest):
+    from backend.app.services.push_token_vault import PushTokenVault
+
+    config = ConfigManager.get_instance().config
+    vault = PushTokenVault.get_instance()
+    max_uses = int(getattr(config, "push_token_reuse_max_uses", 2) or 2)
+    deleted = vault.purge(
+        refunded=req.refunded,
+        consumed=req.consumed,
+        exhausted_max_uses=max_uses if req.exhausted else None,
+    )
+    return PushTokenVaultActionResponse(
+        success=True,
+        message=f"已清理 {deleted} 条",
+        deleted=deleted,
+        summary=PushTokenVaultSummary(**vault.summary()),
+    )
 
 
 # ==================== 6. 开发者凭证申请助手 (my.telegram.org) ====================

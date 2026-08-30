@@ -264,6 +264,24 @@ class AppConfigModel(BaseModel):
             "reghelp_only (仅使用 REGHelp) / antisafety_only (仅使用 AntiSafety)"
         )
     )
+    push_token_reuse_enabled: bool = Field(
+        default=False,
+        description=(
+            "是否允许复用本地库存中「未成功消耗」的 REGHelp Push Token。"
+            "默认关闭；开启后优先取 use_count=0，其次 use_count=1。"
+            "已成功注册或已 setStatus 退款的令牌不会复用。"
+        ),
+    )
+    push_token_reuse_max_uses: int = Field(
+        default=2,
+        ge=1,
+        le=5,
+        description="复用令牌的最大使用次数上限（含首次）；达到后不再参与排序选取",
+    )
+    push_token_save_issued: bool = Field(
+        default=True,
+        description="REGHelp 新签发成功后是否写入本地 Push Token 库存（与是否开启复用无关）",
+    )
     phone_precheck_enabled: bool = Field(
         default=True,
         description=(
@@ -1195,3 +1213,53 @@ class DeviceDbGenerateRequest(BaseModel):
         description="可选品牌权重覆盖: samsung/xiaomi/huawei/motorola/realme/vivo/oppo/other",
     )
     seed: Optional[int] = Field(default=None, description="可选随机种子，便于复现实验")
+
+
+class PushTokenVaultItem(BaseModel):
+    id: str
+    token_preview: Optional[str] = None
+    reghelp_task_id: Optional[str] = None
+    provider: Optional[str] = None
+    app_name: Optional[str] = None
+    app_device: Optional[str] = None
+    app_type: Optional[str] = None
+    source_task_id: Optional[str] = None
+    use_count: int = 0
+    status: str = "available"
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+    last_used_at: Optional[str] = None
+    last_outcome: Optional[str] = None
+    last_lease_task_id: Optional[str] = None
+
+
+class PushTokenVaultSummary(BaseModel):
+    total: int = 0
+    available: int = 0
+    unused: int = 0
+    used_once: int = 0
+    reusable: int = 0
+    consumed: int = 0
+    refunded: int = 0
+
+
+class PushTokenVaultListResponse(BaseModel):
+    success: bool = True
+    summary: PushTokenVaultSummary = Field(default_factory=PushTokenVaultSummary)
+    items: List[PushTokenVaultItem] = Field(default_factory=list)
+    reuse_enabled: bool = False
+    reuse_max_uses: int = 2
+    save_issued: bool = True
+
+
+class PushTokenVaultPurgeRequest(BaseModel):
+    refunded: bool = True
+    consumed: bool = True
+    exhausted: bool = False
+
+
+class PushTokenVaultActionResponse(BaseModel):
+    success: bool
+    message: str = ""
+    deleted: int = 0
+    summary: Optional[PushTokenVaultSummary] = None

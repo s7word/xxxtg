@@ -10,6 +10,7 @@
       <main class="ce-main">
         <ConsoleView v-if="activeTab === 'console'" />
         <VaultView v-else-if="activeTab === 'vault'" />
+        <PushTokensView v-else-if="activeTab === 'tokens'" />
         <ProxyMeshView v-else-if="activeTab === 'proxy'" />
         <SettingsView v-else-if="activeTab === 'settings'" />
         <DevicesView v-else-if="activeTab === 'devices'" />
@@ -26,6 +27,7 @@ import ToastHost from './components/ToastHost.vue'
 import LoginView from './components/LoginView.vue'
 import ConsoleView from './components/console/ConsoleView.vue'
 import VaultView from './components/vault/VaultView.vue'
+import PushTokensView from './components/tokens/PushTokensView.vue'
 import ProxyMeshView from './components/proxy/ProxyMeshView.vue'
 import SettingsView from './components/settings/SettingsView.vue'
 import DevicesView from './components/devices/DevicesView.vue'

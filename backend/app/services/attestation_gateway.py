@@ -123,7 +123,32 @@ class AttestationGatewayService:
         `ref` 会透传给 REGHelp `push/getToken`（建议传入注册任务 task_id），使后续
         `refund_push_token` 能在失败/退订分支对该任务发起 setStatus 自动退款审计。
         AntiSafety 路径没有等价的 setStatus 能力，`task_id` 恒为 None。
+
+        若 `config.push_token_reuse_enabled`，优先从本地库存按 use_count 升序复用
+        （未使用 → 用过 1 次）；命中时 provider 标记为 `reghelp_reuse`，跳过平台退款窗口逻辑。
         """
+        from backend.app.services.push_token_vault import PushTokenVault, REUSE_PROVIDER
+
+        reuse_enabled = bool(getattr(self.config, "push_token_reuse_enabled", False))
+        if reuse_enabled:
+            max_uses = int(getattr(self.config, "push_token_reuse_max_uses", 2) or 2)
+            vault = PushTokenVault.get_instance()
+            cached = vault.acquire_for_reuse(
+                max_uses=max_uses,
+                app_type=profile.get("app_type") or profile.get("key"),
+                lease_task_id=ref,
+            )
+            if cached and cached.get("token"):
+                self.last_used_provider = REUSE_PROVIDER
+                if log_callback:
+                    await log_callback(
+                        f"♻️ 复用本地 Push Token 库存: id={cached.get('id')} "
+                        f"use_count={cached.get('use_count')} "
+                        f"reghelp_task={cached.get('reghelp_task_id') or '-'} "
+                        f"(排序: 未使用优先，其次 1 次使用)"
+                    )
+                return cached.get("token"), cached.get("reghelp_task_id"), REUSE_PROVIDER
+
         mode = getattr(self.config, "attestation_provider_mode", "reghelp_primary") or "reghelp_primary"
         order = self._provider_order()
         if not order:
@@ -161,6 +186,31 @@ class AttestationGatewayService:
 
                 if token:
                     self.last_used_provider = name
+                    if name == self.PROVIDER_REGHELP and bool(
+                        getattr(self.config, "push_token_save_issued", True)
+                    ):
+                        try:
+                            vault = PushTokenVault.get_instance()
+                            stored = vault.store_issued(
+                                token=token,
+                                reghelp_task_id=task_id,
+                                provider="reghelp",
+                                app_name=profile.get("app_name"),
+                                app_device=profile.get("app_device"),
+                                app_type=profile.get("app_type") or profile.get("key"),
+                                source_task_id=ref,
+                            )
+                            vault.mark_attempt(
+                                vault_id=stored.get("id"),
+                                lease_task_id=ref,
+                            )
+                            if log_callback:
+                                await log_callback(
+                                    f"已写入本地 Push Token 库存 id={stored.get('id')} "
+                                    f"(未成功消耗前可按开关复用)"
+                                )
+                        except Exception as store_exc:
+                            logger.warning("Push Token 入库失败: %s", store_exc)
                     return token, task_id, name
 
                 if log_callback:
