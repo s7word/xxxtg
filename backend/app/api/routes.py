@@ -178,6 +178,13 @@ async def smsall_webhook_status(limit: int = Query(default=80, ge=1, le=200)):
         "count": getattr(config, "smsall_auto_count", 3),
         "concurrency": getattr(config, "smsall_auto_concurrency", 3),
         "cooldown_seconds": getattr(config, "smsall_auto_cooldown_seconds", 600),
+        "sniper_enabled": bool(getattr(config, "smsall_sniper_enabled", True)),
+        "sniper_count": getattr(config, "smsall_sniper_count", 10),
+        "sniper_concurrency": getattr(config, "smsall_sniper_concurrency", 10),
+        "sniper_max_number_attempts": getattr(config, "smsall_sniper_max_number_attempts", 20),
+        "sniper_cooldown_seconds": getattr(config, "smsall_sniper_cooldown_seconds", 60),
+        "sniper_max_countries": getattr(config, "smsall_sniper_max_countries", 3),
+        "sniper_max_price_usd": getattr(config, "smsall_sniper_max_price_usd", None),
         "event_count": event_count(),
         "events": recent_events(limit),
     }

@@ -401,6 +401,54 @@ class AppConfigModel(BaseModel):
         le=10,
         description="单次 Webhook 最多自动开跑的国家数（按单价从低到高）"
     )
+    smsall_sniper_enabled: bool = Field(
+        default=True,
+        description=(
+            "上游「程序推送 → 狙击」告警是否直接触发猎号生产。"
+            "独立通道：开启后即使 smsall_auto_register=false，狙击也照跑照花钱"
+        ),
+    )
+    smsall_sniper_count: int = Field(
+        default=10,
+        ge=1,
+        le=10,
+        description="单个狙击国家开的任务数（线程）"
+    )
+    smsall_sniper_concurrency: int = Field(
+        default=10,
+        ge=1,
+        le=10,
+        description="狙击批次并发度；实际取 min(并发, 任务数)"
+    )
+    smsall_sniper_max_number_attempts: int = Field(
+        default=20,
+        ge=1,
+        le=500,
+        description=(
+            "狙击每任务最多取号次数（猎号深度）。"
+            "count × attempts 超过 hunt_max_total_leases 时会被裁剪并打日志"
+        ),
+    )
+    smsall_sniper_cooldown_seconds: int = Field(
+        default=60,
+        ge=0,
+        description="同一国家狙击冷却秒数，与普通自动开跑冷却互相独立；0=不冷却"
+    )
+    smsall_sniper_max_countries: int = Field(
+        default=3,
+        ge=1,
+        le=10,
+        description="单次狙击推送最多开几个国家（按单价从低到高）"
+    )
+    smsall_sniper_max_price_usd: Optional[float] = Field(
+        default=None,
+        ge=0,
+        description="狙击单价硬顶（USD）；留空=不按单价过滤，抢到什么价都开"
+    )
+    smsall_sniper_use_item_price_as_max: bool = Field(
+        default=True,
+        description="用推送里的 priceUsd（上浮 10%）作为本批出价；关闭则用全局 sms_max_price"
+    )
 
     @field_validator("antisafety_base_urls", mode="before")
     @classmethod

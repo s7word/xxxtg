@@ -80,6 +80,63 @@
           <input v-model.number="config.smsall_auto_concurrency" type="number" min="1" max="10" class="ce-input mono" />
         </div>
       </div>
+      <div class="ce-panel stack" style="margin-top:4px">
+        <div class="ce-panel-head">
+          <div class="row">
+            <h3>🎯 狙击（程序推送 → 狙击）→ 自动猎号</h3>
+            <span class="ce-badge" :class="config.smsall_sniper_enabled ? 'is-danger' : 'is-info'">
+              {{ config.smsall_sniper_enabled ? '狙击即开跑' : '狙击已关闭' }}
+            </span>
+          </div>
+        </div>
+        <label class="ce-check">
+          <input type="checkbox" v-model="config.smsall_sniper_enabled" />
+          收到狙击推送后自动开猎号（独立通道，不看上面的「通知后自动注册」开关）
+        </label>
+        <div v-if="config.smsall_sniper_enabled" class="ce-alert is-danger">
+          ⚠️ 狙击是全自动烧钱通道：上游一推 sniper，就按下面参数直接开
+          {{ config.smsall_sniper_count }} 路 × 每任务最多取号
+          {{ config.smsall_sniper_max_number_attempts }} 次的猎号，
+          最多可租 {{ (config.smsall_sniper_count || 0) * (config.smsall_sniper_max_number_attempts || 0) }} 个号
+          （仍受猎号联合上限 hunt_max_total_leases 裁剪）。
+          猎号规则：注册成功即停，失败号拉黑换号继续扫。不想自动花钱就关掉这个开关。
+        </div>
+        <div v-if="config.smsall_sniper_enabled" class="grid-2">
+          <div>
+            <label class="ce-label">狙击任务数 / 线程</label>
+            <input v-model.number="config.smsall_sniper_count" type="number" min="1" max="10" class="ce-input mono" />
+          </div>
+          <div>
+            <label class="ce-label">狙击并发</label>
+            <input v-model.number="config.smsall_sniper_concurrency" type="number" min="1" max="10" class="ce-input mono" />
+          </div>
+          <div>
+            <label class="ce-label">每任务最多取号次数（猎号深度）</label>
+            <input v-model.number="config.smsall_sniper_max_number_attempts" type="number" min="1" max="500" class="ce-input mono" />
+          </div>
+          <div>
+            <label class="ce-label">狙击冷却秒数 / 同国（0=不冷却）</label>
+            <input v-model.number="config.smsall_sniper_cooldown_seconds" type="number" min="0" class="ce-input mono" />
+          </div>
+          <div>
+            <label class="ce-label">单次推送最多开几个国家</label>
+            <input v-model.number="config.smsall_sniper_max_countries" type="number" min="1" max="10" class="ce-input mono" />
+          </div>
+          <div>
+            <label class="ce-label">狙击单价硬顶 USD（留空=不过滤）</label>
+            <input v-model.number="config.smsall_sniper_max_price_usd" type="number" min="0" step="0.01" class="ce-input mono" placeholder="留空则任何单价都抢" />
+          </div>
+        </div>
+        <label v-if="config.smsall_sniper_enabled" class="ce-check">
+          <input type="checkbox" v-model="config.smsall_sniper_use_item_price_as_max" />
+          用推送里的单价（上浮 10%）作为本批出价；关掉则用全局 {{ config.sms_max_price ?? '未设置' }}
+        </label>
+        <div class="ce-tiny">
+          触发条件（任一命中）：payload.source=sniper · 请求头 X-Smsall-Sniper: 1 / X-Smsall-Priority: sniper ·
+          item 上 sniper=true / tags 含 sniper / priority=sniper。
+          接码源仍用全局 {{ smsProviderLabel(config.sms_provider) }}，不跟随上游平台切换。
+        </div>
+      </div>
       <div class="grid-2">
         <div>
           <label class="ce-label">一键测试 · 任务数</label>
@@ -125,7 +182,13 @@
                   <strong>{{ countryFlag(ev.country) }} {{ (ev.country_name || ev.country || '—').toString() }}</strong>
                   <div v-if="ev.country" class="ce-tiny mono">{{ String(ev.country).toUpperCase() }}</div>
                 </td>
-                <td class="nowrap">{{ eventTypeLabel(ev.type) }}</td>
+                <td class="nowrap">
+                  <span v-if="ev.sniper" class="ce-badge is-danger">狙击</span>
+                  <span v-else>{{ eventTypeLabel(ev.type) }}</span>
+                  <div v-if="ev.sniper && ev.max_number_attempts" class="ce-tiny mono">
+                    {{ ev.planned_count || '?' }}×{{ ev.max_number_attempts }} 猎号
+                  </div>
+                </td>
                 <td class="nowrap mono">{{ ev.price_usd != null ? '$' + Number(ev.price_usd).toFixed(2) : '—' }}</td>
                 <td class="nowrap mono">{{ formatStockChange(ev) }}</td>
                 <td class="ce-tiny">{{ ev.provider || '—' }}</td>
@@ -571,9 +634,11 @@ const formatStockChange = (ev) => {
 
 const eventStatusLabel = (ev) => {
   if (ev.action === 'trial') return '已手动测试'
-  if (ev.action === 'launch') return '已自动开跑'
+  if (ev.action === 'launch') return ev.sniper ? '狙击已开猎号' : '已自动开跑'
+  if (ev.reason === 'sniper_disabled') return '狙击已关'
   if (ev.action === 'received') return '待确认'
   if (ev.reason === 'price_above_cap') return '超阈值'
+  if (ev.reason === 'upstream_no_balance') return '上游无余额'
   if (ev.reason === 'awaiting_confirm' || ev.reason === 'auto_disabled') return '待确认'
   if (ev.action === 'ignored') return '已忽略'
   return ev.reason || ev.action || '已收'
