@@ -156,6 +156,7 @@ class TestHuntRetryAppPush(unittest.IsolatedAsyncioTestCase):
                 task_id=self.task_id,
                 country="cl",
                 max_number_attempts=5,
+                no_number_retries=0,
             )
 
         self.assertEqual(gw.get_push_token.await_count, 1)
@@ -163,7 +164,7 @@ class TestHuntRetryAppPush(unittest.IsolatedAsyncioTestCase):
         gw.refund_push_token.assert_not_awaited()
         remember.assert_called()
         logs = "\n".join(self.manager.get_task(self.task_id)["logs"])
-        self.assertIn("复用 Push Token 换号继续", logs)
+        self.assertIn("已拉黑退订，换号继续", logs)
         task = self.manager.get_task(self.task_id)
         self.assertEqual(task["status"], "failed")
         self.assertTrue(task.get("no_number"))
