@@ -283,7 +283,10 @@ HUNT_REFUND_REASON_ALIASES = {
 # 不能因为一个坏号就把剩余取号预算整体作废。
 # 反例（保持终止）：API_ID_PUBLISHED_FLOOD 与解不掉的 RECAPTCHA_CHECK 是凭证/风控层面的
 # 全局问题，换号后每一轮都会重复触发，继续扫只是等价地烧钱。
-HUNT_SWAPPABLE_SEND_ERRORS = (PhoneNumberInvalidError,)
+HUNT_SWAPPABLE_SEND_ERROR_REASONS = {
+    PhoneNumberInvalidError: "PHONE_NUMBER_INVALID",
+}
+HUNT_SWAPPABLE_SEND_ERRORS = tuple(HUNT_SWAPPABLE_SEND_ERROR_REASONS)
 
 
 class SentCodeAppDeliveryError(Exception):
@@ -2526,9 +2529,9 @@ class RegistrationOrchestrator:
                 except HUNT_SWAPPABLE_SEND_ERRORS as swap_ex:
                     # 平台给了个 Telegram 根本不认的号（PHONE_NUMBER_INVALID 等）：
                     # 这是单个号码的问题，换号就能继续，绝不能因此作废剩余取号预算。
-                    reason = type(swap_ex).__name__.replace("Error", "").upper() or "PHONE_NUMBER_INVALID"
-                    if isinstance(swap_ex, PhoneNumberInvalidError):
-                        reason = "PHONE_NUMBER_INVALID"
+                    reason = HUNT_SWAPPABLE_SEND_ERROR_REASONS.get(
+                        type(swap_ex), "PHONE_NUMBER_UNUSABLE"
+                    )
                     if phone:
                         # 号码格式/归属本身无效，是永久事实，按 banned 永久收录
                         BannedPhonesCache.remember(

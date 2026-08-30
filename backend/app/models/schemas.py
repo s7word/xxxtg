@@ -570,7 +570,10 @@ class BannedPhoneAddRequest(BaseModel):
 class BannedPhonesPurgeRequest(BaseModel):
     category: Optional[str] = Field(
         default=None,
-        description="仅清理指定分类；省略则清空全部",
+        description=(
+            "仅清理指定分类（banned | already_registered | app_delivery_unusable | manual）；"
+            "省略则清空全部"
+        ),
     )
 
 

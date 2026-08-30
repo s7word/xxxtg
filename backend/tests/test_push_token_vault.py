@@ -193,6 +193,38 @@ class TestGatewayReuse(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(task_id, "old-1")
         self.assertEqual(provider, REUSE_PROVIDER)
 
+    async def test_second_task_cannot_reuse_token_held_by_first(self):
+        """并发两任务走同一网关：第二个任务不得拿到第一个任务正在用的令牌。"""
+        self.vault.store_issued(token="cached-token", reghelp_task_id="old-1")
+        cfg = SimpleNamespace(
+            reghelp_api_key="",
+            antisafety_api_key="",
+            reghelp_enabled=False,
+            antisafety_enabled=False,
+            attestation_provider_mode="reghelp_only",
+            push_token_reuse_enabled=True,
+            push_token_reuse_max_uses=3,
+            push_token_save_issued=True,
+            reghelp_base_urls=[],
+            antisafety_base_urls=[],
+            antisafety_reporting_base_urls=[],
+        )
+        gw = AttestationGatewayService(cfg)
+        first = await gw.get_push_token({"app_name": "tg"}, ref="task-A")
+        self.assertEqual(first, ("cached-token", "old-1", REUSE_PROVIDER))
+        # 没有可用提供源，且唯一库存已被 task-A 持有 → task-B 只能空手而归
+        second = await gw.get_push_token({"app_name": "tg"}, ref="task-B")
+        self.assertEqual(second, (None, None, None))
+
+        # task-B 也不能把 task-A 的令牌 retire 掉
+        self.assertIsNone(self.vault.mark_retired(reghelp_task_id="old-1", lease_task_id="task-B"))
+        self.assertEqual(self.vault.list_items()[0]["status"], STATUS_AVAILABLE)
+
+        # task-A 结束归还后，task-B 才能接手
+        self.assertEqual(self.vault.release_task_leases("task-A"), 1)
+        third = await gw.get_push_token({"app_name": "tg"}, ref="task-B")
+        self.assertEqual(third, ("cached-token", "old-1", REUSE_PROVIDER))
+
     async def test_fresh_issue_saves_to_vault(self):
         cfg = SimpleNamespace(
             reghelp_api_key="k",

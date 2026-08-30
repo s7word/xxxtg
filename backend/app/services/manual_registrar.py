@@ -951,11 +951,14 @@ class ManualRegistrationOrchestrator:
                     from backend.app.services.push_token_vault import PushTokenVault
 
                     if session.push_task_id:
+                        # 带上本任务作为租约持有者，否则库存层会当成外来任务而拒绝写入
                         PushTokenVault.get_instance().mark_success(
-                            reghelp_task_id=session.push_task_id
+                            reghelp_task_id=session.push_task_id,
+                            lease_task_id=task_id,
                         )
                 except Exception:
                     pass
+                RegistrationOrchestrator._release_push_token_leases(task_id)
 
                 store.pop(task_id)
                 await cls._release_live(session, unlink_artifacts=False)
