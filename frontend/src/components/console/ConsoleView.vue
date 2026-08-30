@@ -190,7 +190,7 @@
               等待 OTP 期间可并行验证多个号码。租号后先做白号预检；已注册号直接退订换号，不消耗 Push Token。
               若服务端仍返回 <code>SentCodeTypeApp</code> 会自动探测 <code>ResendCode</code> 并快速换号。
               RECAPTCHA_CHECK 由 REGHelp RecaptchaMobile 自动解题。
-              可与下方「循环试号」叠加：每个并发任务各自换号并复用自己的 Push。
+              可与下方「猎号」叠加：每路任务各自试号并复用自己的 Push；每路会被钉死一个代理槽位，猎号期间不轮换出口。
             </p>
           </div>
         </div>
@@ -199,26 +199,79 @@
           <div class="between">
             <label class="ce-check">
               <input type="checkbox" v-model="huntMode" />
-              猎号扫平台（成功即停 / 否则拉黑）
+              猎号（最多试 N 个号 · 成功即停 · 不可用号拉黑）
             </label>
             <span class="ce-badge is-warn">hunt</span>
           </div>
           <div v-if="huntMode" class="stack" style="margin-top:10px">
             <div>
-              <div class="ce-label">每任务最多取号次数</div>
+              <div class="between">
+                <div class="ce-label">每任务最多试号个数</div>
+                <button class="ce-link" @click="resetHuntAttemptsToConfig">跟随全局默认</button>
+              </div>
               <div class="ce-seg">
                 <button
                   v-for="n in [50, 100, 200, 500]"
                   :key="n"
-                  :class="{ 'is-on': huntAttempts === n }"
-                  @click="huntAttempts = n"
+                  :class="{ 'is-on': effectiveHuntAttempts === n }"
+                  @click="setHuntAttempts(n)"
                 >{{ n }}</button>
+              </div>
+              <div class="ce-tiny" style="margin-top:6px">
+                当前 <span class="mono" style="color:var(--mint-light)">{{ effectiveHuntAttempts }}</span>
+                个号 · 默认值取自设置页
+                <code>hunt_default_max_attempts</code>（{{ config.hunt_default_max_attempts || 100 }}）
+              </div>
+            </div>
+            <div class="ce-alert" :class="huntPlan.clamped ? 'is-warn' : ''">
+              <div class="ce-stat">
+                <span>预计最多租号次数</span>
+                <span class="mono">
+                  {{ huntPlan.count }} 路 × {{ huntPlan.attempts }} 个号 = {{ huntPlan.plannedLeases }} 次
+                </span>
+              </div>
+              <div class="ce-tiny" style="margin-top:4px">
+                联合上限 <code>hunt_max_total_leases</code> = {{ huntPlan.limit }}。
+                <template v-if="huntPlan.clamped">
+                  当前 {{ huntPlan.count }} × {{ huntPlan.requested }} 超过上限，后端会把每任务试号数裁剪到 {{ huntPlan.attempts }}。
+                </template>
+                <template v-else>
+                  这是上限而非预期消费：成功即停、未收到码的号退订后多数平台不计费。
+                </template>
+              </div>
+              <div class="row-wrap" style="margin-top:6px">
+                <button class="ce-btn-ghost" :disabled="isLoadingHuntBudget" @click="refreshHuntBudget">
+                  {{ isLoadingHuntBudget ? '查询中...' : '查接码余额与费用上限' }}
+                </button>
+                <span v-if="huntBudget && huntBudget.balance != null" class="ce-badge is-info mono">
+                  余额 {{ huntBudget.balance }}
+                </span>
+                <span v-if="huntBudget && huntBudget.estimated_max_cost != null" class="mono ce-muted">
+                  最多花费 ≈ {{ huntBudget.estimated_max_cost }}
+                </span>
+                <span
+                  v-if="huntBudget && huntBudget.balance_sufficient === false"
+                  class="ce-badge is-danger"
+                >余额可能不足</span>
+                <span v-if="huntBudget && huntBudget.balance_error" class="ce-tiny" style="color:var(--danger-soft)">
+                  余额查询失败
+                </span>
               </div>
             </div>
             <p class="ce-tiny">
-              目的只有两个：① 注册成功立刻停止；② 尽量扫接码平台号码，不可用号（APP/已注册/封禁）拉黑后退订换号。
-              无库存默认软重试 20 次。代理约每 5 次 sendCode 轮换；设备约每 8 次换指纹并换新 Push（Push 与设备绑定）。
-              同一任务内优先复用 Push。可与并发批量叠加：每路独立猎号。
+              目标只有两个：① 注册成功立刻停止；② 在试号次数内尽量扫号，不可用号（站内信 APP / 已注册 / 封禁）
+              拉黑后退订换号。这不是「扫平台所有号码」——最多只试 {{ effectiveHuntAttempts }} 个号，用完即结束（HUNT_EXHAUSTED）。
+              无库存软重试 {{ config.hunt_no_number_retries ?? 20 }} 次（全局配置）。
+              设备每 {{ config.hunt_device_max_uses || 8 }} 次 sendCode 换指纹并换新 Push（Push 与设备绑定）。
+            </p>
+            <p class="ce-tiny">
+              <span :class="huntProxyPinned ? 'ce-badge is-warn' : 'ce-badge is-info'">
+                {{ huntProxyPinned ? '出口不轮换' : '出口按次轮换' }}
+              </span>
+              {{ huntProxyNote }}。
+            </p>
+            <p class="ce-tiny">
+              运行中可在下方任务队列点「停止」：取消请求在下一轮取号前生效，当前一轮的 sendCode / OTP 轮询会跑完并正常退订退款。
             </p>
           </div>
         </div>
@@ -250,8 +303,8 @@
           @click="startRegistrationTask"
         >
           <span v-if="isStartingTask">正在调度状态机编排流水线...</span>
-          <span v-else-if="huntMode && batchMode">并发 {{ batchCount }} 路猎号 × 每路最多 {{ huntAttempts }} 号</span>
-          <span v-else-if="huntMode">开始猎号（最多 {{ huntAttempts }} 号 · 成功即停）</span>
+          <span v-else-if="huntMode && batchMode">并发 {{ batchCount }} 路猎号 × 每路最多 {{ huntPlan.attempts }} 号（最多租号 {{ huntPlan.plannedLeases }} 次）</span>
+          <span v-else-if="huntMode">开始猎号（最多试 {{ huntPlan.attempts }} 个号 · 成功即停）</span>
           <span v-else-if="batchMode">并发启动 {{ batchCount }} 个引导任务</span>
           <span v-else>启动虚拟节点引导仿真</span>
         </button>
@@ -359,6 +412,14 @@
           <span class="ce-muted">等待 {{ batchStats.pending }}</span>
           <span v-if="batchStats.precheck" style="color:#fcd34d">预检拦截 {{ batchStats.precheck }}</span>
           <span v-if="batchStats.noNumber" style="color:#fdba74">无库存 {{ batchStats.noNumber }}</span>
+          <button
+            v-if="batchStats.running || batchStats.pending"
+            class="ce-link is-danger"
+            :disabled="isCancelingBatch"
+            @click="cancelBatch(currentBatch.batch_id)"
+          >
+            {{ isCancelingBatch ? '停止中...' : '停止整个批次' }}
+          </button>
         </div>
         <div v-if="currentBatch" class="ce-task-pills">
           <button
@@ -423,6 +484,10 @@
                 <td>
                   <span :class="getStatusBadgeClass(t.status)">{{ t.status }}</span>
                   <span v-if="t.mode === 'manual'" class="ce-badge is-info">手动</span>
+                  <span v-if="t.hunt_max > 1" class="ce-badge is-warn mono">
+                    hunt {{ t.hunt_attempt || 0 }}/{{ t.hunt_max }}
+                  </span>
+                  <span v-if="t.cancel_requested && !isTerminalStatus(t.status)" class="ce-badge is-warn">停止中</span>
                   <span v-if="t.precheck_intercepted" class="ce-badge is-warn">预检拦截</span>
                 </td>
                 <td class="mono">{{ t.phone || '-' }}</td>
@@ -433,12 +498,20 @@
                   <button class="ce-link is-cyan" @click="openTaskDetail(t)">详情</button>
                   <button v-if="t.status === 'failed' || t.status === 'filtered'" class="ce-link" @click="retryTask(t)">重试</button>
                   <button
-                    v-if="t.status === 'waiting_code' || t.status === 'logging_in'"
+                    v-if="t.mode === 'manual' && (t.status === 'waiting_code' || t.status === 'logging_in')"
                     class="ce-link is-danger"
                     :disabled="isCancelingTaskId(t.task_id)"
                     @click="cancelManualTaskById(t.task_id)"
                   >
                     {{ isCancelingTaskId(t.task_id) ? '取消中...' : '取消' }}
+                  </button>
+                  <button
+                    v-else-if="isCancelableTask(t)"
+                    class="ce-link is-danger"
+                    :disabled="isCancelingAutoTask(t.task_id) || t.cancel_requested"
+                    @click="cancelTask(t.task_id)"
+                  >
+                    {{ isCancelingAutoTask(t.task_id) ? '停止中...' : (t.cancel_requested ? '已请求停止' : '停止') }}
                   </button>
                 </td>
               </tr>
@@ -481,6 +554,22 @@
         <div class="ce-stat"><span>节点 UID</span><span>{{ detailTask.user_id || '-' }}</span></div>
         <div v-if="detailTask.session_file" class="ce-stat"><span>Session</span><span>{{ detailTask.session_file }}</span></div>
         <div class="ce-stat"><span>预检 UID</span><span>{{ detailTask.precheck_user_id || '-' }}</span></div>
+        <template v-if="detailTask.hunt_max > 1">
+          <div class="ce-stat">
+            <span>猎号进度</span>
+            <span class="mono">第 {{ detailTask.hunt_attempt || 0 }} / {{ detailTask.hunt_max }} 个号</span>
+          </div>
+          <div class="ce-stat">
+            <span>已扫 / 已拉黑</span>
+            <span class="mono">{{ detailTask.hunt_scanned ?? 0 }} / {{ detailTask.hunt_blacklisted ?? 0 }}</span>
+          </div>
+          <div v-if="detailTask.hunt_last_reason" class="ce-stat">
+            <span>最后失败原因</span><span class="mono">{{ detailTask.hunt_last_reason }}</span>
+          </div>
+        </template>
+        <div v-if="detailTask.cancel_requested" class="ce-alert is-warn">
+          已收到停止请求：不再开新一轮取号，当前一轮结束后收尾退款。
+        </div>
         <div class="ce-stat"><span>创建 / 更新</span><span>{{ formatTime(detailTask.created_at) }} · {{ formatDuration(detailTask.created_at, detailTask.updated_at) }}</span></div>
         <div v-if="detailTask.error" class="ce-alert is-danger">{{ detailTask.error }}</div>
         <div class="ce-terminal" style="min-height:180px">
@@ -507,12 +596,18 @@ const {
   registrationProxies, roleLabel, testing: proxyTesting, refreshProxyPool, previewAutoSelect
 } = useProxy()
 const {
-  batchMode, batchCount, batchConcurrency, huntMode, huntAttempts, currentBatch, taskFilter, selectedTaskIds, mergedLogView,
+  batchMode, batchCount, batchConcurrency, huntMode, currentBatch, taskFilter, selectedTaskIds, mergedLogView,
+  effectiveHuntAttempts, setHuntAttempts, resetHuntAttemptsToConfig, huntPlan, huntProxyPinned, huntProxyNote,
+  huntBudget, isLoadingHuntBudget, refreshHuntBudget,
   isStartingTask, startError, activeTask, sessions, terminalRef, phonePrecheckStatus,
   effectiveConcurrency, visibleTaskList, allVisibleSelected, batchStats, displayLogs,
+  isCancelingBatch, isCancelableTask, isCancelingAutoTask, cancelTask, cancelBatch,
   fetchTasks, fetchSessions, startRegistrationTask, viewTaskLogs, toggleTaskSelection,
   toggleSelectVisibleTasks, viewSelectedLogs, focusBatchTask, clearActiveLogs, retryTask, openTaskDetail
 } = useTasks()
+
+const TERMINAL_TASK_STATUSES = ['success', 'failed', 'filtered', 'canceled']
+const isTerminalStatus = (status) => TERMINAL_TASK_STATUSES.includes(String(status || ''))
 const { terminalExpanded, detailTask, goTab } = useUi()
 const {
   launchMode, manualPhone, manualCountry, manualCode, manualPassword,

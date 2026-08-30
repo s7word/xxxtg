@@ -10,13 +10,20 @@ const batchMode = ref(false)
 const batchCount = ref(3)
 const batchConcurrency = ref(3)
 const huntMode = ref(false)
-const huntAttempts = ref(100)
+// huntAttempts 只在用户手动点过档位后才生效，否则一律跟随全局 config.hunt_default_max_attempts，
+// 免得前端硬编码把设置页里的全局参数永久顶掉
+const huntAttempts = ref(null)
+const huntAttemptsTouched = ref(false)
 const currentBatch = ref(null)
 const taskFilter = ref('all')
 const selectedTaskIds = ref([])
 const mergedLogView = ref(false)
 const isStartingTask = ref(false)
 const startError = ref('')
+const cancelingTaskIds = ref(new Set())
+const isCancelingBatch = ref(false)
+const huntBudget = ref(null)
+const isLoadingHuntBudget = ref(false)
 export const activeTask = ref(null)
 export const taskList = ref([])
 const sessions = ref([])
@@ -35,6 +42,62 @@ const phonePrecheckStatus = ref({
 const effectiveConcurrency = computed(() =>
   Math.max(1, Math.min(Number(batchConcurrency.value) || 1, Number(batchCount.value) || 1))
 )
+
+const HUNT_ATTEMPTS_FALLBACK = 100
+
+const effectiveHuntAttempts = computed(() => {
+  if (huntAttemptsTouched.value) {
+    const picked = Number(huntAttempts.value)
+    if (Number.isFinite(picked) && picked > 0) return Math.min(500, Math.round(picked))
+  }
+  const fromConfig = Number(config.hunt_default_max_attempts)
+  if (Number.isFinite(fromConfig) && fromConfig > 0) return Math.min(500, Math.round(fromConfig))
+  return HUNT_ATTEMPTS_FALLBACK
+})
+
+export const setHuntAttempts = (value) => {
+  huntAttemptsTouched.value = true
+  huntAttempts.value = Number(value)
+}
+
+export const resetHuntAttemptsToConfig = () => {
+  huntAttemptsTouched.value = false
+  huntAttempts.value = null
+}
+
+const huntLeaseLimit = computed(() => {
+  const limit = Number(config.hunt_max_total_leases)
+  return Number.isFinite(limit) && limit > 0 ? limit : 200
+})
+
+/** 预计最多租号次数 = 任务数 × 每任务取号次数；后端会按同一上限裁剪。 */
+const huntPlan = computed(() => {
+  const count = batchMode.value ? Math.max(1, Number(batchCount.value) || 1) : 1
+  const requested = huntMode.value ? effectiveHuntAttempts.value : 1
+  const limit = huntLeaseLimit.value
+  const attempts = count * requested > limit ? Math.max(1, Math.floor(limit / count)) : requested
+  return {
+    count,
+    requested,
+    attempts,
+    limit,
+    plannedLeases: count * attempts,
+    clamped: attempts !== requested
+  }
+})
+
+/** 代理是否被 1:1 钉死：批量槽位或显式指定出口时猎号不会轮换代理。 */
+const huntProxyPinned = computed(
+  () => batchMode.value || form.proxy_mode === 'explicit' || form.proxy_mode === 'fallback'
+)
+
+const huntProxyNote = computed(() => {
+  if (batchMode.value) return '批量模式下每路任务钉死一个代理槽位，猎号期间不轮换出口，只轮换设备指纹与 Push'
+  if (form.proxy_mode === 'explicit') return '已显式指定出口，猎号期间不轮换代理，只轮换设备指纹与 Push'
+  if (form.proxy_mode === 'fallback') return '使用全局后备出口，池内无其它候选时不会轮换代理'
+  const uses = Number(config.hunt_proxy_max_uses) || 5
+  return `每 ${uses} 次 sendCode 尝试从注册代理池换一个同国节点；池里没有其它候选时会如实记日志并继续`
+})
 
 const visibleTaskList = computed(() => {
   if (taskFilter.value === 'batch' && currentBatch.value?.batch_id) {
@@ -183,7 +246,7 @@ export const startRegistrationTask = async () => {
         bootLogs.push(`[${new Date().toLocaleTimeString()}] [多径中继网关] ${preview.message}`)
       }
     }
-    const useHunt = huntMode.value && Number(huntAttempts.value) > 1
+    const useHunt = huntMode.value && effectiveHuntAttempts.value > 1
     const useBatch = batchMode.value && Number(batchCount.value) > 1
     const endpoint = useBatch ? '/api/register/batch' : '/api/register/start'
     const payload = {
@@ -200,8 +263,9 @@ export const startRegistrationTask = async () => {
       payload.proxy_id = form.proxy_id
     }
     if (useHunt) {
-      payload.max_number_attempts = Math.max(2, Math.min(500, Number(huntAttempts.value) || 100))
-      payload.no_number_retries = 20
+      payload.max_number_attempts = Math.max(2, Math.min(500, effectiveHuntAttempts.value))
+      // 不传 no_number_retries：让后端用全局 hunt_no_number_retries，
+      // 否则前端硬编码的 20 会让设置页里的全局配置永远失效
     }
     if (useBatch) {
       payload.count = Number(batchCount.value)
@@ -216,6 +280,17 @@ export const startRegistrationTask = async () => {
     if (!res.ok) {
       throw new Error(data.detail || data.message || '任务提交失败')
     }
+    const effectiveAttempts = Number(data.max_number_attempts) || payload.max_number_attempts
+    const clampNote = data.attempts_clamped
+      ? `每任务取号次数已被联合上限裁剪 ${data.requested_max_number_attempts} → ${effectiveAttempts}`
+      : ''
+    if (clampNote) {
+      bootLogs.push(`[${new Date().toLocaleTimeString()}] ⚠️ [猎号] ${clampNote}（上限 ${data.hunt_max_total_leases}）`)
+      pushToast('warn', clampNote)
+    }
+    const huntNote = useHunt
+      ? ` · 每任务最多试 ${effectiveAttempts} 个号，成功即停；预计最多租号 ${data.planned_leases ?? '?'} 次`
+      : ''
     if (useBatch) {
       currentBatch.value = data
       taskFilter.value = 'batch'
@@ -229,9 +304,7 @@ export const startRegistrationTask = async () => {
         logs: [
           ...bootLogs,
           `[${new Date().toLocaleTimeString()}] 并发批次 ${data.batch_id} 已提交：${(data.task_ids || []).join(', ')} (concurrency=${data.concurrency})`
-          + (useHunt
-            ? ` · 每任务循环试号最多 ${payload.max_number_attempts} 次（各自复用本任务 Push）`
-            : '')
+          + huntNote
         ]
       }
     } else {
@@ -243,7 +316,7 @@ export const startRegistrationTask = async () => {
         logs: [
           ...bootLogs,
           useHunt
-            ? `[${new Date().toLocaleTimeString()}] 循环试号任务 ${data.task_id} 已提交（最多换号 ${payload.max_number_attempts} 次，复用 Push Token）...`
+            ? `[${new Date().toLocaleTimeString()}] 猎号任务 ${data.task_id} 已提交（最多试 ${effectiveAttempts} 个号 · 成功即停 · 不可用号拉黑，同任务内优先复用 Push Token）...`
             : `[${new Date().toLocaleTimeString()}] 虚拟节点任务 ${data.task_id} 已提交至状态机编排引擎...`
         ]
       }
@@ -327,6 +400,84 @@ export const retryTask = async (task) => {
   await startRegistrationTask()
 }
 
+const CANCELABLE_STATUSES = ['pending', 'running', 'waiting_code', 'logging_in']
+
+export const isCancelableTask = (task) =>
+  CANCELABLE_STATUSES.includes(String(task?.status || 'pending'))
+
+export const isCancelingAutoTask = (taskId) => cancelingTaskIds.value.has(taskId)
+
+/**
+ * 停止自动 / 猎号任务。后端只置取消标记，猎号循环在下一轮取号前收住，
+ * 所以点完按钮后状态可能仍是 running：这是设计如此，不是没生效。
+ */
+export const cancelTask = async (taskId) => {
+  if (!taskId) return null
+  const next = new Set(cancelingTaskIds.value)
+  next.add(taskId)
+  cancelingTaskIds.value = next
+  try {
+    const res = await fetch(`/api/register/tasks/${taskId}/cancel`, { method: 'POST' })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.detail || data.message || '取消失败')
+    pushToast(data.accepted ? 'ok' : 'warn', data.message || `任务 ${taskId} 取消已受理`)
+    await fetchTasks()
+    return data
+  } catch (e) {
+    pushToast('danger', `停止任务 ${taskId} 失败: ${e.message}`)
+    throw e
+  } finally {
+    const done = new Set(cancelingTaskIds.value)
+    done.delete(taskId)
+    cancelingTaskIds.value = done
+  }
+}
+
+export const cancelBatch = async (batchId) => {
+  const target = batchId || currentBatch.value?.batch_id
+  if (!target) return null
+  isCancelingBatch.value = true
+  try {
+    const res = await fetch(`/api/register/batches/${target}/cancel`, { method: 'POST' })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.detail || data.message || '取消失败')
+    pushToast('ok', data.message || `批次 ${target} 取消已受理`)
+    await fetchTasks()
+    return data
+  } catch (e) {
+    pushToast('danger', `停止批次 ${target} 失败: ${e.message}`)
+    throw e
+  } finally {
+    isCancelingBatch.value = false
+  }
+}
+
+/** 猎号启动前的租号预算与余额提示（后端会顺带查接码平台余额）。 */
+export const refreshHuntBudget = async () => {
+  isLoadingHuntBudget.value = true
+  try {
+    const params = new URLSearchParams({
+      count: String(huntPlan.value.count),
+      max_number_attempts: String(huntPlan.value.requested),
+      check_balance: 'true'
+    })
+    if (form.sms_provider) params.set('sms_provider', form.sms_provider)
+    const taskBid = Number(form.max_price)
+    if (Number.isFinite(taskBid) && taskBid > 0) params.set('max_price', String(taskBid))
+    const res = await fetch(`/api/register/hunt-budget?${params.toString()}`)
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.detail || '预算查询失败')
+    huntBudget.value = data
+    return data
+  } catch (e) {
+    huntBudget.value = null
+    pushToast('warn', `租号预算查询失败: ${e.message}`)
+    return null
+  } finally {
+    isLoadingHuntBudget.value = false
+  }
+}
+
 export const openTaskDetail = async (task) => {
   try {
     const res = await fetch(`/api/register/tasks/${task.task_id}`)
@@ -346,12 +497,26 @@ export const useTasks = () => ({
   batchConcurrency,
   huntMode,
   huntAttempts,
+  effectiveHuntAttempts,
+  setHuntAttempts,
+  resetHuntAttemptsToConfig,
+  huntPlan,
+  huntProxyPinned,
+  huntProxyNote,
+  huntBudget,
+  isLoadingHuntBudget,
+  refreshHuntBudget,
   currentBatch,
   taskFilter,
   selectedTaskIds,
   mergedLogView,
   isStartingTask,
   startError,
+  isCancelingBatch,
+  isCancelableTask,
+  isCancelingAutoTask,
+  cancelTask,
+  cancelBatch,
   activeTask,
   taskList,
   sessions,

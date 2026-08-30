@@ -458,6 +458,57 @@
           <code>API_ID_PUBLISHED_FLOOD</code>。REGHelp 与 AntiSafety 密钥/网关不能交叉混用。
         </div>
       </div>
+
+      <div class="ce-panel stack">
+        <div class="ce-panel-head">
+          <h3>🎯 猎号策略参数 (hunt_*)</h3>
+          <span class="ce-badge is-warn">影响租号花费</span>
+        </div>
+        <div class="grid-2">
+          <div>
+            <label class="ce-label">默认每任务最多试号个数</label>
+            <input v-model.number="config.hunt_default_max_attempts" type="number" min="1" max="500" class="ce-input mono w-sm" />
+            <p class="ce-tiny ce-muted" style="margin-top:6px">
+              <code>hunt_default_max_attempts</code>：控制台勾选猎号时的默认档位。
+            </p>
+          </div>
+          <div>
+            <label class="ce-label">联合上限（任务数 × 试号个数）</label>
+            <input v-model.number="config.hunt_max_total_leases" type="number" min="1" max="5000" class="ce-input mono w-sm" />
+            <p class="ce-tiny ce-muted" style="margin-top:6px">
+              <code>hunt_max_total_leases</code>：一次启动最多向接码平台租号的次数。超过时后端按任务数裁剪试号个数并记日志。
+            </p>
+          </div>
+          <div>
+            <label class="ce-label">无库存软重试次数</label>
+            <input v-model.number="config.hunt_no_number_retries" type="number" min="0" max="100" class="ce-input mono w-sm" />
+            <p class="ce-tiny ce-muted" style="margin-top:6px"><code>hunt_no_number_retries</code>：NO_NUMBERS 时的重试次数。</p>
+          </div>
+          <div>
+            <label class="ce-label">无库存软重试间隔（秒）</label>
+            <input v-model.number="config.hunt_no_number_retry_delay_sec" type="number" min="0" max="60" step="0.5" class="ce-input mono w-sm" />
+            <p class="ce-tiny ce-muted" style="margin-top:6px"><code>hunt_no_number_retry_delay_sec</code></p>
+          </div>
+          <div>
+            <label class="ce-label">同一出口最多 sendCode 次数</label>
+            <input v-model.number="config.hunt_proxy_max_uses" type="number" min="1" max="50" class="ce-input mono w-sm" />
+            <p class="ce-tiny ce-muted" style="margin-top:6px">
+              <code>hunt_proxy_max_uses</code>：达到后尝试从注册代理池换同国节点。批量槽位或显式指定出口时不会轮换。
+            </p>
+          </div>
+          <div>
+            <label class="ce-label">同一设备指纹最多 sendCode 次数</label>
+            <input v-model.number="config.hunt_device_max_uses" type="number" min="1" max="50" class="ce-input mono w-sm" />
+            <p class="ce-tiny ce-muted" style="margin-top:6px">
+              <code>hunt_device_max_uses</code>：达到后重采样设备并换新 Push（Push 与设备绑定，不能只换机不换 Token）。
+            </p>
+          </div>
+        </div>
+        <div class="ce-alert">
+          猎号只做两件事：注册成功即停；否则在试号个数内扫号并把不可用号（站内信 APP / 已注册 / 封禁）拉黑退订。
+          试号次数用尽即结束（<code>HUNT_EXHAUSTED</code>），不会「扫完平台所有号码」。
+        </div>
+      </div>
     </div>
   </section>
 </template>
