@@ -274,6 +274,29 @@ def match_assigned_country(item: Dict[str, Any], country: Optional[str]) -> bool
     return match_proxy_country({"country_code": assigned, "country": assigned}, country)
 
 
+def custom_proxy_eligible_for_country(item: Dict[str, Any], country: Optional[str]) -> bool:
+    """自建节点是否可用于目标国。
+
+    - 显式 assigned_country 优先：仅匹配绑定国
+    - 未绑定：仅当无国家画像（真正全球通用），或 country_code/egress 与目标国一致
+    - 绝不能把已标注为 MA 的节点当作 ZA/IT 的「全球通用」兜底
+    """
+    if not country:
+        return True
+    assigned = proxy_assigned_country(item)
+    if assigned:
+        return match_assigned_country(item, country)
+    code = (
+        item.get("country_code")
+        or item.get("egress_country_code")
+        or item.get("country")
+        or item.get("egress_country")
+    )
+    if not code:
+        return True
+    return match_proxy_country(item, country)
+
+
 def parse_proxy_line(
     raw: str,
     default_scheme: str = "socks5",
@@ -710,7 +733,7 @@ def select_proxy_for_registration(
     *,
     proxy_id: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
-    """注册流水线选代理：仅 registration/all，优先用户绑定国家，其次全球通用节点。
+    """注册流水线选代理：仅 registration/all，优先用户绑定国家，其次同国/真正全球节点。
 
     显式 proxy_id 时 100% 遵从用户指定，不施加国家或角色约束。
     """
@@ -725,8 +748,14 @@ def select_proxy_for_registration(
     if not country:
         return _pick_scored(items)
     bound = [item for item in items if match_assigned_country(item, country)]
-    global_nodes = [item for item in items if not proxy_assigned_country(item)]
-    return _pick_scored(bound or global_nodes)
+    fallback = [
+        item for item in items
+        if not proxy_assigned_country(item) and custom_proxy_eligible_for_country(item, country)
+    ]
+    pool = bound or fallback
+    if not pool:
+        return None
+    return _pick_scored(pool)
 
 
 def select_proxy_for_precheck(country: Optional[str] = None) -> Optional[Dict[str, Any]]:
@@ -736,8 +765,13 @@ def select_proxy_for_precheck(country: Optional[str] = None) -> Optional[Dict[st
         return None
     if country:
         bound = [item for item in items if match_assigned_country(item, country)]
-        unlabeled = [item for item in items if not proxy_assigned_country(item)]
-        items = bound or unlabeled or items
+        fallback = [
+            item for item in items
+            if not proxy_assigned_country(item) and custom_proxy_eligible_for_country(item, country)
+        ]
+        items = bound or fallback
+        if not items:
+            return None
     return _pick_scored(items)
 
 
@@ -847,6 +881,7 @@ __all__ = [
     "persist_custom_proxies",
     "probe_custom_proxies",
     "proxy_assigned_country",
+    "custom_proxy_eligible_for_country",
     "proxy_role_of",
     "select_custom_proxy",
     "select_proxy_for_precheck",

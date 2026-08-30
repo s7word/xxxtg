@@ -116,6 +116,7 @@ async def _allocate_from_custom_pool(
     registry: ProxyLeaseRegistry,
 ) -> List[Dict[str, Any]]:
     from backend.app.services.proxy_manager import (
+        custom_proxy_eligible_for_country,
         filter_proxies_by_role,
         list_custom_proxies,
         match_assigned_country,
@@ -127,9 +128,11 @@ async def _allocate_from_custom_pool(
         return []
     if country:
         bound = [item for item in items if match_assigned_country(item, country)]
-        global_nodes = [item for item in items if not proxy_assigned_country(item)]
-        regional = bound or global_nodes
-        regional = [item for item in regional if match_proxy_country(item, country)]
+        fallback = [
+            item for item in items
+            if not proxy_assigned_country(item) and custom_proxy_eligible_for_country(item, country)
+        ]
+        regional = bound or fallback
     else:
         regional = list(items)
 

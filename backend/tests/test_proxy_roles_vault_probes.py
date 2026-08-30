@@ -78,6 +78,7 @@ def _proxy(addr, port, role="all", assigned_country=None, healthy=True, latency_
         "assigned_country": assigned_country,
         "healthy": healthy,
         "latency_ms": latency_ms,
+        "country": extra.get("country"),
         "country_code": extra.get("country_code") or assigned_country,
         "source": "custom",
     })
@@ -154,6 +155,26 @@ class TestProxyRoleIsolation(unittest.TestCase):
         self.assertEqual(chile["addr"], "8.8.8.8")
         self.assertEqual(india["addr"], "9.9.9.9")
 
+    def test_registration_rejects_other_country_code_as_global(self):
+        """测活后带 country_code=ma 的自建节点，不能被当成 ZA/IT 全球兜底。"""
+        items = [
+            _proxy(
+                "1.2.3.4", 10000, role="all", assigned_country=None,
+                country_code="ma", country="MA", latency_ms=10,
+            ),
+            _proxy(
+                "5.6.7.8", 10000, role="all", assigned_country=None,
+                country_code="za", country="ZA", latency_ms=20,
+            ),
+        ]
+        with patch("backend.app.services.proxy_manager.list_custom_proxies", return_value=items):
+            za = select_proxy_for_registration("za")
+            it = select_proxy_for_registration("it")
+            ma = select_proxy_for_registration("ma")
+        self.assertEqual(za["addr"], "5.6.7.8")
+        self.assertIsNone(it)
+        self.assertEqual(ma["addr"], "1.2.3.4")
+
     def test_explicit_proxy_id_ignores_role_and_country(self):
         items = [
             _proxy("1.1.1.1", 1080, role="precheck", assigned_country="in", extra_id=True),
@@ -216,6 +237,9 @@ class TestVaultProbeActivation(unittest.TestCase):
             source="lod_user",
             phone="+918310013712",
             has_session=True,
+            session_valid=True,
+            usable=True,
+            useless=False,
             app_id=4,
             app_hash="hash",
             is_probe_active=True,
@@ -225,6 +249,9 @@ class TestVaultProbeActivation(unittest.TestCase):
             source="lod_user",
             phone="+56911112222",
             has_session=True,
+            session_valid=True,
+            usable=True,
+            useless=False,
             app_id=4,
             app_hash="hash",
             is_probe_active=True,
