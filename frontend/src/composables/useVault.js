@@ -11,9 +11,14 @@ const vaultMeta = reactive({
   sessions_dir: '',
   published_api_id_count: 0,
   missing_session_count: 0,
-  active_probe_count: 0
+  active_probe_count: 0,
+  usable_count: 0,
+  useless_count: 0
 })
 const vaultSelectedId = ref('')
+const vaultSelectedIds = ref([])
+const vaultFilter = ref('all')
+const vaultBusy = ref('')
 const vaultApplyingId = ref('')
 const vaultApplyResult = ref(null)
 const vaultGuidance = ref('')
@@ -35,6 +40,17 @@ const appsManualCode = ref('')
 const selectedVaultAccount = computed(
   () => vaultAccounts.value.find((acc) => acc.account_id === vaultSelectedId.value) || null
 )
+
+const filteredVaultAccounts = computed(() => {
+  if (vaultFilter.value === 'usable') return vaultAccounts.value.filter((acc) => acc.usable)
+  if (vaultFilter.value === 'useless') return vaultAccounts.value.filter((acc) => acc.useless)
+  return vaultAccounts.value
+})
+
+const allVisibleVaultSelected = computed(() => {
+  const ids = filteredVaultAccounts.value.map((acc) => acc.account_id)
+  return ids.length > 0 && ids.every((id) => vaultSelectedIds.value.includes(id))
+})
 
 let appsPollTimer = null
 
@@ -119,6 +135,8 @@ export const fetchVaultAccounts = async () => {
     vaultMeta.published_api_id_count = data.published_api_id_count || 0
     vaultMeta.missing_session_count = data.missing_session_count || 0
     vaultMeta.active_probe_count = data.active_probe_count || activeProbeCount.value
+    vaultMeta.usable_count = data.usable_count || 0
+    vaultMeta.useless_count = data.useless_count || 0
     vaultGuidance.value = data.guidance || ''
     if (data.applied_api_id) config.custom_api_id = data.applied_api_id
     if (data.applied_api_hash) config.custom_api_hash = data.applied_api_hash
@@ -126,6 +144,8 @@ export const fetchVaultAccounts = async () => {
     if (!vaultSelectedId.value && vaultAccounts.value.length) {
       vaultSelectedId.value = vaultAccounts.value[0].account_id
     }
+    const known = new Set(vaultAccounts.value.map((acc) => acc.account_id))
+    vaultSelectedIds.value = vaultSelectedIds.value.filter((id) => known.has(id))
   } catch (e) {
     console.error('Fetch vault accounts error:', e)
     pushToast('danger', `扫描凭证库失败: ${e.message}`)
@@ -136,8 +156,8 @@ export const fetchVaultAccounts = async () => {
 
 export const toggleVaultProbe = async (acc, nextActive) => {
   if (!acc?.account_id) return
-  if (!acc.has_session) {
-    pushToast('danger', '该账号没有可用 .session，无法作为预检探针')
+  if (!acc.session_valid) {
+    pushToast('danger', '该账号没有有效 .session，无法作为预检探针')
     return
   }
   const active = typeof nextActive === 'boolean' ? nextActive : !acc.is_probe_active
@@ -320,11 +340,104 @@ export const applyAppsJob = async () => {
   }
 }
 
+export const uselessReasonLabel = (acc) => {
+  if (!acc?.useless) return '可用'
+  if (acc.useless_reason === 'json_only') return '仅 JSON'
+  if (acc.useless_reason === 'invalid_session') return 'session 损坏'
+  if (acc.useless_reason === 'incomplete_session') return '未完成注册'
+  if (acc.useless_reason === 'empty') return '空记录'
+  return '无用'
+}
+
+export const toggleVaultAccount = (accountId) => {
+  if (!accountId) return
+  if (vaultSelectedIds.value.includes(accountId)) {
+    vaultSelectedIds.value = vaultSelectedIds.value.filter((id) => id !== accountId)
+    return
+  }
+  vaultSelectedIds.value = [...vaultSelectedIds.value, accountId]
+}
+
+export const toggleSelectVisibleVault = () => {
+  const ids = filteredVaultAccounts.value.map((acc) => acc.account_id)
+  if (allVisibleVaultSelected.value) {
+    const drop = new Set(ids)
+    vaultSelectedIds.value = vaultSelectedIds.value.filter((id) => !drop.has(id))
+    return
+  }
+  vaultSelectedIds.value = Array.from(new Set([...vaultSelectedIds.value, ...ids]))
+}
+
+const triggerZipDownload = (blob, filename) => {
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename || 'edgenode-accounts.zip'
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  URL.revokeObjectURL(url)
+}
+
+export const exportVaultAccounts = async ({ accountIds = [], scope = 'selected' } = {}) => {
+  vaultBusy.value = 'export'
+  try {
+    const res = await fetch('/api/vault/accounts/export', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ account_ids: accountIds, scope })
+    })
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}))
+      throw new Error(data.detail || data.message || `导出失败 HTTP ${res.status}`)
+    }
+    const blob = await res.blob()
+    const named = res.headers.get('X-Vault-Export-Filename')
+    const disposition = res.headers.get('Content-Disposition') || ''
+    const match = disposition.match(/filename="?([^"]+)"?/)
+    triggerZipDownload(blob, named || (match && match[1]) || 'edgenode-accounts.zip')
+    pushToast('ok', '凭证 ZIP 已开始下载')
+  } catch (e) {
+    pushToast('danger', e.message)
+  } finally {
+    vaultBusy.value = ''
+  }
+}
+
+export const deleteVaultAccounts = async ({ accountIds = [], scope = 'selected', confirmText } = {}) => {
+  const hint = confirmText || '确认删除这些凭证文件？此操作不可恢复。'
+  if (!window.confirm(hint)) return
+  vaultBusy.value = 'delete'
+  try {
+    const res = await fetch('/api/vault/accounts/delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ account_ids: accountIds, scope })
+    })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok || !data.success) {
+      throw new Error(data.detail || data.message || '删除失败')
+    }
+    vaultSelectedIds.value = []
+    pushToast('ok', data.message || '凭证已删除')
+    await fetchVaultAccounts()
+  } catch (e) {
+    pushToast('danger', e.message)
+  } finally {
+    vaultBusy.value = ''
+  }
+}
+
 export const useVault = () => ({
   vaultLoading,
   vaultAccounts,
   vaultMeta,
   vaultSelectedId,
+  vaultSelectedIds,
+  vaultFilter,
+  vaultBusy,
   vaultApplyingId,
   vaultApplyResult,
   vaultGuidance,
@@ -336,6 +449,8 @@ export const useVault = () => ({
   vaultUploadProgress,
   vaultUploadResult,
   selectedVaultAccount,
+  filteredVaultAccounts,
+  allVisibleVaultSelected,
   appsStarting,
   appsJob,
   appsShortname,
@@ -352,5 +467,10 @@ export const useVault = () => ({
   startAppsJob,
   selectAndStartApps,
   submitAppsCode,
-  applyAppsJob
+  applyAppsJob,
+  uselessReasonLabel,
+  toggleVaultAccount,
+  toggleSelectVisibleVault,
+  exportVaultAccounts,
+  deleteVaultAccounts
 })

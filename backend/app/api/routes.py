@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile, BackgroundTasks
+from fastapi.responses import Response
 
 from backend.app.config import ConfigManager, SESSIONS_DIR
 from backend.app.models.schemas import (
@@ -15,6 +16,8 @@ from backend.app.models.schemas import (
     BatchRegisterRequest,
     BatchRegisterResponse,
     BatchStatusResponse,
+    SmsallTrialRequest,
+    SmsallDeleteEventsRequest,
     TaskStatusResponse,
     ManualRegisterStartRequest,
     ManualRegisterStartResponse,
@@ -37,6 +40,9 @@ from backend.app.models.schemas import (
     ProxySellerAutoSelectResponse,
     ProxySellerTestAllRequest,
     ProxySellerTestAllResponse,
+    ProxySellerResidentListsResponse,
+    ProxySellerEnsureTgRequest,
+    ProxySellerEnsureTgResponse,
     CustomProxyListResponse,
     CustomProxyImportRequest,
     CustomProxyImportResponse,
@@ -50,6 +56,8 @@ from backend.app.models.schemas import (
     CustomProxyUpdateItemResponse,
     ToggleVaultProbeRequest,
     ToggleVaultProbeResponse,
+    VaultAccountBulkRequest,
+    VaultDeleteResponse,
     DeviceDbGenerateRequest,
     DeviceDbListResponse,
     DeviceDbPackResponse,
@@ -58,13 +66,17 @@ from backend.app.models.schemas import (
     SmsAvailableCountriesResponse,
 )
 from backend.app.services.device_profile import DeviceProfileManager
-from backend.app.services.device_db_manager import DeviceDbManager
+from backend.app.services.device_db_manager import DeviceDbManager, normalize_country
 from backend.app.services.device_generator import generate_country_db, list_supported_countries
 from backend.app.services.vaksms import VakSmsService
 from backend.app.services.grizzlysms import (
     GrizzlySmsService,
     PROVIDER_LABEL as GRIZZLY_PROVIDER_LABEL,
     resolve_grizzly_country_id,
+)
+from backend.app.services.smsbower import (
+    SmsBowerService,
+    PROVIDER_LABEL as SMSBOWER_PROVIDER_LABEL,
 )
 from backend.app.services.fivesim import (
     FiveSimService,
@@ -99,6 +111,14 @@ from backend.app.services.phone_precheck import PhonePrecheckService
 from backend.app.services.banned_phones import BannedPhonesCache
 from backend.app.services.account_vault import AccountVaultService
 from backend.app.services.telegram_apps import TelegramAppsHelper, TelegramAppsJobManager
+from backend.app.services.smsall_webhook import (
+    attach_batch,
+    delete_events,
+    event_count,
+    get_event,
+    recent_events,
+    resolve_secret,
+)
 
 router = APIRouter(prefix="/api")
 
@@ -110,6 +130,76 @@ async def get_config():
 @router.post("/config", response_model=AppConfigModel, summary="更新并持久化全局仿真配置")
 async def update_config(new_config: AppConfigModel):
     return ConfigManager.get_instance().save_config(new_config)
+
+
+@router.get("/smsall/status", summary="SMSBazaar Webhook 接收状态与最近告警")
+async def smsall_webhook_status(limit: int = Query(default=80, ge=1, le=200)):
+    config = ConfigManager.get_instance().config
+    secret = resolve_secret(config)
+    return {
+        "success": True,
+        "path": "/hooks/smsall",
+        "schema": "smsall.alert.v1",
+        "secret_configured": bool(secret),
+        "webhook_secret": secret,
+        "auto_register": bool(getattr(config, "smsall_auto_register", False)),
+        "max_price_usd": getattr(config, "smsall_auto_max_price_usd", 0.5),
+        "count": getattr(config, "smsall_auto_count", 3),
+        "concurrency": getattr(config, "smsall_auto_concurrency", 3),
+        "cooldown_seconds": getattr(config, "smsall_auto_cooldown_seconds", 600),
+        "event_count": event_count(),
+        "events": recent_events(limit),
+    }
+
+
+@router.post("/smsall/events/delete", summary="删除或清空 SMSBazaar 通知")
+async def smsall_delete_events(req: SmsallDeleteEventsRequest):
+    if not req.clear_all and not req.event_ids:
+        raise HTTPException(status_code=400, detail="请选择要删除的通知，或清空全部")
+    deleted = delete_events(event_ids=req.event_ids, clear_all=req.clear_all)
+    return {
+        "success": True,
+        "deleted": deleted,
+        "remaining": event_count(),
+        "message": f"已删除 {deleted} 条通知" if deleted else "没有匹配的通知",
+    }
+
+
+@router.post("/smsall/trial", summary="对通知列表中的国家一键测试注册")
+async def smsall_trial_register(req: SmsallTrialRequest, background_tasks: BackgroundTasks):
+    from backend.app.api.smsall_hooks import start_country_batch
+
+    country = normalize_country(req.country)
+    event = get_event(req.event_id or "") if req.event_id else None
+    if not country and event:
+        country = normalize_country(event.get("country"))
+    if not country:
+        raise HTTPException(status_code=400, detail="请指定国家或选择一条通知")
+    config = ConfigManager.get_instance().config
+    started = start_country_batch(
+        country=country,
+        count=req.count,
+        concurrency=min(req.concurrency, req.count),
+        background_tasks=background_tasks,
+        config=config,
+    )
+    remembered = attach_batch(
+        event_id=req.event_id,
+        country=country,
+        batch_id=started["batch_id"],
+        task_ids=started["task_ids"],
+        source="trial",
+    )
+    return {
+        "success": True,
+        "message": (
+            f"{country.upper()} 测试注册已提交："
+            f"{started['count']} 任务 / 线程 {started['concurrency']} "
+            f"（batch_id={started['batch_id']}）"
+        ),
+        **started,
+        "event": remembered,
+    }
 
 @router.get("/device-profiles", summary="获取所有端点环境与特征模板")
 async def list_device_profiles():
@@ -254,7 +344,7 @@ async def generate_device_db(req: DeviceDbGenerateRequest):
 async def list_sms_available_countries(
     provider: Optional[str] = Query(
         default=None,
-        description="fivesim / grizzlysms / vaksms；默认读取系统当前 config.sms_provider",
+        description="fivesim / grizzlysms / smsbower / vaksms；默认读取系统当前 config.sms_provider",
     ),
     refresh: bool = Query(default=False, description="true 时绕过 90s 缓存强制刷新"),
 ):
@@ -436,6 +526,69 @@ async def test_grizzlysms(payload: Dict[str, Any] = None):
             success=False,
             service="Grizzly-SMS",
             message=f"Grizzly SMS 探针异常: {str(e)}",
+        )
+    finally:
+        await svc.close()
+
+
+@router.post("/test/smsbower", response_model=TestApiResponse, summary="SMS Bower 接码平台余额与连通性探针")
+async def test_smsbower(payload: Dict[str, Any] = None):
+    config = ConfigManager.get_instance().config
+    api_key = (payload or {}).get("api_key") or config.smsbower_api_key
+    country = (payload or {}).get("country") or config.target_country
+
+    svc = SmsBowerService(api_key)
+    try:
+        from backend.app.services.vaksms import format_no_number_message
+
+        balance = await svc.get_balance()
+        stock = 0
+        prices = None
+        country_id = None
+        try:
+            country_id = resolve_grizzly_country_id(country)
+            prices = await svc.get_prices(country=country_id, service="tg")
+            stock = svc._stock_from_prices(prices, country_id, "tg")
+        except Exception as stock_exc:
+            prices = {"error": str(stock_exc)}
+        ref_cost = None
+        if isinstance(prices, dict) and country_id is not None:
+            bucket = prices.get(str(country_id)) or prices.get(country_id)
+            if isinstance(bucket, dict):
+                node = bucket.get("tg") or bucket
+                if isinstance(node, dict) and node.get("cost") is not None:
+                    try:
+                        ref_cost = float(node.get("cost"))
+                    except (TypeError, ValueError):
+                        ref_cost = None
+        currency = "USD" if ref_cost is not None and 0 < ref_cost <= 5 else "账户结算币种"
+        message = f"{SMSBOWER_PROVIDER_LABEL} 鉴权与通信正常，余额 {balance}（{currency}）"
+        if ref_cost is not None:
+            message += f"，参考价 {ref_cost}"
+        if int(stock or 0) <= 0 and not (isinstance(prices, dict) and prices.get("error")):
+            message = format_no_number_message(country)
+        return TestApiResponse(
+            success=True,
+            service="SMS-Bower",
+            message=message,
+            data={
+                "balance": balance,
+                "currency": currency,
+                "ref_cost": ref_cost,
+                "country": country,
+                "country_id": country_id,
+                "telegram_stock": stock,
+                "prices": prices,
+                "no_number": int(stock or 0) <= 0,
+                "provider": "smsbower",
+                "endpoint": SmsBowerService.BASE_URL,
+            },
+        )
+    except Exception as e:
+        return TestApiResponse(
+            success=False,
+            service="SMS-Bower",
+            message=f"SMS Bower 探针异常: {str(e)}",
         )
     finally:
         await svc.close()
@@ -681,6 +834,67 @@ async def test_all_proxy_seller(req: ProxySellerTestAllRequest):
             success=False,
             message=f"批量测活失败: {e}",
             country=req.country,
+        )
+    finally:
+        await svc.close()
+
+
+@router.get("/proxy-seller/resident-lists", response_model=ProxySellerResidentListsResponse, summary="只读检索 xxxtg 专用 *_tg 住宅列表")
+async def list_proxy_seller_resident_lists(api_key: Optional[str] = None):
+    """返回 _tg 列表摘要（不含密码），以及被忽略的 bot_* 条数。"""
+    svc = _proxy_seller_service(api_key)
+    try:
+        result = await svc.summarize_resident_tg_lists()
+        return ProxySellerResidentListsResponse(**result)
+    except Exception as e:
+        return ProxySellerResidentListsResponse(
+            success=False,
+            message=f"检索住宅列表失败: {e}",
+            lists=[],
+            bot_skipped=0,
+        )
+    finally:
+        await svc.close()
+
+
+@router.post("/proxy-seller/ensure-tg", response_model=ProxySellerEnsureTgResponse, summary="按目标国家确保 xxxtg 专用 *_tg 住宅列表")
+async def ensure_proxy_seller_tg_list(req: ProxySellerEnsureTgRequest):
+    """已有 {CC}_tg 则直接导出节点；没有且 create=true 时 POST list/add。绝不改动 bot 列表。"""
+    config_mgr = ConfigManager.get_instance()
+    svc = _proxy_seller_service(req.api_key)
+    try:
+        target = (req.target_country or config_mgr.config.target_country or "").strip()
+        result = await svc.ensure_tg_resident_list(
+            target,
+            create=req.create,
+            ports=req.ports,
+            rotation=req.rotation,
+        )
+        proxies = list(result.get("proxies") or [])
+        if req.probe and proxies:
+            probed = []
+            for item in proxies[: min(3, len(proxies))]:
+                probe_res = await svc.test_proxy_connectivity(item)
+                svc.record_health(item, probe_res)
+                probed.append(svc.attach_health(item))
+            rest = [svc.attach_health(item) for item in proxies[len(probed):]]
+            proxies = probed + rest
+        if result.get("created") or proxies:
+            svc.invalidate_cache()
+        return ProxySellerEnsureTgResponse(
+            success=bool(result.get("success")),
+            message=result.get("message") or "",
+            created=bool(result.get("created")),
+            title=result.get("title"),
+            hint=result.get("hint"),
+            proxies=proxies,
+        )
+    except Exception as e:
+        return ProxySellerEnsureTgResponse(
+            success=False,
+            message=f"自主拉取 _tg 列表失败: {e}",
+            created=False,
+            title=None,
         )
     finally:
         await svc.close()
@@ -1049,6 +1263,42 @@ async def apply_vault_account_credentials(req: ApplyVaultCredentialsRequest):
 )
 async def toggle_vault_probe(req: ToggleVaultProbeRequest):
     result = AccountVaultService.toggle_probe(req.account_id, req.active)
+    if not result.success:
+        raise HTTPException(status_code=400, detail=result.message)
+    return result
+
+
+@router.post(
+    "/vault/accounts/export",
+    summary="将选中或筛选后的账号凭证打包为 ZIP 下载",
+)
+async def export_vault_accounts(req: VaultAccountBulkRequest):
+    payload, filename, error = AccountVaultService.build_export_zip(
+        account_ids=req.account_ids,
+        scope=req.scope,
+    )
+    if error or payload is None:
+        raise HTTPException(status_code=400, detail=error or "导出失败")
+    return Response(
+        content=payload,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "X-Vault-Export-Filename": filename,
+        },
+    )
+
+
+@router.post(
+    "/vault/accounts/delete",
+    response_model=VaultDeleteResponse,
+    summary="删除选中或筛选出的无用/指定凭证文件",
+)
+async def delete_vault_accounts(req: VaultAccountBulkRequest):
+    result = AccountVaultService.delete_accounts(
+        account_ids=req.account_ids,
+        scope=req.scope,
+    )
     if not result.success:
         raise HTTPException(status_code=400, detail=result.message)
     return result

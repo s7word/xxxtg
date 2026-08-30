@@ -138,7 +138,7 @@ class AppConfigModel(BaseModel):
     )
     sms_provider: str = Field(
         default="fivesim",
-        description="当前接码提供源: fivesim (推荐, 5SIM) / grizzlysms (Grizzly SMS) / vaksms (Vak-SMS)"
+        description="当前接码提供源: fivesim (推荐, 5SIM) / grizzlysms (Grizzly SMS) / smsbower (SMS Bower) / vaksms (Vak-SMS)"
     )
     fivesim_api_key: str = Field(
         default="eyJhbGciOiJSUzUxMiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE4MTg5MzAxMzYsImlhdCI6MTc4NzM5NDEzNiwicmF5IjoiMTBiOGU4OTkwMmQzODdkYmUzY2Y2NzE5Mzc2MGJkOGQiLCJzdWIiOjI5NjU0NDJ9.JvnelHQoodRonZ7OWYv-5XJMXfZ0spP2pI1yPETPvD-VGe0cE8VDJGLLsg-teh_vtRhu-QzIEIji4LcztZv0rLQ8h5poAHOxlfJJYWO_Oh077GWn83n7M1Gc1fukEgmWSv--WQify8PuSK_XwLmfttwHuDAqwvLnmq2cEIYnGTdRT2LgdomcNksRYzGk26nE8wsEqJVlbhlUH9tkLjwwWzedMLdj227_b6gjmjRR0IfwTphMatLMm-5I-6i2yfUMPAKY34rpRGSPqKmjoS3jk29xOFKYVVqKBYgTb_XoaNzHMZWqCMnm7de9jU54fjkphiECRvngh4mfI3-oeDvB2A",
@@ -147,6 +147,10 @@ class AppConfigModel(BaseModel):
     grizzly_sms_api_key: str = Field(
         default="66bd4d8e5f54db073d15c2856c9a1366",
         description="Grizzly SMS (grizzlysms.com) API Key"
+    )
+    smsbower_api_key: str = Field(
+        default="",
+        description="SMS Bower (smsbower.app) API Key"
     )
     sms_max_price: Optional[float] = Field(
         default=None,
@@ -278,6 +282,46 @@ class AppConfigModel(BaseModel):
             "未配置时默认激活所有具备 session 的账号；配置后严格只使用 active_precheck_probe_ids"
         ),
     )
+    smsall_webhook_secret: str = Field(
+        default="",
+        description="SMSBazaar 程序推送 Webhook Secret；校验 Bearer 与 HMAC SHA256。也可设环境变量 SMSALL_HOOK_SECRET"
+    )
+    smsall_auto_register: bool = Field(
+        default=False,
+        description="收到 Telegram 低价补货/新上架 Webhook 后是否自动启动注册。默认关：半自动，只记账等你一键测试"
+    )
+    smsall_auto_max_price_usd: float = Field(
+        default=0.5,
+        description="自动开跑的最高单价（USD）；条目 priceUsd 超过此值则只记日志不开注册"
+    )
+    smsall_auto_count: int = Field(
+        default=3,
+        ge=1,
+        le=10,
+        description="单次自动实验的任务数"
+    )
+    smsall_auto_concurrency: int = Field(
+        default=3,
+        ge=1,
+        le=10,
+        description="单次自动实验的并发度"
+    )
+    smsall_auto_cooldown_seconds: int = Field(
+        default=600,
+        ge=0,
+        description="同一国家自动开跑冷却秒数，避免告警抖动连打"
+    )
+    smsall_auto_min_stock: int = Field(
+        default=1,
+        ge=0,
+        description="stockTo 低于此值不开跑"
+    )
+    smsall_auto_max_countries: int = Field(
+        default=2,
+        ge=1,
+        le=10,
+        description="单次 Webhook 最多自动开跑的国家数（按单价从低到高）"
+    )
 
     @field_validator("antisafety_base_urls", mode="before")
     @classmethod
@@ -306,6 +350,9 @@ class AppConfigModel(BaseModel):
             "grizzly": "grizzlysms",
             "grizzlysms": "grizzlysms",
             "grizzlysmscom": "grizzlysms",
+            "smsbower": "smsbower",
+            "smsbowerapp": "smsbower",
+            "bower": "smsbower",
             "vak": "vaksms",
             "vaksms": "vaksms",
         }
@@ -430,7 +477,7 @@ class RegisterTaskRequest(BaseModel):
     )
     sms_provider: Optional[str] = Field(
         default=None,
-        description="单次任务覆盖接码提供源: fivesim / grizzlysms / vaksms；为空则使用全局配置",
+        description="单次任务覆盖接码提供源: fivesim / grizzlysms / smsbower / vaksms；为空则使用全局配置",
     )
     max_price: Optional[float] = Field(
         default=None,
@@ -458,6 +505,9 @@ class RegisterTaskRequest(BaseModel):
             "fivesimnet": "fivesim",
             "grizzly": "grizzlysms",
             "grizzlysms": "grizzlysms",
+            "smsbower": "smsbower",
+            "smsbowerapp": "smsbower",
+            "bower": "smsbower",
             "vak": "vaksms",
             "vaksms": "vaksms",
         }
@@ -500,6 +550,20 @@ class BatchRegisterResponse(BaseModel):
     message: str
     country: Optional[str] = None
     app_type: Optional[str] = None
+
+
+class SmsallTrialRequest(BaseModel):
+    """对 Webhook 通知中的国家一键测试注册"""
+    event_id: Optional[str] = Field(default=None, description="通知列表里的事件 id")
+    country: Optional[str] = Field(default=None, description="ISO2 国家码；缺省时按 event_id 回填")
+    count: int = Field(default=1, ge=1, le=10, description="测试任务数")
+    concurrency: int = Field(default=1, ge=1, le=10, description="测试线程 / 并发")
+
+
+class SmsallDeleteEventsRequest(BaseModel):
+    """删除 Webhook 通知列表"""
+    event_ids: List[str] = Field(default_factory=list, description="要删除的通知 id")
+    clear_all: bool = Field(default=False, description="为 true 时清空全部通知")
 
 
 class BatchStatusResponse(BaseModel):
@@ -653,6 +717,13 @@ class VaultAccountItem(BaseModel):
         default=True,
         description="是否因缺少同名 .session 而无法自动读取 my.telegram.org 登录码"
     )
+    session_valid: bool = Field(default=False, description="同名 .session 是否为可用的 Telethon SQLite 快照")
+    usable: bool = Field(default=False, description="是否可作为注册号帐户导出/登录（有效 session）")
+    useless: bool = Field(default=True, description="无 session 或 session 损坏/占位，属于无用凭证")
+    useless_reason: Optional[str] = Field(
+        default=None,
+        description="json_only / invalid_session / incomplete_session / empty；可用帐户为 null",
+    )
     apps_apply_hint: Optional[str] = Field(
         default=None,
         description="针对该账号申请/应用开发者凭证的操作提示"
@@ -677,6 +748,8 @@ class VaultAccountListResponse(BaseModel):
     api_credential_mode: Optional[str] = None
     published_api_id_count: int = 0
     missing_session_count: int = 0
+    usable_count: int = 0
+    useless_count: int = 0
     guidance: Optional[str] = Field(
         default=None,
         description="如何用 lod_user 已有账号申请全新 api_id/api_hash 的操作说明"
@@ -718,6 +791,25 @@ class ToggleVaultProbeResponse(BaseModel):
     active_precheck_probe_ids: List[str] = Field(default_factory=list)
     active_probe_count: int = 0
     precheck_probes_configured: bool = False
+
+
+class VaultAccountBulkRequest(BaseModel):
+    """批量导出 / 删除凭证库账号。"""
+    account_ids: List[str] = Field(default_factory=list, description="指定账号 ID；scope=selected 时必填")
+    scope: str = Field(
+        default="selected",
+        description="selected / usable / useless / all；非 selected 时忽略空的 account_ids，按扫描结果筛选",
+    )
+
+
+class VaultDeleteResponse(BaseModel):
+    success: bool
+    message: str
+    deleted: int = 0
+    skipped: List[str] = Field(default_factory=list)
+    remaining: int = 0
+    usable_count: int = 0
+    useless_count: int = 0
 
 
 class ApplyVaultCredentialsRequest(BaseModel):
@@ -881,6 +973,40 @@ class ProxySellerTestAllResponse(BaseModel):
     healthy: int = 0
     country: Optional[str] = None
     results: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+class ProxySellerResidentListSummary(BaseModel):
+    id: Optional[Any] = None
+    title: str
+    country: Optional[str] = None
+    ports: Optional[int] = None
+    rotation: Optional[Any] = None
+
+
+class ProxySellerResidentListsResponse(BaseModel):
+    success: bool
+    message: str
+    lists: List[ProxySellerResidentListSummary] = Field(default_factory=list)
+    bot_skipped: int = 0
+    package_active: Optional[bool] = None
+
+
+class ProxySellerEnsureTgRequest(BaseModel):
+    target_country: Optional[str] = Field(default=None, description="目标国家 ISO-2 / ISO-3 / 国家名")
+    create: bool = Field(default=True, description="没有 {CC}_tg 时是否 POST resident/list/add")
+    ports: int = Field(default=10, ge=1, le=20)
+    probe: bool = Field(default=False, description="是否对导出节点测活")
+    rotation: int = Field(default=3600, ge=0)
+    api_key: Optional[str] = None
+
+
+class ProxySellerEnsureTgResponse(BaseModel):
+    success: bool
+    message: str
+    created: bool = False
+    title: Optional[str] = None
+    hint: Optional[str] = None
+    proxies: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 # ==================== 自定义代理池 (Custom Proxy Pool) ====================

@@ -10,6 +10,7 @@ import tempfile
 import unittest
 import zipfile
 from pathlib import Path
+from unittest.mock import patch
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
@@ -443,6 +444,8 @@ class TestVaultHttpApi(unittest.TestCase):
         self.assertIn("/api/vault/apps/submit-code", paths)
         self.assertIn("/api/vault/apps/jobs", paths)
         self.assertIn("/api/vault/apps/apply", paths)
+        self.assertIn("/api/vault/accounts/export", paths)
+        self.assertIn("/api/vault/accounts/delete", paths)
 
     def test_apply_real_account_and_restore(self):
         from backend.app.config import ConfigManager
@@ -573,6 +576,12 @@ class TestVaultUploadHttpApi(unittest.TestCase):
 
         cls.client = TestClient(app)
 
+    def test_export_and_delete_require_selection(self):
+        export_res = self.client.post("/api/vault/accounts/export", json={"scope": "selected", "account_ids": []})
+        self.assertEqual(export_res.status_code, 400)
+        delete_res = self.client.post("/api/vault/accounts/delete", json={"scope": "selected", "account_ids": []})
+        self.assertEqual(delete_res.status_code, 400)
+
     def test_upload_rejects_txt(self):
         res = self.client.post(
             "/api/vault/upload",
@@ -665,11 +674,107 @@ class TestSessionJsonPairing(unittest.TestCase):
                 self.assertTrue(extra[0].has_session)
                 self.assertTrue(extra[0].has_usable_custom_credentials)
                 self.assertFalse(extra[0].is_published_api_id)
+                self.assertFalse(extra[0].usable)
+                self.assertTrue(extra[0].useless)
+                self.assertEqual(extra[0].useless_reason, "invalid_session")
             finally:
                 if old is None:
                     os.environ.pop("VAULT_EXTRA_DIRS", None)
                 else:
                     os.environ["VAULT_EXTRA_DIRS"] = old
+
+
+class TestVaultExportDelete(unittest.TestCase):
+    def test_incomplete_session_marked_useless(self):
+        import sqlite3
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            leftover = root / "node_iq_9647812729140.session"
+            conn = sqlite3.connect(leftover)
+            conn.execute(
+                "CREATE TABLE sessions (dc_id INTEGER, server_address TEXT, port INTEGER, "
+                "auth_key BLOB, takeout_id INTEGER)"
+            )
+            conn.execute(
+                "INSERT INTO sessions VALUES (2, '149.154.167.51', 443, ?, NULL)",
+                (b"\x00" * 256,),
+            )
+            conn.execute(
+                "CREATE TABLE entities (id INTEGER PRIMARY KEY, hash INTEGER NOT NULL, "
+                "username TEXT, phone INTEGER, name TEXT, date INTEGER)"
+            )
+            conn.commit()
+            conn.close()
+
+            with patch.object(AccountVaultService, "scan_roots", return_value=[("extra_0", root)]):
+                accounts = AccountVaultService.scan_accounts()
+                self.assertEqual(len(accounts), 1)
+                acc = accounts[0]
+                self.assertFalse(acc.usable)
+                self.assertTrue(acc.useless)
+                self.assertEqual(acc.useless_reason, "incomplete_session")
+                self.assertFalse(acc.session_valid)
+
+    def test_export_usable_and_delete_useless(self):
+        import sqlite3
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            good_json = root / "12025550001.json"
+            good_session = root / "12025550001.session"
+            good_json.write_text(json.dumps({
+                "phone": "12025550001",
+                "app_id": 12345678,
+                "app_hash": "abcdefabcdefabcdefabcdefabcdefab",
+                "user_id": 1001,
+            }), encoding="utf-8")
+            conn = sqlite3.connect(good_session)
+            conn.execute("CREATE TABLE sessions (dc_id INTEGER)")
+            conn.commit()
+            conn.close()
+            junk = root / "12025550002.json"
+            junk.write_text(json.dumps({"phone": "12025550002", "app_id": 4}), encoding="utf-8")
+
+            isolated_roots = [("extra_0", root)]
+            with patch.object(AccountVaultService, "scan_roots", return_value=isolated_roots):
+                accounts = AccountVaultService.scan_accounts()
+                good = next(acc for acc in accounts if acc.phone == "+12025550001")
+                bad = next(acc for acc in accounts if acc.phone == "+12025550002")
+                self.assertTrue(good.usable)
+                self.assertTrue(bad.useless)
+                self.assertEqual(bad.useless_reason, "json_only")
+
+                payload, filename, error = AccountVaultService.build_export_zip(scope="usable")
+                self.assertIsNone(error)
+                self.assertTrue(filename.endswith(".zip"))
+                with zipfile.ZipFile(io.BytesIO(payload)) as zf:
+                    names = zf.namelist()
+                self.assertTrue(any(name.endswith("12025550001.session") for name in names))
+                self.assertTrue(any(name.endswith("12025550001.json") for name in names))
+                self.assertFalse(any("12025550002" in name for name in names))
+
+                selected_zip, _, selected_err = AccountVaultService.build_export_zip(
+                    account_ids=[good.account_id],
+                    scope="selected",
+                )
+                self.assertIsNone(selected_err)
+                self.assertTrue(selected_zip)
+
+                result = AccountVaultService.delete_accounts(scope="useless")
+                self.assertTrue(result.success)
+                self.assertGreaterEqual(result.deleted, 1)
+                self.assertFalse(junk.exists())
+                self.assertTrue(good_json.exists())
+                self.assertTrue(good_session.exists())
+
+                gone = AccountVaultService.delete_accounts(
+                    account_ids=[good.account_id],
+                    scope="selected",
+                )
+                self.assertTrue(gone.success)
+                self.assertFalse(good_json.exists())
+                self.assertFalse(good_session.exists())
 
 
 if __name__ == "__main__":

@@ -4,8 +4,8 @@
       <div>
         <h2>🔐 凭证库 & 开发者 API</h2>
         <p>
-          扫描 <code>lod_user/</code> 与 <code>data/sessions/</code>。现存 JSON 的 <code>app_id=4</code> 是公开泄露官方 ID，不能直接当专属凭证。
-          没有 .session 也能用已登录客户端收 777000 验证码；有 session 就自动读码。
+          扫描 <code>lod_user/</code> 与 <code>data/sessions/</code>。仅<strong>已完成鉴权</strong>的 Telethon session（有用户实体或成功元数据）视为可用注册号；仅 JSON、损坏 session、以及注册中途留下的半成品 session 标为无用，可用「删除全部无用」一键清理。
+          现存 JSON 的 <code>app_id=4</code> 是公开泄露官方 ID，不能直接当专属凭证。
         </p>
       </div>
       <button class="ce-btn-ghost" :disabled="vaultLoading" @click="fetchVaultAccounts">
@@ -82,6 +82,8 @@
         <div class="ce-stat"><span>custom_api_id</span><span>{{ config.custom_api_id || '未配置' }}</span></div>
         <div class="ce-stat"><span>custom_api_hash</span><span>{{ maskHash(config.custom_api_hash) }}</span></div>
         <div class="ce-stat"><span>凭证库账号数</span><span>{{ vaultAccounts.length }}</span></div>
+        <div class="ce-stat"><span>可用注册号</span><span>{{ vaultMeta.usable_count }}</span></div>
+        <div class="ce-stat"><span>无用凭证</span><span>{{ vaultMeta.useless_count }}</span></div>
         <div class="ce-tiny">
           公开泄露官方 ID（如 4 / 6 / 21724）缺少 Push Token 时容易触发 API_ID_PUBLISHED_FLOOD。
           优先使用 my.telegram.org 申请的专属凭证。
@@ -153,6 +155,8 @@
         <div class="row">
           <h3>🗃️ 已导入账号网格</h3>
           <span class="ce-badge is-info">{{ vaultAccounts.length }} accounts</span>
+          <span class="ce-chip is-ok">可用 {{ vaultMeta.usable_count }}</span>
+          <span class="ce-chip" :class="vaultMeta.useless_count ? 'is-warn' : 'is-ok'">无用 {{ vaultMeta.useless_count }}</span>
           <span class="ce-chip" :class="activeProbeCount ? 'is-ok' : 'is-warn'">活跃预检探针 {{ activeProbeCount }} 个</span>
         </div>
         <div class="ce-muted mono">
@@ -161,33 +165,97 @@
           <span v-if="vaultMeta.missing_session_count"> · 缺 session {{ vaultMeta.missing_session_count }}</span>
         </div>
       </div>
+      <div class="between" style="flex-wrap:wrap;gap:10px">
+        <div class="ce-seg">
+          <button :class="{ 'is-on': vaultFilter === 'all' }" @click="vaultFilter = 'all'">全部 {{ vaultAccounts.length }}</button>
+          <button :class="{ 'is-on': vaultFilter === 'usable' }" @click="vaultFilter = 'usable'">可用注册号 {{ vaultMeta.usable_count }}</button>
+          <button :class="{ 'is-on': vaultFilter === 'useless' }" @click="vaultFilter = 'useless'">无用凭证 {{ vaultMeta.useless_count }}</button>
+        </div>
+        <div class="row-wrap">
+          <button
+            class="ce-btn ce-btn-sm"
+            :disabled="!vaultSelectedIds.length || !!vaultBusy"
+            @click="exportSelectedVault"
+          >
+            {{ vaultBusy === 'export' ? '打包中...' : `下载选中 ZIP（${vaultSelectedIds.length}）` }}
+          </button>
+          <button
+            class="ce-btn ce-btn-sm"
+            :disabled="!vaultMeta.usable_count || !!vaultBusy"
+            @click="exportUsableVault"
+          >
+            下载全部可用注册号
+          </button>
+          <button
+            class="ce-btn-danger ce-btn-sm"
+            :disabled="!vaultSelectedIds.length || !!vaultBusy"
+            @click="deleteSelectedVault"
+          >
+            {{ vaultBusy === 'delete' ? '删除中...' : `删除选中（${vaultSelectedIds.length}）` }}
+          </button>
+          <button
+            class="ce-btn-danger ce-btn-sm"
+            :disabled="!vaultMeta.useless_count || !!vaultBusy"
+            @click="deleteUselessVault"
+          >
+            删除全部无用
+          </button>
+        </div>
+      </div>
+      <div class="ce-tiny">
+        可用 = 有效 Telethon <code>.session</code>，可当注册号导出。无用 = 仅 JSON / session 损坏或占位。ZIP 按手机号分子目录打包 <code>.json</code> 与 <code>.session</code>。
+      </div>
       <div class="ce-table-wrap">
         <table class="ce-table">
           <thead>
             <tr>
+              <th>
+                <label class="ce-check">
+                  <input
+                    type="checkbox"
+                    :checked="allVisibleVaultSelected"
+                    :disabled="!filteredVaultAccounts.length"
+                    @change="toggleSelectVisibleVault"
+                  />
+                </label>
+              </th>
               <th>手机号</th>
               <th>来源</th>
+              <th>状态</th>
               <th>注册时间</th>
               <th>设备 / SDK</th>
               <th>UID</th>
               <th>app_id / hash</th>
-              <th>Session</th>
               <th>预检探针</th>
               <th>操作</th>
             </tr>
           </thead>
           <tbody>
-            <tr v-if="vaultAccounts.length === 0">
-              <td colspan="9" class="ce-muted" style="text-align:center;padding:24px">未扫描到账号。请上传或放入 lod_user/ 后刷新。</td>
+            <tr v-if="filteredVaultAccounts.length === 0">
+              <td colspan="10" class="ce-muted" style="text-align:center;padding:24px">
+                {{ vaultAccounts.length === 0 ? '未扫描到账号。请上传或放入 lod_user/ 后刷新。' : '当前筛选下没有账号。' }}
+              </td>
             </tr>
             <tr
-              v-for="acc in vaultAccounts"
+              v-for="acc in filteredVaultAccounts"
               :key="acc.account_id"
               :class="{ 'is-on': vaultSelectedId === acc.account_id, 'is-probe': acc.is_probe_active }"
               @click="vaultSelectedId = acc.account_id"
             >
+              <td @click.stop>
+                <label class="ce-check">
+                  <input
+                    type="checkbox"
+                    :checked="vaultSelectedIds.includes(acc.account_id)"
+                    @change="toggleVaultAccount(acc.account_id)"
+                  />
+                </label>
+              </td>
               <td class="mono">{{ acc.phone || acc.phone_raw || '-' }}</td>
               <td><span class="ce-badge is-info">{{ acc.source }}</span></td>
+              <td>
+                <span class="ce-badge" :class="acc.usable ? 'is-success' : 'is-warn'">{{ uselessReasonLabel(acc) }}</span>
+              </td>
               <td>{{ acc.register_time || '-' }}</td>
               <td>
                 <div>{{ acc.device_model || '-' }}</div>
@@ -199,36 +267,34 @@
                 <span v-if="acc.is_published_api_id" class="ce-badge is-warn">公开泄露 ID</span>
                 <span v-else-if="acc.has_usable_custom_credentials" class="ce-badge is-success">可用专属凭证</span>
               </td>
-              <td>
-                <span v-if="acc.has_session" class="ce-badge is-success">.session</span>
-                <span v-else class="ce-badge is-warn">仅 JSON</span>
-              </td>
               <td @click.stop>
                 <label
                   class="ce-switch"
                   :class="{ 'is-on': acc.is_probe_active }"
-                  :title="acc.has_session ? '点击切换预检探针' : '缺少 .session，无法作为探针'"
+                  :title="acc.session_valid ? '点击切换预检探针' : '缺少有效 .session，无法作为探针'"
                 >
                   <input
                     type="checkbox"
                     :checked="acc.is_probe_active"
-                    :disabled="!acc.has_session || vaultProbeTogglingId === acc.account_id"
+                    :disabled="!acc.session_valid || vaultProbeTogglingId === acc.account_id"
                     @change="toggleVaultProbe(acc, $event.target.checked)"
                   />
                   <span>⚡ {{ acc.is_probe_active ? '已激活' : '预检探针' }}</span>
                 </label>
               </td>
-              <td class="row-wrap">
+              <td class="row-wrap" @click.stop>
+                <button class="ce-link" :disabled="!!vaultBusy" @click="exportOneVault(acc)">下载 ZIP</button>
+                <button class="ce-link is-danger" :disabled="!!vaultBusy" @click="deleteOneVault(acc)">删除</button>
                 <button
                   v-if="acc.has_usable_custom_credentials"
                   class="ce-link"
                   :disabled="vaultApplyingId === acc.account_id"
-                  @click.stop="applyVaultCredentials(acc)"
+                  @click="applyVaultCredentials(acc)"
                 >
                   {{ vaultApplyingId === acc.account_id ? '写入中...' : '一键应用' }}
                 </button>
                 <span v-else class="ce-muted">请申请新 API</span>
-                <button class="ce-link is-cyan" @click.stop="selectAndStartApps(acc)">申请专属 API</button>
+                <button class="ce-link is-cyan" @click="selectAndStartApps(acc)">申请专属 API</button>
               </td>
             </tr>
           </tbody>
@@ -250,11 +316,41 @@ import { useVault } from '../../composables/useVault'
 
 const { config, isPublishedCustomApiId } = useConfig()
 const {
-  vaultLoading, vaultAccounts, vaultMeta, vaultSelectedId, vaultApplyingId, vaultApplyResult,
-  vaultGuidance, vaultFileInput, vaultUploading, vaultUploadDragging, vaultUploadProgress,
-  vaultUploadResult, selectedVaultAccount, appsStarting, appsJob, appsShortname, appsPhone,
-  appsManualCode, vaultProbeTogglingId, activeProbeCount, onVaultFilePicked, onVaultFileDrop,
-  fetchVaultAccounts, toggleVaultProbe, applyVaultCredentials, startAppsJob, selectAndStartApps,
-  submitAppsCode, applyAppsJob
+  vaultLoading, vaultAccounts, vaultMeta, vaultSelectedId, vaultSelectedIds, vaultFilter, vaultBusy,
+  vaultApplyingId, vaultApplyResult, vaultGuidance, vaultFileInput, vaultUploading, vaultUploadDragging,
+  vaultUploadProgress, vaultUploadResult, selectedVaultAccount, filteredVaultAccounts, allVisibleVaultSelected,
+  appsStarting, appsJob, appsShortname, appsPhone, appsManualCode, vaultProbeTogglingId, activeProbeCount,
+  onVaultFilePicked, onVaultFileDrop, fetchVaultAccounts, toggleVaultProbe, applyVaultCredentials,
+  startAppsJob, selectAndStartApps, submitAppsCode, applyAppsJob, uselessReasonLabel, toggleVaultAccount,
+  toggleSelectVisibleVault, exportVaultAccounts, deleteVaultAccounts
 } = useVault()
+
+const exportSelectedVault = () => exportVaultAccounts({
+  accountIds: vaultSelectedIds.value,
+  scope: 'selected'
+})
+
+const exportUsableVault = () => exportVaultAccounts({ scope: 'usable' })
+
+const exportOneVault = (acc) => exportVaultAccounts({
+  accountIds: [acc.account_id],
+  scope: 'selected'
+})
+
+const deleteSelectedVault = () => deleteVaultAccounts({
+  accountIds: vaultSelectedIds.value,
+  scope: 'selected',
+  confirmText: `确认删除选中的 ${vaultSelectedIds.value.length} 个凭证？文件将从磁盘移除，不可恢复。`
+})
+
+const deleteUselessVault = () => deleteVaultAccounts({
+  scope: 'useless',
+  confirmText: `确认删除全部 ${vaultMeta.useless_count} 个无用凭证（仅 JSON / session 损坏 / 未完成注册）？此操作不可恢复。`
+})
+
+const deleteOneVault = (acc) => deleteVaultAccounts({
+  accountIds: [acc.account_id],
+  scope: 'selected',
+  confirmText: `确认删除 ${acc.phone || acc.filename || acc.account_id} 的凭证文件？不可恢复。`
+})
 </script>

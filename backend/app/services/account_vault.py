@@ -24,6 +24,7 @@ from backend.app.models.schemas import (
     ToggleVaultProbeResponse,
     VaultAccountItem,
     VaultAccountListResponse,
+    VaultDeleteResponse,
     VaultUploadResponse,
 )
 from backend.app.services.device_profile import PUBLISHED_API_ID_BLOCKLIST
@@ -358,6 +359,75 @@ def is_account_probe_active(account_id: Optional[str], has_session: bool, config
     return bool(account_id and account_id in active_ids)
 
 
+def _session_has_authorized_user(path: Path) -> bool:
+    """Telethon 在完成 SignIn/SignUp 后会写入 entities；仅有 auth_key 表示连上了但未登录成功。"""
+    try:
+        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='entities'")
+            if not cur.fetchone():
+                return False
+            cur.execute(
+                "SELECT 1 FROM entities WHERE phone IS NOT NULL OR id IS NOT NULL LIMIT 1"
+            )
+            return cur.fetchone() is not None
+        finally:
+            conn.close()
+    except Exception:
+        return False
+
+
+def _health_fields(
+    has_json: bool,
+    session_path: Optional[Path],
+    *,
+    user_id: Optional[int] = None,
+) -> Dict[str, Any]:
+    has_session_file = bool(session_path and session_path.exists())
+    telethon_ok = bool(has_session_file and _is_telethon_session(session_path))
+    if telethon_ok:
+        authorized = bool(user_id) or _session_has_authorized_user(session_path)
+        if authorized:
+            return {
+                "session_valid": True,
+                "usable": True,
+                "useless": False,
+                "useless_reason": None,
+            }
+        # 握手失败/中途退出留下的半成品：有 SQLite 结构甚至 auth_key，但未完成账号鉴权
+        return {
+            "session_valid": False,
+            "usable": False,
+            "useless": True,
+            "useless_reason": "incomplete_session",
+        }
+    if has_session_file:
+        return {
+            "session_valid": False,
+            "usable": False,
+            "useless": True,
+            "useless_reason": "invalid_session",
+        }
+    if has_json:
+        return {
+            "session_valid": False,
+            "usable": False,
+            "useless": True,
+            "useless_reason": "json_only",
+        }
+    return {
+        "session_valid": False,
+        "usable": False,
+        "useless": True,
+        "useless_reason": "empty",
+    }
+
+
+MAX_EXPORT_ACCOUNTS = 500
+SESSION_SIDECAR_SUFFIXES = ("-journal", "-wal", "-shm")
+
+
 class AccountVaultService:
     """扫描、解析与应用已有账号凭证。"""
 
@@ -405,6 +475,7 @@ class AccountVaultService:
                     fields["register_time_unix"] = unix
 
                 has_session = bool(session_path and session_path.exists())
+                health = _health_fields(True, session_path, user_id=fields.get("user_id"))
                 hint_payload = {
                     "phone": fields.get("phone"),
                     "filename": json_path.name,
@@ -438,7 +509,8 @@ class AccountVaultService:
                     json_path=_rel_to_repo(json_path),
                     session_path=_rel_to_repo(session_path) if session_path else None,
                     filename=json_path.name,
-                    is_probe_active=is_account_probe_active(account_id, has_session),
+                    is_probe_active=is_account_probe_active(account_id, health["session_valid"]),
+                    **health,
                 )
                 merged[account_id] = item
 
@@ -467,6 +539,11 @@ class AccountVaultService:
                 if not readable:
                     readable, unix = _file_mtime_as_register(session_path)
 
+                health = _health_fields(
+                    bool(sibling_json),
+                    session_path,
+                    user_id=fields.get("user_id"),
+                )
                 hint_payload = {
                     "phone": fields.get("phone") or session_path.stem,
                     "filename": session_path.name,
@@ -500,7 +577,8 @@ class AccountVaultService:
                     json_path=_rel_to_repo(sibling_json) if sibling_json else None,
                     session_path=_rel_to_repo(session_path),
                     filename=session_path.name,
-                    is_probe_active=is_account_probe_active(account_id, True),
+                    is_probe_active=is_account_probe_active(account_id, health["session_valid"]),
+                    **health,
                 )
 
         accounts = list(merged.values())
@@ -659,6 +737,8 @@ class AccountVaultService:
             api_credential_mode=config.api_credential_mode,
             published_api_id_count=sum(1 for acc in accounts if acc.is_published_api_id),
             missing_session_count=sum(1 for acc in accounts if acc.session_missing_for_auto_code),
+            usable_count=sum(1 for acc in accounts if acc.usable),
+            useless_count=sum(1 for acc in accounts if acc.useless),
             guidance=VAULT_GUIDANCE,
             active_probe_count=sum(1 for acc in accounts if acc.is_probe_active),
             precheck_probes_configured=bool(getattr(config, "precheck_probes_configured", False)),
@@ -675,10 +755,10 @@ class AccountVaultService:
                 account_id=account_id,
                 active=False,
             )
-        if active and not account.has_session:
+        if active and not account.session_valid:
             return ToggleVaultProbeResponse(
                 success=False,
-                message="该账号没有可用 .session，无法作为预检探测源",
+                message="该账号没有有效 .session，无法作为预检探测源",
                 account_id=account_id,
                 active=False,
             )
@@ -687,7 +767,7 @@ class AccountVaultService:
         config = manager.config.model_copy(deep=True)
         current_ids = list(getattr(config, "active_precheck_probe_ids", None) or [])
         if not getattr(config, "precheck_probes_configured", False):
-            current_ids = [acc.account_id for acc in cls.scan_accounts() if acc.has_session]
+            current_ids = [acc.account_id for acc in cls.scan_accounts() if acc.session_valid]
 
         ids = set(current_ids)
         if active:
@@ -814,3 +894,185 @@ class AccountVaultService:
                 else None
             ),
         )
+
+    @classmethod
+    def _is_under_vault_roots(cls, path: Path) -> bool:
+        resolved = path.resolve()
+        for _, root in cls.scan_roots():
+            try:
+                resolved.relative_to(root.resolve())
+                return True
+            except ValueError:
+                continue
+        return False
+
+    @classmethod
+    def _absolute_recorded_path(cls, recorded: Optional[str]) -> Optional[Path]:
+        if not recorded:
+            return None
+        candidate = Path(recorded)
+        path = candidate.resolve() if candidate.is_absolute() else (REPO_ROOT / recorded).resolve()
+        if not path.is_file():
+            return None
+        if not cls._is_under_vault_roots(path):
+            logger.warning("拒绝访问凭证库根目录之外的路径: %s", path)
+            return None
+        return path
+
+    @classmethod
+    def _sidecar_paths(cls, session_path: Path) -> List[Path]:
+        return [Path(str(session_path) + suffix) for suffix in SESSION_SIDECAR_SUFFIXES]
+
+    @classmethod
+    def _account_files(cls, account: VaultAccountItem) -> List[Path]:
+        files: List[Path] = []
+        for recorded in (account.json_path, account.session_path):
+            path = cls._absolute_recorded_path(recorded)
+            if path:
+                files.append(path)
+        session = cls._absolute_recorded_path(account.session_path)
+        if session:
+            for extra in cls._sidecar_paths(session):
+                if extra.is_file() and cls._is_under_vault_roots(extra):
+                    files.append(extra)
+        unique: List[Path] = []
+        seen = set()
+        for path in files:
+            key = path.resolve()
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(path)
+        return unique
+
+    @classmethod
+    def select_accounts(
+        cls,
+        account_ids: Optional[List[str]] = None,
+        scope: str = "selected",
+    ) -> Tuple[List[VaultAccountItem], Optional[str]]:
+        accounts = cls.scan_accounts()
+        normalized = str(scope or "selected").strip().lower()
+        if normalized not in {"selected", "usable", "useless", "all"}:
+            return [], f"不支持的 scope={scope}"
+        if normalized == "all":
+            return accounts, None
+        if normalized == "usable":
+            return [acc for acc in accounts if acc.usable], None
+        if normalized == "useless":
+            return [acc for acc in accounts if acc.useless], None
+        wanted = [str(item).strip() for item in (account_ids or []) if str(item).strip()]
+        if not wanted:
+            return [], "请先勾选要操作的账号，或改用「全部可用 / 全部无用」"
+        by_id = {acc.account_id: acc for acc in accounts}
+        selected: List[VaultAccountItem] = []
+        missing: List[str] = []
+        for account_id in wanted:
+            acc = by_id.get(account_id)
+            if acc:
+                selected.append(acc)
+            else:
+                missing.append(account_id)
+        if not selected:
+            return [], "未找到勾选的账号，请刷新凭证库后再试"
+        if missing:
+            logger.warning("批量操作跳过未知 account_id: %s", missing)
+        return selected, None
+
+    @classmethod
+    def build_export_zip(
+        cls,
+        account_ids: Optional[List[str]] = None,
+        scope: str = "selected",
+    ) -> Tuple[Optional[bytes], str, Optional[str]]:
+        selected, error = cls.select_accounts(account_ids, scope)
+        if error:
+            return None, "", error
+        if not selected:
+            return None, "", "没有可导出的账号"
+        if len(selected) > MAX_EXPORT_ACCOUNTS:
+            return None, "", f"一次最多导出 {MAX_EXPORT_ACCOUNTS} 个账号，请缩小范围"
+        buffer = io.BytesIO()
+        packed = 0
+        used_names: set = set()
+        with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            for acc in selected:
+                files = [p for p in cls._account_files(acc) if p.suffix.lower() in {".json", ".session"}]
+                if not files:
+                    continue
+                folder = re.sub(r"[^A-Za-z0-9._+-]+", "_", (acc.phone or acc.filename or acc.account_id).lstrip("+"))[:80]
+                folder = folder or acc.account_id
+                for path in files:
+                    arcname = f"{folder}/{path.name}"
+                    if arcname in used_names:
+                        arcname = f"{folder}/{acc.account_id}_{path.name}"
+                    used_names.add(arcname)
+                    archive.write(path, arcname)
+                    packed += 1
+        if packed <= 0:
+            return None, "", "选中账号没有可打包的 .json / .session 文件"
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+        filename = f"edgenode-accounts-{scope}-{stamp}.zip"
+        return buffer.getvalue(), filename, None
+
+    @classmethod
+    def delete_accounts(
+        cls,
+        account_ids: Optional[List[str]] = None,
+        scope: str = "selected",
+    ) -> VaultDeleteResponse:
+        selected, error = cls.select_accounts(account_ids, scope)
+        if error:
+            return VaultDeleteResponse(success=False, message=error)
+        if not selected:
+            return VaultDeleteResponse(success=False, message="没有可删除的账号")
+
+        deleted_ids = []
+        skipped: List[str] = []
+        for acc in selected:
+            files = cls._account_files(acc)
+            if not files:
+                skipped.append(f"{acc.phone or acc.filename or acc.account_id} (找不到文件)")
+                continue
+            failed = False
+            for path in files:
+                try:
+                    path.unlink()
+                except OSError as exc:
+                    skipped.append(f"{path.name} ({exc})")
+                    failed = True
+            if not failed:
+                deleted_ids.append(acc.account_id)
+
+        if deleted_ids:
+            cls._prune_probe_ids(set(deleted_ids))
+
+        listing = cls.list_accounts()
+        label = f"已删除 {len(deleted_ids)} 个凭证"
+        if skipped:
+            label += f"，跳过 {len(skipped)} 项"
+        return VaultDeleteResponse(
+            success=bool(deleted_ids),
+            message=label if deleted_ids else ("删除失败：" + "；".join(skipped[:4])),
+            deleted=len(deleted_ids),
+            skipped=skipped,
+            remaining=listing.total,
+            usable_count=listing.usable_count,
+            useless_count=listing.useless_count,
+        )
+
+    @classmethod
+    def _prune_probe_ids(cls, deleted_ids: set) -> None:
+        if not deleted_ids:
+            return
+        try:
+            manager = ConfigManager.get_instance()
+            config = manager.config.model_copy(deep=True)
+            current = list(getattr(config, "active_precheck_probe_ids", None) or [])
+            next_ids = [item for item in current if item not in deleted_ids]
+            if next_ids == current:
+                return
+            config.active_precheck_probe_ids = next_ids
+            manager.save_config(config)
+        except Exception as exc:
+            logger.warning("删除凭证后清理预检探针名单失败: %s", exc)
