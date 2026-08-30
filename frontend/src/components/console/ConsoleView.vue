@@ -52,6 +52,7 @@
           <select v-model="form.sms_provider" class="ce-select">
             <option value="fivesim">5SIM (推荐) · 5sim.net</option>
             <option value="grizzlysms">Grizzly SMS · grizzlysms.com</option>
+            <option value="smsbower">SMS Bower · smsbower.app</option>
             <option value="vaksms">Vak-SMS · vak-sms.com</option>
           </select>
           <p class="ce-tiny">
@@ -164,12 +165,12 @@
         <div v-if="launchMode === 'auto'" class="ce-panel" style="padding:12px">
           <div class="between">
             <label class="ce-check">
-              <input type="checkbox" v-model="batchMode" />
+              <input type="checkbox" v-model="batchMode" :disabled="huntMode" />
               并发批量引导模式
             </label>
             <span class="ce-badge is-info">asyncio.Semaphore</span>
           </div>
-          <div v-if="batchMode" class="stack" style="margin-top:10px">
+          <div v-if="batchMode && !huntMode" class="stack" style="margin-top:10px">
             <div>
               <div class="ce-label">并行任务数</div>
               <div class="ce-seg">
@@ -189,6 +190,38 @@
               等待 OTP 期间可并行验证多个号码。租号后先做白号预检；已注册号直接退订换号，不消耗 Push Token。
               若服务端仍返回 <code>SentCodeTypeApp</code> 会自动探测 <code>ResendCode</code> 并快速换号。
               RECAPTCHA_CHECK 由 REGHelp RecaptchaMobile 自动解题。
+            </p>
+          </div>
+        </div>
+
+        <div v-if="launchMode === 'auto'" class="ce-panel" style="padding:12px">
+          <div class="between">
+            <label class="ce-check">
+              <input
+                type="checkbox"
+                :checked="huntMode"
+                @change="onHuntModeToggle($event)"
+              />
+              循环试号（复用 Push Token）
+            </label>
+            <span class="ce-badge is-warn">hunt</span>
+          </div>
+          <div v-if="huntMode" class="stack" style="margin-top:10px">
+            <div>
+              <div class="ce-label">最大换号次数</div>
+              <div class="ce-seg">
+                <button
+                  v-for="n in [5, 10, 20, 30]"
+                  :key="n"
+                  :class="{ 'is-on': huntAttempts === n }"
+                  @click="huntAttempts = n"
+                >{{ n }} 次</button>
+              </div>
+            </div>
+            <p class="ce-tiny">
+              单任务内循环取号：验证码下发到绑定客户端（<code>SentCodeTypeApp</code>）、黑名单命中或预检已注册时退订换号，
+              <strong>不 setStatus 退 Push</strong>，继续用同一 Token 测接码平台其他号码是否可走短信通道。
+              与并发批量互斥。
             </p>
           </div>
         </div>
@@ -220,6 +253,7 @@
           @click="startRegistrationTask"
         >
           <span v-if="isStartingTask">正在调度状态机编排流水线...</span>
+          <span v-else-if="huntMode">开始循环试号（最多 {{ huntAttempts }} 次换号 · 复用 Push）</span>
           <span v-else-if="batchMode">并发启动 {{ batchCount }} 个引导任务</span>
           <span v-else>启动虚拟节点引导仿真</span>
         </button>
@@ -475,12 +509,17 @@ const {
   registrationProxies, roleLabel, testing: proxyTesting, refreshProxyPool, previewAutoSelect
 } = useProxy()
 const {
-  batchMode, batchCount, batchConcurrency, currentBatch, taskFilter, selectedTaskIds, mergedLogView,
+  batchMode, batchCount, batchConcurrency, huntMode, huntAttempts, currentBatch, taskFilter, selectedTaskIds, mergedLogView,
   isStartingTask, startError, activeTask, sessions, terminalRef, phonePrecheckStatus,
   effectiveConcurrency, visibleTaskList, allVisibleSelected, batchStats, displayLogs,
   fetchTasks, fetchSessions, startRegistrationTask, viewTaskLogs, toggleTaskSelection,
   toggleSelectVisibleTasks, viewSelectedLogs, focusBatchTask, clearActiveLogs, retryTask, openTaskDetail
 } = useTasks()
+
+const onHuntModeToggle = (event) => {
+  huntMode.value = !!event.target.checked
+  if (huntMode.value) batchMode.value = false
+}
 const { terminalExpanded, detailTask, goTab } = useUi()
 const {
   launchMode, manualPhone, manualCountry, manualCode, manualPassword,

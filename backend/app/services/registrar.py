@@ -241,6 +241,9 @@ SMS_NEXT_TYPE_NAMES = frozenset({
 })
 
 
+MAX_NUMBER_ATTEMPTS_CAP = 50
+
+
 class SentCodeAppDeliveryError(Exception):
     """服务端将验证码下发到已登录官方客户端，带外短信网关无法接收。"""
 
@@ -1060,6 +1063,37 @@ class RegistrationOrchestrator:
             except Exception as exc:
                 logger.warning("释放 Attestation 网关客户端失败: %s", exc)
 
+
+    @classmethod
+    async def _disconnect_client_quiet(cls, client: Optional[TelegramClient]) -> None:
+        if client is None:
+            return
+        try:
+            if getattr(client, "is_connected", lambda: False)():
+                await client.disconnect()
+        except Exception as exc:
+            logger.warning("断开 Telethon 客户端失败（已忽略）: %s", exc)
+
+    @classmethod
+    def _discard_incomplete_session(
+        cls,
+        session_path: Optional[Path] = None,
+        meta_path: Optional[Path] = None,
+    ) -> None:
+        """换号重试时清理未完成注册的 session，避免脏文件占用手机号命名。"""
+        candidates = []
+        if session_path:
+            sp = Path(session_path)
+            candidates.extend([sp, Path(str(sp) + "-journal")])
+        if meta_path:
+            candidates.append(Path(meta_path))
+        for path_obj in candidates:
+            try:
+                if path_obj.exists():
+                    path_obj.unlink()
+            except Exception as exc:
+                logger.warning("清理未完成 session 失败 (%s): %s", path_obj, exc)
+
     @staticmethod
     def _should_set_2fa(config, set_2fa: Optional[bool]) -> bool:
         if set_2fa is not None:
@@ -1372,8 +1406,13 @@ class RegistrationOrchestrator:
         proxy_mode: str = "custom_pool",
         sms_provider: Optional[str] = None,
         max_price: Optional[float] = None,
+        max_number_attempts: Optional[int] = None,
     ):
-        """执行单次边缘虚拟节点引导全流程"""
+        """执行单次边缘虚拟节点引导全流程。
+
+        max_number_attempts>1 时启用循环试号：遇 SentCodeTypeApp / 黑名单 / 预检已注册
+        / 预审封禁 / PHONE_NUMBER_BANNED 时退订换号，并在同任务内复用已取得的 Push Token。
+        """
         manager = RegistrationTaskManager.get_instance()
         manager.update_task_status(task_id, "running")
 
@@ -1384,6 +1423,12 @@ class RegistrationOrchestrator:
         resolved_sms_provider = cls.resolve_sms_provider(config, sms_provider)
         sms_svc = cls._create_sms_service(config, resolved_sms_provider)
         lease_max_price = cls.resolve_sms_max_price(config, max_price)
+
+        try:
+            max_attempts = int(max_number_attempts or 1)
+        except (TypeError, ValueError):
+            max_attempts = 1
+        max_attempts = max(1, min(max_attempts, MAX_NUMBER_ATTEMPTS_CAP))
 
         active_proxy = await cls.resolve_active_proxy(
             config=config,
@@ -1406,9 +1451,15 @@ class RegistrationOrchestrator:
         check_id = None
         client = None
         phone = None
+        push_token = None
         push_task_id = None
         push_provider = None
         push_token_obtained_at = None
+        credentials_resolved = False
+        session_path = None
+        meta_path = None
+        phone_code_hash = None
+        sms_poll_attempts = DEFAULT_SMS_POLL_ATTEMPTS
 
         try:
             await manager.append_log(
@@ -1433,200 +1484,331 @@ class RegistrationOrchestrator:
             await manager.append_log(task_id, f"绑定硬件特征: {profile['device_model']} ({profile['system_version']}), App: {profile['app_version']}")
             await manager.append_log(task_id, f"网络语言拓扑: {profile['system_lang_code']}, 时区偏置: {profile.get('tz_offset', -14400)}")
 
-            # 1. 租用带外通信句柄（热门/稀缺国家需携带 maxPrice 动态竞价，否则卡在底价空桶）
+            if max_attempts > 1:
+                await manager.append_log(
+                    task_id,
+                    f"[循环试号] 已启用，最多换号 {max_attempts} 次；"
+                    "SentCodeTypeApp / 黑名单 / 预检已注册 / 预审封禁时退订换号，"
+                    "并复用同一 Push Token（不提前 setStatus 退款）"
+                )
+                manager.update_task_status(task_id, "running", hunt_max=max_attempts)
+
             from backend.app.models.schemas import format_sms_max_price
 
             bid_label = format_sms_max_price(lease_max_price)
-            if bid_label is not None:
-                await manager.append_log(
-                    task_id,
-                    f"正在向带外遥测提供者申请拓扑代码 '{target_country.upper()}' 的信道句柄"
-                    f"（动态竞价上限 maxPrice={bid_label}，按账户结算币种原样出价）..."
-                )
-            else:
-                await manager.append_log(
-                    task_id,
-                    f"正在向带外遥测提供者申请拓扑代码 '{target_country.upper()}' 的信道句柄"
-                    "（未设置最高出价，使用平台底价；热门国家可能 NO_NUMBERS）..."
-                )
-            act_id, phone = await sms_svc.get_number(
-                country=target_country,
-                service="tg",
-                max_price=lease_max_price,
-            )
-            manager.update_task_status(task_id, "running", phone=phone)
-            await manager.append_log(task_id, f"成功获取端点通信句柄: {phone} (Session Handle ID: {act_id})")
+            attempt_idx = 0
+            while attempt_idx < max_attempts:
+                attempt_idx += 1
+                act_id = None
+                check_id = None
+                phone = None
+                session_path = None
+                meta_path = None
+                # 上一轮 client 应已断开；防御性清理
+                if client is not None:
+                    await cls._disconnect_client_quiet(client)
+                    client = None
 
-            # 1.4 本地封禁号缓存：接码回收号复用时零成本拦截
-            if not await cls._apply_banned_cache_gate(
-                phone=phone,
-                act_id=act_id,
-                sms_svc=sms_svc,
-                task_id=task_id,
-                manager=manager,
-            ):
-                return
-
-            # 1.5 号码注册状态预检：必须在 Push Token / auth.sendCode 之前完成
-            if not await cls._apply_phone_precheck(
-                phone=phone,
-                act_id=act_id,
-                sms_svc=sms_svc,
-                task_id=task_id,
-                manager=manager,
-                proxy=active_proxy,
-                config=config,
-            ):
-                return
-
-            # 2. 端点信誉预检
-            await manager.append_log(task_id, "正在对通信句柄进行历史安全状态审计...")
-            check_data = await bypass_svc.check_phone_history(phone, aid)
-            if check_data:
-                check_id = check_data.get("id")
-                if "BANNED" in check_data.get("statuses", []):
-                    await manager.append_log(task_id, "检测到该通信句柄存在服务端历史异常记录，触发主动退避与信道撤销！")
-                    BannedPhonesCache.remember(
-                        phone,
-                        reason="PHONE_PREAUDIT_BANNED",
-                        source=SOURCE_ANTISAFETY,
-                        country=target_country,
+                if max_attempts > 1:
+                    await manager.append_log(
+                        task_id,
+                        f"[循环试号] 第 {attempt_idx}/{max_attempts} 次取号尝试"
                     )
-                    await cls._refund_and_revoke_channel(sms_svc, act_id, task_id, manager, "PHONE_PREAUDIT_BANNED")
-                    await bypass_svc.report_result(check_id, aid, "REJECTED")
-                    manager.update_task_status(task_id, "failed", error="Endpoint handle pre-audit rejected")
+                    manager.update_task_status(
+                        task_id, "running", hunt_attempt=attempt_idx, hunt_max=max_attempts
+                    )
+
+                # 1. 租用带外通信句柄（热门/稀缺国家需携带 maxPrice 动态竞价，否则卡在底价空桶）
+                if bid_label is not None:
+                    await manager.append_log(
+                        task_id,
+                        f"正在向带外遥测提供者申请拓扑代码 '{target_country.upper()}' 的信道句柄"
+                        f"（动态竞价上限 maxPrice={bid_label}，按账户结算币种原样出价）..."
+                    )
+                else:
+                    await manager.append_log(
+                        task_id,
+                        f"正在向带外遥测提供者申请拓扑代码 '{target_country.upper()}' 的信道句柄"
+                        "（未设置最高出价，使用平台底价；热门国家可能 NO_NUMBERS）..."
+                    )
+                act_id, phone = await sms_svc.get_number(
+                    country=target_country,
+                    service="tg",
+                    max_price=lease_max_price,
+                )
+                manager.update_task_status(task_id, "running", phone=phone)
+                await manager.append_log(task_id, f"成功获取端点通信句柄: {phone} (Session Handle ID: {act_id})")
+
+                # 1.4 本地封禁号缓存：接码回收号复用时零成本拦截
+                if not await cls._apply_banned_cache_gate(
+                    phone=phone,
+                    act_id=act_id,
+                    sms_svc=sms_svc,
+                    task_id=task_id,
+                    manager=manager,
+                ):
+                    if attempt_idx < max_attempts:
+                        await manager.append_log(
+                            task_id,
+                            f"[循环试号] 号码 {phone} 命中黑名单，换号继续（尚未消耗 Push Token）"
+                        )
+                        manager.update_task_status(task_id, "running")
+                        continue
                     return
 
-            # 3. 申请 Attestation Push 握手凭证 (可选增强，若不可达平滑降级至标准协议信道)
-            # 通过统一网关在 REGHelp / AntiSafety 两个高可用提供源之间按优先级自动选择与容灾切换
-            # ref=task_id：REGHelp 侧必须在 getToken 时携带有效 ref，才能在事后 setStatus 触发自动退款
-            push_token = None
-            try:
-                await manager.append_log(task_id, "向 Attestation 高可用网关请求平台推送握手凭证 (Signed Push Token)...")
-                push_token, push_task_id, push_provider = await bypass_svc.get_push_token(
-                    profile,
-                    aid=aid,
-                    log_callback=lambda msg: manager.append_log(task_id, msg),
-                    ref=task_id,
-                )
-                if push_token:
-                    push_token_obtained_at = time.monotonic()
-                    manager.update_task_status(
+                # 1.5 号码注册状态预检：必须在 Push Token / auth.sendCode 之前完成
+                if not await cls._apply_phone_precheck(
+                    phone=phone,
+                    act_id=act_id,
+                    sms_svc=sms_svc,
+                    task_id=task_id,
+                    manager=manager,
+                    proxy=active_proxy,
+                    config=config,
+                ):
+                    if attempt_idx < max_attempts:
+                        await manager.append_log(
+                            task_id,
+                            f"[循环试号] 号码 {phone} 预检已注册，换号继续（尚未消耗 Push Token）"
+                        )
+                        manager.update_task_status(task_id, "running")
+                        continue
+                    return
+
+                # 2. 端点信誉预检
+                await manager.append_log(task_id, "正在对通信句柄进行历史安全状态审计...")
+                check_data = await bypass_svc.check_phone_history(phone, aid)
+                if check_data:
+                    check_id = check_data.get("id")
+                    if "BANNED" in check_data.get("statuses", []):
+                        await manager.append_log(task_id, "检测到该通信句柄存在服务端历史异常记录，触发主动退避与信道撤销！")
+                        BannedPhonesCache.remember(
+                            phone,
+                            reason="PHONE_PREAUDIT_BANNED",
+                            source=SOURCE_ANTISAFETY,
+                            country=target_country,
+                        )
+                        await cls._refund_and_revoke_channel(sms_svc, act_id, task_id, manager, "PHONE_PREAUDIT_BANNED")
+                        await bypass_svc.report_result(check_id, aid, "REJECTED")
+                        if attempt_idx < max_attempts:
+                            await manager.append_log(
+                                task_id,
+                                f"[循环试号] 预审封禁 {phone}，换号继续（Push Token 保持复用）"
+                            )
+                            manager.update_task_status(task_id, "running")
+                            continue
+                        manager.update_task_status(task_id, "failed", error="Endpoint handle pre-audit rejected")
+                        return
+
+                # 3. 申请 Attestation Push 握手凭证（循环试号时仅首次获取，后续复用）
+                if push_token is None:
+                    try:
+                        await manager.append_log(task_id, "向 Attestation 高可用网关请求平台推送握手凭证 (Signed Push Token)...")
+                        push_token, push_task_id, push_provider = await bypass_svc.get_push_token(
+                            profile,
+                            aid=aid,
+                            log_callback=lambda msg: manager.append_log(task_id, msg),
+                            ref=task_id,
+                        )
+                        if push_token:
+                            push_token_obtained_at = time.monotonic()
+                            manager.update_task_status(
+                                task_id,
+                                "running",
+                                push_task_id=push_task_id,
+                                push_provider=push_provider,
+                            )
+                            await manager.append_log(
+                                task_id,
+                                f"成功获取平台合规签署的 Attestation Push Token "
+                                f"(提供源: {push_provider}, task_id={push_task_id or '-'})"
+                            )
+                        else:
+                            await manager.append_log(task_id, "⚠️ Attestation Push Token 未返回，回退至标准信道...")
+                    except Exception as e:
+                        await manager.append_log(task_id, f"⚠️ Attestation Push 凭证请求跳过/降级 ({e})，自动切换至标准信道模式")
+                else:
+                    await manager.append_log(
                         task_id,
-                        "running",
-                        push_task_id=push_task_id,
-                        push_provider=push_provider,
+                        f"[循环试号] 复用已持有 Push Token "
+                        f"(提供源: {push_provider or '-'}, task_id={push_task_id or '-'})，不重新申请"
+                    )
+
+                # 3.1 API 凭证策略裁决（仅在首次拿到/判定 Push 后执行一次）
+                if not credentials_resolved:
+                    original_api_id = profile["api_id"]
+                    profile = DeviceProfileManager.resolve_effective_credentials(
+                        profile, config, has_push_token=bool(push_token)
+                    )
+                    credentials_resolved = True
+                    if profile["credential_source"] == "custom":
+                        await manager.append_log(task_id, f"API 凭证策略: 强制使用自建开发者凭证 (api_id={profile['api_id']})")
+                    elif profile["credential_source"] == "custom_auto_fallback":
+                        await manager.append_log(
+                            task_id,
+                            f"⚠️ 未获取到有效 Push Token，且官方 api_id={original_api_id} "
+                            f"属于已知公开泄露 ID，已自动回退至自建开发者凭证 (api_id={profile['api_id']}) 以规避 API_ID_PUBLISHED_FLOOD"
+                        )
+                    elif profile.get("credential_risk") == "published_id_without_push_token":
+                        await manager.append_log(
+                            task_id,
+                            f"⚠️⚠️ 高风险: 当前使用官方公开泄露 api_id={profile['api_id']} 且无有效 Push Token，"
+                            f"auth.sendCode 大概率触发 API_ID_PUBLISHED_FLOOD。建议在「全局参数拓扑」中配置自建开发者 "
+                            f"api_id/api_hash (my.telegram.org) 并将 api_credential_mode 设为 auto 或 custom，"
+                            f"或修复 Attestation 网关连通性以获取合法 Push Token"
+                        )
+                    elif profile.get("credential_risk") == "custom_mode_missing_credentials":
+                        await manager.append_log(
+                            task_id,
+                            "⚠️ api_credential_mode 已设为 custom，但未配置 custom_api_id / custom_api_hash，"
+                            "本次仍将回退使用官方内置凭证"
+                        )
+
+                # 4. 初始化 MTProto 会话
+                clean_phone = phone.replace("+", "").strip()
+                session_filename = f"node_{target_country}_{clean_phone}"
+                session_path = SESSIONS_DIR / f"{session_filename}.session"
+                meta_path = SESSIONS_DIR / f"{session_filename}.json"
+
+                proxy_dict = {
+                    "proxy_type": active_proxy.get("proxy_type", "socks5"),
+                    "addr": active_proxy.get("addr", "127.0.0.1"),
+                    "port": int(active_proxy.get("port", 10808)),
+                    "username": active_proxy.get("username"),
+                    "password": active_proxy.get("password")
+                }
+
+                await manager.append_log(task_id, f"建立 MTProto 协议传输通道 (中继节点: {proxy_dict['addr']}:{proxy_dict['port']})...")
+                client = TelegramClient(
+                    session=str(session_path),
+                    api_id=profile["api_id"],
+                    api_hash=profile["api_hash"],
+                    proxy=proxy_dict if proxy_dict["addr"] else None,
+                    device_model=profile["device_model"],
+                    system_version=profile["system_version"],
+                    app_version=profile["app_version"],
+                    lang_code=profile["lang_code"],
+                    system_lang_code=profile["system_lang_code"]
+                )
+
+                if not await cls._connect_mtproto(client, task_id, manager, sms_svc, act_id):
+                    return
+                await manager.append_log(task_id, "已完成 MTProto 传输层 Diffie-Hellman 密钥交换与加密连接建立")
+
+                # 5. 执行协议端点握手序列
+                await cls.perform_handshake(client, profile, task_id, manager)
+
+                # 6. 发起挑战分发请求 (SendCode)
+                code_settings = cls._build_code_settings(push_token)
+
+                await manager.append_log(task_id, "调用 auth.sendCode 触发服务端瞬时握手挑战分发...")
+                try:
+                    sent_code = await cls._send_code_with_recaptcha(
+                        client=client,
+                        phone=phone,
+                        profile=profile,
+                        code_settings=code_settings,
+                        bypass_svc=bypass_svc,
+                        active_proxy=active_proxy,
+                        task_id=task_id,
+                        manager=manager,
+                    )
+                    sent_code, sms_poll_attempts = await cls.resolve_sent_code_channel(
+                        client=client,
+                        phone=phone,
+                        sent_code=sent_code,
+                        task_id=task_id,
+                        manager=manager,
+                    )
+                except SentCodeAppDeliveryError as ex:
+                    reason = getattr(ex, "reason", None) or "SENT_CODE_TYPE_APP"
+                    if phone:
+                        BannedPhonesCache.remember(
+                            phone,
+                            reason=reason,
+                            source=SOURCE_SENT_CODE,
+                            country=target_country,
+                            category="already_registered",
+                            note="auth.sendCode 仅下发站内 App 推送",
+                        )
+                    await cls._refund_and_revoke_channel(sms_svc, act_id, task_id, manager, reason)
+                    if check_id:
+                        await bypass_svc.report_result(check_id, aid, reason)
+                    await cls._disconnect_client_quiet(client)
+                    client = None
+                    cls._discard_incomplete_session(session_path, meta_path)
+                    session_path = None
+                    meta_path = None
+                    if attempt_idx < max_attempts:
+                        await manager.append_log(
+                            task_id,
+                            f"[循环试号] SentCodeTypeApp（{reason}）号码 {phone} 已退订入库，"
+                            f"复用 Push Token 换号继续 ({attempt_idx}/{max_attempts})"
+                        )
+                        manager.update_task_status(task_id, "running")
+                        continue
+                    raise
+                except PhoneNumberBannedError:
+                    if phone:
+                        BannedPhonesCache.remember(
+                            phone,
+                            reason="PHONE_NUMBER_BANNED",
+                            source=SOURCE_TELEGRAM_RPC,
+                            country=target_country,
+                        )
+                    await cls._refund_and_revoke_channel(sms_svc, act_id, task_id, manager, "PHONE_NUMBER_BANNED")
+                    if check_id:
+                        await bypass_svc.report_result(check_id, aid, "BANNED")
+                    await cls._disconnect_client_quiet(client)
+                    client = None
+                    cls._discard_incomplete_session(session_path, meta_path)
+                    session_path = None
+                    meta_path = None
+                    if attempt_idx < max_attempts:
+                        await manager.append_log(
+                            task_id,
+                            f"[循环试号] PHONE_NUMBER_BANNED 号码 {phone} 已退订，"
+                            f"复用 Push Token 换号继续 ({attempt_idx}/{max_attempts})"
+                        )
+                        manager.update_task_status(task_id, "running")
+                        continue
+                    raise
+
+                capped_attempts = cls._sms_poll_attempts_for_push_window(
+                    sms_poll_attempts, push_provider, push_token_obtained_at
+                )
+                if capped_attempts < sms_poll_attempts:
+                    elapsed = (
+                        time.monotonic() - push_token_obtained_at
+                        if push_token_obtained_at is not None else 0.0
                     )
                     await manager.append_log(
                         task_id,
-                        f"成功获取平台合规签署的 Attestation Push Token "
-                        f"(提供源: {push_provider}, task_id={push_task_id or '-'})"
+                        f"[REGHelp 退款] 短信轮询由 {sms_poll_attempts} 次截断为 {capped_attempts} 次"
+                        f"（Token 已签发 {elapsed:.0f}s，需在 {int(PUSH_REFUND_WINDOW_SECONDS)}s 内 setStatus）"
                     )
-                else:
-                    await manager.append_log(task_id, "⚠️ Attestation Push Token 未返回，回退至标准信道...")
-            except Exception as e:
-                await manager.append_log(task_id, f"⚠️ Attestation Push 凭证请求跳过/降级 ({e})，自动切换至标准信道模式")
-
-            # 3.1 API 凭证策略裁决 (应对 API_ID_PUBLISHED_FLOOD)
-            # 官方内置 api_id (如 6 / 21724) 早年已被公开泄露，Telegram 服务端对其 auth.sendCode
-            # 请求执行近乎无差别拦截：若本次未拿到合法 Push Token，几乎必然返回 API_ID_PUBLISHED_FLOOD。
-            # 此处按 config.api_credential_mode 策略，在必要时自动切换为用户自建的开发者 api_id/api_hash。
-            original_api_id = profile["api_id"]
-            profile = DeviceProfileManager.resolve_effective_credentials(profile, config, has_push_token=bool(push_token))
-            if profile["credential_source"] == "custom":
-                await manager.append_log(task_id, f"API 凭证策略: 强制使用自建开发者凭证 (api_id={profile['api_id']})")
-            elif profile["credential_source"] == "custom_auto_fallback":
+                sms_poll_attempts = capped_attempts
+                phone_code_hash = sent_code.phone_code_hash
+                if max_attempts > 1:
+                    await manager.append_log(
+                        task_id,
+                        f"[循环试号] 第 {attempt_idx} 次号码已进入短信/OTP 通道，停止换号"
+                    )
+                break
+            else:
+                # while 正常耗尽且未 break：全部被闸门拦截
                 await manager.append_log(
                     task_id,
-                    f"⚠️ 未获取到有效 Push Token，且官方 api_id={original_api_id} "
-                    f"属于已知公开泄露 ID，已自动回退至自建开发者凭证 (api_id={profile['api_id']}) 以规避 API_ID_PUBLISHED_FLOOD"
+                    f"[循环试号] 已用尽 {max_attempts} 次换号仍未进入可接码通道"
                 )
-            elif profile.get("credential_risk") == "published_id_without_push_token":
-                await manager.append_log(
+                manager.update_task_status(
                     task_id,
-                    f"⚠️⚠️ 高风险: 当前使用官方公开泄露 api_id={profile['api_id']} 且无有效 Push Token，"
-                    f"auth.sendCode 大概率触发 API_ID_PUBLISHED_FLOOD。建议在「全局参数拓扑」中配置自建开发者 "
-                    f"api_id/api_hash (my.telegram.org) 并将 api_credential_mode 设为 auto 或 custom，"
-                    f"或修复 Attestation 网关连通性以获取合法 Push Token"
+                    "failed",
+                    error=f"HUNT_EXHAUSTED: 循环试号 {max_attempts} 次均未进入短信通道",
                 )
-            elif profile.get("credential_risk") == "custom_mode_missing_credentials":
-                await manager.append_log(
-                    task_id,
-                    "⚠️ api_credential_mode 已设为 custom，但未配置 custom_api_id / custom_api_hash，"
-                    "本次仍将回退使用官方内置凭证"
-                )
-
-            # 4. 初始化 MTProto 会话
-            clean_phone = phone.replace("+", "").strip()
-            session_filename = f"node_{target_country}_{clean_phone}"
-            session_path = SESSIONS_DIR / f"{session_filename}.session"
-            meta_path = SESSIONS_DIR / f"{session_filename}.json"
-
-            proxy_dict = {
-                "proxy_type": active_proxy.get("proxy_type", "socks5"),
-                "addr": active_proxy.get("addr", "127.0.0.1"),
-                "port": int(active_proxy.get("port", 10808)),
-                "username": active_proxy.get("username"),
-                "password": active_proxy.get("password")
-            }
-
-            await manager.append_log(task_id, f"建立 MTProto 协议传输通道 (中继节点: {proxy_dict['addr']}:{proxy_dict['port']})...")
-            client = TelegramClient(
-                session=str(session_path),
-                api_id=profile["api_id"],
-                api_hash=profile["api_hash"],
-                proxy=proxy_dict if proxy_dict["addr"] else None,
-                device_model=profile["device_model"],
-                system_version=profile["system_version"],
-                app_version=profile["app_version"],
-                lang_code=profile["lang_code"],
-                system_lang_code=profile["system_lang_code"]
-            )
-
-            if not await cls._connect_mtproto(client, task_id, manager, sms_svc, act_id):
                 return
-            await manager.append_log(task_id, "已完成 MTProto 传输层 Diffie-Hellman 密钥交换与加密连接建立")
 
-            # 5. 执行协议端点握手序列
-            await cls.perform_handshake(client, profile, task_id, manager)
-
-            # 6. 发起挑战分发请求 (SendCode)
-            code_settings = cls._build_code_settings(push_token)
-
-            await manager.append_log(task_id, "调用 auth.sendCode 触发服务端瞬时握手挑战分发...")
-            sent_code = await cls._send_code_with_recaptcha(
-                client=client,
-                phone=phone,
-                profile=profile,
-                code_settings=code_settings,
-                bypass_svc=bypass_svc,
-                active_proxy=active_proxy,
-                task_id=task_id,
-                manager=manager,
-            )
-            sent_code, sms_poll_attempts = await cls.resolve_sent_code_channel(
-                client=client,
-                phone=phone,
-                sent_code=sent_code,
-                task_id=task_id,
-                manager=manager,
-            )
-            capped_attempts = cls._sms_poll_attempts_for_push_window(
-                sms_poll_attempts, push_provider, push_token_obtained_at
-            )
-            if capped_attempts < sms_poll_attempts:
-                elapsed = (
-                    time.monotonic() - push_token_obtained_at
-                    if push_token_obtained_at is not None else 0.0
-                )
-                await manager.append_log(
-                    task_id,
-                    f"[REGHelp 退款] 短信轮询由 {sms_poll_attempts} 次截断为 {capped_attempts} 次"
-                    f"（Token 已签发 {elapsed:.0f}s，需在 {int(PUSH_REFUND_WINDOW_SECONDS)}s 内 setStatus）"
-                )
-            sms_poll_attempts = capped_attempts
-            phone_code_hash = sent_code.phone_code_hash
-
+            # 7. 异步等待带外挑战证明
             # 7. 异步等待带外挑战证明
             await manager.append_log(task_id, "正在等待带外遥测通道下发瞬时挑战证明 (OTP)...")
             sms_code = await sms_svc.wait_for_code(
@@ -1918,6 +2100,7 @@ class RegistrationOrchestrator:
         proxy_mode: str = "custom_pool",
         sms_provider: Optional[str] = None,
         max_price: Optional[float] = None,
+        max_number_attempts: Optional[int] = None,
     ) -> None:
         """使用 Semaphore 异步并行调度一批虚拟节点引导任务。"""
         from backend.app.services.proxy_slot_pool import (
@@ -1985,6 +2168,7 @@ class RegistrationOrchestrator:
                         proxy_mode=proxy_mode,
                         sms_provider=sms_provider,
                         max_price=max_price,
+                        max_number_attempts=max_number_attempts,
                     )
                 finally:
                     if slot_pool is not None and leased and task_proxy:

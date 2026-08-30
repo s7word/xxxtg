@@ -563,6 +563,15 @@ class RegisterTaskRequest(BaseModel):
             "覆盖全局 sms_max_price；为空则回落系统配置，再为空则使用平台默认底价"
         ),
     )
+    max_number_attempts: Optional[int] = Field(
+        default=None,
+        ge=1,
+        le=50,
+        description=(
+            "循环试号：同一任务内最多换号次数（1=关闭）。"
+            "遇 SentCodeTypeApp / 黑名单 / 预检已注册等可换号原因时退订并复用同一 Push Token"
+        ),
+    )
 
     @field_validator("proxy_mode", mode="before")
     @classmethod

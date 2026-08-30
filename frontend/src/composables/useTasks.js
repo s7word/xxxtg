@@ -9,6 +9,8 @@ const { matchedProxy, previewAutoSelect } = useProxy()
 const batchMode = ref(false)
 const batchCount = ref(3)
 const batchConcurrency = ref(3)
+const huntMode = ref(false)
+const huntAttempts = ref(10)
 const currentBatch = ref(null)
 const taskFilter = ref('all')
 const selectedTaskIds = ref([])
@@ -181,7 +183,8 @@ export const startRegistrationTask = async () => {
         bootLogs.push(`[${new Date().toLocaleTimeString()}] [多径中继网关] ${preview.message}`)
       }
     }
-    const useBatch = batchMode.value && Number(batchCount.value) > 1
+    const useHunt = huntMode.value && Number(huntAttempts.value) > 1
+    const useBatch = !useHunt && batchMode.value && Number(batchCount.value) > 1
     const endpoint = useBatch ? '/api/register/batch' : '/api/register/start'
     const payload = {
       country: form.country,
@@ -195,6 +198,9 @@ export const startRegistrationTask = async () => {
     }
     if (form.proxy_mode === 'explicit' && form.proxy_id) {
       payload.proxy_id = form.proxy_id
+    }
+    if (useHunt) {
+      payload.max_number_attempts = Math.max(2, Math.min(50, Number(huntAttempts.value) || 10))
     }
     if (useBatch) {
       payload.count = Number(batchCount.value)
@@ -232,7 +238,9 @@ export const startRegistrationTask = async () => {
         status: 'pending',
         logs: [
           ...bootLogs,
-          `[${new Date().toLocaleTimeString()}] 虚拟节点任务 ${data.task_id} 已提交至状态机编排引擎...`
+          useHunt
+            ? `[${new Date().toLocaleTimeString()}] 循环试号任务 ${data.task_id} 已提交（最多换号 ${payload.max_number_attempts} 次，复用 Push Token）...`
+            : `[${new Date().toLocaleTimeString()}] 虚拟节点任务 ${data.task_id} 已提交至状态机编排引擎...`
         ]
       }
     }
@@ -332,6 +340,8 @@ export const useTasks = () => ({
   batchMode,
   batchCount,
   batchConcurrency,
+  huntMode,
+  huntAttempts,
   currentBatch,
   taskFilter,
   selectedTaskIds,
