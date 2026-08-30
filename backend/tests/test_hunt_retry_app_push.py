@@ -825,6 +825,292 @@ class TestHuntProxyRotation(unittest.IsolatedAsyncioTestCase):
             RegistrationTaskManager._instance = prev
 
 
+class TestHuntCancel(HuntRunMixin, unittest.IsolatedAsyncioTestCase):
+    """S1：取消接口置位后，猎号循环必须在下一轮取号前收住。"""
+
+    async def asyncSetUp(self):
+        self.manager = RegistrationTaskManager()
+        self.manager.tasks = {}
+        self.manager.batches = {}
+        self._prev = RegistrationTaskManager._instance
+        RegistrationTaskManager._instance = self.manager
+        self.task_id = self.manager.create_task()
+
+    async def asyncTearDown(self):
+        RegistrationTaskManager._instance = self._prev
+
+    def test_request_cancel_on_pending_task_terminates_immediately(self):
+        result = self.manager.request_cancel(self.task_id)
+        self.assertEqual(result["status"], "canceled")
+        self.assertTrue(result["changed"])
+        self.assertTrue(result["terminated"])
+        self.assertTrue(self.manager.cancel_requested(self.task_id))
+
+    def test_request_cancel_on_running_task_only_sets_flag(self):
+        self.manager.update_task_status(self.task_id, "running")
+        result = self.manager.request_cancel(self.task_id)
+        self.assertEqual(result["status"], "running")
+        self.assertTrue(result["changed"])
+        self.assertFalse(result["terminated"])
+        self.assertTrue(self.manager.get_task(self.task_id)["cancel_requested"])
+
+    def test_request_cancel_on_terminal_task_is_noop(self):
+        self.manager.update_task_status(self.task_id, "success")
+        result = self.manager.request_cancel(self.task_id)
+        self.assertEqual(result["status"], "success")
+        self.assertFalse(result["changed"])
+        self.assertIsNone(self.manager.request_cancel("no-such-task"))
+
+    def test_request_batch_cancel_groups_tasks(self):
+        batch_id, task_ids = self.manager.create_batch(count=3, concurrency=2)
+        self.manager.update_task_status(task_ids[0], "running")
+        self.manager.update_task_status(task_ids[1], "success")
+        result = self.manager.request_batch_cancel(batch_id)
+        self.assertEqual(result["requested"], [task_ids[0]])
+        self.assertEqual(result["skipped"], [task_ids[1]])
+        self.assertEqual(result["terminated"], [task_ids[2]])
+        self.assertIsNone(self.manager.request_batch_cancel("nope"))
+
+    async def test_canceled_task_never_leases_a_number(self):
+        """启动前取消：run_registration 不得把任务复活成 running，也不得租号。"""
+        sms = FakeSms([("act-1", "+56911110001")])
+        gw = make_gateway()
+        self.manager.request_cancel(self.task_id)
+
+        with self._run_ctx(
+            sms=sms,
+            gw=gw,
+            send_code=AsyncMock(),
+            extra=[
+                patch.object(RegistrationOrchestrator, "_resolve_custom_proxy", new=AsyncMock(return_value=None)),
+            ],
+        ):
+            await RegistrationOrchestrator.run_registration(
+                task_id=self.task_id,
+                country="cl",
+                max_number_attempts=5,
+                no_number_retries=0,
+            )
+
+        task = self.manager.get_task(self.task_id)
+        self.assertEqual(task["status"], "canceled")
+        self.assertIn("HUNT_CANCELED", task.get("error", ""))
+        self.assertEqual(sms.cancel_calls, [])
+        gw.get_push_token.assert_not_awaited()
+
+    async def test_cancel_during_first_round_stops_before_second(self):
+        """第一轮进行中收到取消：第二轮不得开始，终态为 HUNT_CANCELED。"""
+        sms = FakeSms([
+            ("act-1", "+56911110001"),
+            ("act-2", "+56911110002"),
+        ])
+        gw = make_gateway()
+        calls = {"n": 0}
+
+        async def send_code_impl(**kwargs):
+            calls["n"] += 1
+            # 模拟用户在第一轮进行中点了「停止」
+            self.manager.request_cancel(self.task_id)
+            raise SentCodeAppDeliveryError("app only", reason="SENT_CODE_TYPE_APP")
+
+        with self._run_ctx(
+            sms=sms,
+            gw=gw,
+            send_code=AsyncMock(side_effect=send_code_impl),
+            extra=[
+                patch.object(RegistrationOrchestrator, "_resolve_custom_proxy", new=AsyncMock(return_value=None)),
+                patch("backend.app.services.registrar.BannedPhonesCache.remember"),
+            ],
+        ):
+            await RegistrationOrchestrator.run_registration(
+                task_id=self.task_id,
+                country="cl",
+                max_number_attempts=5,
+                no_number_retries=0,
+            )
+
+        task = self.manager.get_task(self.task_id)
+        self.assertEqual(calls["n"], 1)
+        self.assertEqual(sms.cancel_calls, ["act-1"])
+        self.assertEqual(task["status"], "canceled")
+        self.assertIn("HUNT_CANCELED", task.get("error", ""))
+        logs = "\n".join(task["logs"])
+        self.assertIn("收到取消请求", logs)
+
+
+class TestHuntLeaseBudget(unittest.TestCase):
+    """S7：每任务取号次数 × 任务数 的联合上限。"""
+
+    def test_default_limit_clamps_single_task(self):
+        budget = RegistrationOrchestrator.resolve_hunt_lease_budget(
+            make_config(), count=1, max_number_attempts=500
+        )
+        self.assertEqual(budget["limit"], 200)
+        self.assertEqual(budget["max_number_attempts"], 200)
+        self.assertEqual(budget["requested_attempts"], 500)
+        self.assertEqual(budget["planned_leases"], 200)
+        self.assertTrue(budget["clamped"])
+        self.assertFalse(budget["rejected"])
+
+    def test_default_limit_clamps_batch_product(self):
+        budget = RegistrationOrchestrator.resolve_hunt_lease_budget(
+            make_config(), count=10, max_number_attempts=500
+        )
+        self.assertEqual(budget["max_number_attempts"], 20)
+        self.assertEqual(budget["planned_leases"], 200)
+        self.assertTrue(budget["clamped"])
+
+    def test_within_limit_is_untouched(self):
+        budget = RegistrationOrchestrator.resolve_hunt_lease_budget(
+            make_config(), count=4, max_number_attempts=50
+        )
+        self.assertEqual(budget["max_number_attempts"], 50)
+        self.assertEqual(budget["planned_leases"], 200)
+        self.assertFalse(budget["clamped"])
+
+    def test_config_override_limit(self):
+        budget = RegistrationOrchestrator.resolve_hunt_lease_budget(
+            make_config(hunt_max_total_leases=50), count=3, max_number_attempts=100
+        )
+        self.assertEqual(budget["limit"], 50)
+        self.assertEqual(budget["max_number_attempts"], 16)
+        self.assertEqual(budget["planned_leases"], 48)
+        self.assertTrue(budget["clamped"])
+
+    def test_count_over_limit_is_rejected(self):
+        budget = RegistrationOrchestrator.resolve_hunt_lease_budget(
+            make_config(hunt_max_total_leases=2), count=5, max_number_attempts=10
+        )
+        self.assertTrue(budget["rejected"])
+        self.assertIn("hunt_max_total_leases", budget["message"])
+
+    def test_hunt_disabled_stays_single_lease(self):
+        budget = RegistrationOrchestrator.resolve_hunt_lease_budget(
+            make_config(), count=3, max_number_attempts=None
+        )
+        self.assertEqual(budget["max_number_attempts"], 1)
+        self.assertEqual(budget["planned_leases"], 3)
+        self.assertFalse(budget["clamped"])
+
+    def test_garbage_config_falls_back_to_default(self):
+        budget = RegistrationOrchestrator.resolve_hunt_lease_budget(
+            make_config(hunt_max_total_leases="oops"), count=1, max_number_attempts=300
+        )
+        self.assertEqual(budget["limit"], 200)
+        self.assertEqual(budget["max_number_attempts"], 200)
+
+
+class TestHuntCancelHttpApi(unittest.TestCase):
+    """取消接口与租号预算接口的 HTTP 形状。"""
+
+    @classmethod
+    def setUpClass(cls):
+        from fastapi.testclient import TestClient
+        from backend.app.main import app
+
+        cls.client = TestClient(app)
+
+    def setUp(self):
+        self.manager = RegistrationTaskManager.get_instance()
+        self.manager.tasks = {}
+        self.manager.batches = {}
+
+    def test_cancel_pending_task_terminates(self):
+        task_id = self.manager.create_task()
+        res = self.client.post(f"/api/register/tasks/{task_id}/cancel")
+        self.assertEqual(res.status_code, 200)
+        body = res.json()
+        self.assertTrue(body["accepted"])
+        self.assertTrue(body["terminated"])
+        self.assertEqual(body["status"], "canceled")
+        self.assertTrue(body["cancel_requested"])
+
+    def test_cancel_running_task_is_accepted_but_not_terminal(self):
+        task_id = self.manager.create_task()
+        self.manager.update_task_status(task_id, "running")
+        res = self.client.post(
+            f"/api/register/tasks/{task_id}/cancel", json={"reason": "手工停止"}
+        )
+        body = res.json()
+        self.assertTrue(body["accepted"])
+        self.assertFalse(body["terminated"])
+        self.assertEqual(body["status"], "running")
+        self.assertTrue(any("手工停止" in line for line in body["logs"]))
+
+    def test_cancel_terminal_task_reports_not_accepted(self):
+        task_id = self.manager.create_task()
+        self.manager.update_task_status(task_id, "success")
+        body = self.client.post(f"/api/register/tasks/{task_id}/cancel").json()
+        self.assertFalse(body["accepted"])
+        self.assertEqual(body["status"], "success")
+
+    def test_cancel_unknown_task_is_404(self):
+        self.assertEqual(
+            self.client.post("/api/register/tasks/does-not-exist/cancel").status_code, 404
+        )
+        self.assertEqual(
+            self.client.post("/api/register/batches/does-not-exist/cancel").status_code, 404
+        )
+
+    def test_cancel_batch_groups_tasks(self):
+        batch_id, task_ids = self.manager.create_batch(count=3, concurrency=2)
+        self.manager.update_task_status(task_ids[0], "running")
+        self.manager.update_task_status(task_ids[1], "failed")
+        body = self.client.post(f"/api/register/batches/{batch_id}/cancel").json()
+        self.assertEqual(body["requested"], [task_ids[0]])
+        self.assertEqual(body["skipped"], [task_ids[1]])
+        self.assertEqual(body["terminated"], [task_ids[2]])
+
+    def test_task_detail_exposes_hunt_progress(self):
+        task_id = self.manager.create_task()
+        self.manager.update_task_status(
+            task_id, "running", hunt_attempt=7, hunt_max=100, hunt_scanned=6,
+            hunt_blacklisted=5, hunt_last_reason="SENT_CODE_TYPE_APP",
+        )
+        body = self.client.get(f"/api/register/tasks/{task_id}").json()
+        self.assertEqual(body["hunt_attempt"], 7)
+        self.assertEqual(body["hunt_max"], 100)
+        self.assertEqual(body["hunt_scanned"], 6)
+        self.assertEqual(body["hunt_blacklisted"], 5)
+        self.assertEqual(body["hunt_last_reason"], "SENT_CODE_TYPE_APP")
+        self.assertFalse(body["cancel_requested"])
+
+    def test_hunt_budget_endpoint_reports_clamped_plan(self):
+        body = self.client.get(
+            "/api/register/hunt-budget",
+            params={"count": 10, "max_number_attempts": 500, "check_balance": False},
+        ).json()
+        self.assertEqual(body["planned_leases"], 200)
+        self.assertEqual(body["max_number_attempts"], 20)
+        self.assertTrue(body["clamped"])
+        self.assertIsNone(body["balance"])
+
+    def test_batch_start_clamps_attempts_and_reports_plan(self):
+        with patch.object(
+            RegistrationOrchestrator, "run_batch", new=AsyncMock(return_value=None)
+        ):
+            body = self.client.post(
+                "/api/register/batch",
+                json={"count": 10, "concurrency": 10, "max_number_attempts": 500},
+            ).json()
+        self.assertEqual(body["max_number_attempts"], 20)
+        self.assertEqual(body["requested_max_number_attempts"], 500)
+        self.assertEqual(body["planned_leases"], 200)
+        self.assertEqual(body["hunt_max_total_leases"], 200)
+        self.assertTrue(body["attempts_clamped"])
+
+    def test_single_start_clamps_attempts(self):
+        with patch.object(
+            RegistrationOrchestrator, "run_registration", new=AsyncMock(return_value=None)
+        ):
+            body = self.client.post(
+                "/api/register/start", json={"max_number_attempts": 500}
+            ).json()
+        self.assertEqual(body["max_number_attempts"], 200)
+        self.assertEqual(body["planned_leases"], 200)
+        self.assertTrue(body["attempts_clamped"])
+
+
 class TestRegistrarClassmethodDecorators(unittest.TestCase):
     """registrar 里首参为 cls 的方法必须真的挂着 @classmethod。"""
 

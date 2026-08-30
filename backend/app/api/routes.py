@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 from pathlib import Path
 from typing import Dict, Any, List, Optional
@@ -25,6 +26,10 @@ from backend.app.models.schemas import (
     SmsallTrialRequest,
     SmsallDeleteEventsRequest,
     TaskStatusResponse,
+    TaskCancelRequest,
+    TaskCancelResponse,
+    BatchCancelResponse,
+    HuntBudgetResponse,
     ManualRegisterStartRequest,
     ManualRegisterStartResponse,
     ManualRegisterSubmitCodeRequest,
@@ -113,7 +118,11 @@ from backend.app.services.proxy_manager import (
     probe_custom_proxies,
     update_custom_proxy_item,
 )
-from backend.app.services.registrar import RegistrationTaskManager, RegistrationOrchestrator
+from backend.app.services.registrar import (
+    SMS_PROVIDER_LABELS,
+    RegistrationTaskManager,
+    RegistrationOrchestrator,
+)
 from backend.app.services.manual_registrar import (
     ManualRegisterError,
     ManualRegistrationOrchestrator,
@@ -132,6 +141,17 @@ from backend.app.services.smsall_webhook import (
 )
 
 router = APIRouter(prefix="/api")
+logger = logging.getLogger(__name__)
+
+
+def _resolve_hunt_budget(*, count: int, max_number_attempts: Optional[int]) -> Dict[str, Any]:
+    """把猎号联合上限（每任务取号次数 × 任务数）算成一份可直接回给前端的预算摘要。"""
+    config = ConfigManager.get_instance().config
+    return RegistrationOrchestrator.resolve_hunt_lease_budget(
+        config,
+        count=count,
+        max_number_attempts=max_number_attempts,
+    )
 
 # ==================== 1. 系统配置与硬件拓扑库 ====================
 @router.get("/config", response_model=AppConfigModel, summary="获取全局仿真配置")
@@ -1030,6 +1050,9 @@ async def delete_custom_proxy(req: CustomProxyDeleteRequest):
 @router.post("/provision/start", response_model=RegisterTaskResponse, summary="触发边缘节点引导任务 (学术规范路径)")
 async def start_registration(req: RegisterTaskRequest, background_tasks: BackgroundTasks):
     manager = RegistrationTaskManager.get_instance()
+    budget = _resolve_hunt_budget(count=1, max_number_attempts=req.max_number_attempts)
+    if budget["rejected"]:
+        raise HTTPException(status_code=400, detail=budget["message"])
     task_id = manager.create_task()
 
     proxy_dict = req.proxy.model_dump() if req.proxy else None
@@ -1044,20 +1067,34 @@ async def start_registration(req: RegisterTaskRequest, background_tasks: Backgro
         proxy_mode=req.proxy_mode,
         sms_provider=req.sms_provider,
         max_price=req.max_price,
-        max_number_attempts=req.max_number_attempts,
+        max_number_attempts=budget["max_number_attempts"],
         no_number_retries=req.no_number_retries,
     )
 
+    message = "虚拟节点引导与协议握手任务已提交后台编排流水线"
+    if budget["max_number_attempts"] > 1:
+        message += f"（{budget['message']}）"
+    if budget["clamped"]:
+        logger.warning("[猎号] 单任务取号次数已裁剪: %s", budget["message"])
+        await manager.append_log(task_id, f"⚠️ [猎号] {budget['message']}")
     return RegisterTaskResponse(
         task_id=task_id,
         status="pending",
-        message="虚拟节点引导与协议握手任务已提交后台编排流水线"
+        message=message,
+        max_number_attempts=budget["max_number_attempts"],
+        requested_max_number_attempts=budget["requested_attempts"],
+        planned_leases=budget["planned_leases"],
+        hunt_max_total_leases=budget["limit"],
+        attempts_clamped=budget["clamped"],
     )
 
 @router.post("/register/batch", response_model=BatchRegisterResponse, summary="并发批量触发边缘节点引导任务")
 @router.post("/provision/batch", response_model=BatchRegisterResponse, summary="并发批量触发边缘节点引导任务 (学术规范路径)")
 async def start_batch_registration(req: BatchRegisterRequest, background_tasks: BackgroundTasks):
     manager = RegistrationTaskManager.get_instance()
+    budget = _resolve_hunt_budget(count=req.count, max_number_attempts=req.max_number_attempts)
+    if budget["rejected"]:
+        raise HTTPException(status_code=400, detail=budget["message"])
     batch_id, task_ids = manager.create_batch(
         count=req.count,
         concurrency=req.concurrency,
@@ -1078,9 +1115,19 @@ async def start_batch_registration(req: BatchRegisterRequest, background_tasks: 
         proxy_mode=req.proxy_mode,
         sms_provider=req.sms_provider,
         max_price=req.max_price,
-        max_number_attempts=req.max_number_attempts,
+        max_number_attempts=budget["max_number_attempts"],
         no_number_retries=req.no_number_retries,
     )
+    message = (
+        f"已提交并发批量引导: {len(task_ids)} 个任务 / 并发度 {req.concurrency}"
+        f"（batch_id={batch_id}）"
+    )
+    if budget["max_number_attempts"] > 1:
+        message += f"；{budget['message']}"
+    if budget["clamped"]:
+        logger.warning("[猎号] 批次取号次数已裁剪: %s", budget["message"])
+        for tid in task_ids:
+            await manager.append_log(tid, f"⚠️ [猎号] {budget['message']}")
     return BatchRegisterResponse(
         batch_id=batch_id,
         task_ids=task_ids,
@@ -1089,10 +1136,12 @@ async def start_batch_registration(req: BatchRegisterRequest, background_tasks: 
         status="pending",
         country=req.country,
         app_type=req.app_type,
-        message=(
-            f"已提交并发批量引导: {len(task_ids)} 个任务 / 并发度 {req.concurrency}"
-            f"（batch_id={batch_id}）"
-        ),
+        message=message,
+        max_number_attempts=budget["max_number_attempts"],
+        requested_max_number_attempts=budget["requested_attempts"],
+        planned_leases=budget["planned_leases"],
+        hunt_max_total_leases=budget["limit"],
+        attempts_clamped=budget["clamped"],
     )
 
 @router.get("/register/batches", summary="获取并发批次列表")
@@ -1128,6 +1177,195 @@ async def get_task_status(task_id: str):
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
     return task
+
+
+@router.get(
+    "/register/hunt-budget",
+    response_model=HuntBudgetResponse,
+    summary="猎号启动前的租号预算与余额闸门",
+)
+@router.get(
+    "/provision/hunt-budget",
+    response_model=HuntBudgetResponse,
+    summary="猎号租号预算 (学术规范路径)",
+)
+async def get_hunt_budget(
+    count: int = Query(default=1, ge=1, le=10, description="批次任务数"),
+    max_number_attempts: Optional[int] = Query(default=None, ge=1, le=500, description="每任务取号次数"),
+    sms_provider: Optional[str] = Query(default=None, description="覆盖接码提供源"),
+    max_price: Optional[float] = Query(default=None, ge=0, description="覆盖单号最高出价"),
+    check_balance: bool = Query(default=True, description="是否顺带查询接码账户余额"),
+):
+    """回答「这次猎号最多会租多少个号、大概最多花多少钱、余额够不够」。
+
+    退订未收到码的号在多数平台不计费，所以 estimated_max_cost 是上限而非预期支出。
+    """
+    config = ConfigManager.get_instance().config
+    budget = RegistrationOrchestrator.resolve_hunt_lease_budget(
+        config, count=count, max_number_attempts=max_number_attempts
+    )
+    provider = RegistrationOrchestrator.resolve_sms_provider(config, sms_provider)
+    bid = RegistrationOrchestrator.resolve_sms_max_price(config, max_price)
+
+    balance: Optional[float] = None
+    balance_error: Optional[str] = None
+    svc = None
+    if check_balance:
+        try:
+            svc = RegistrationOrchestrator._create_sms_service(config, provider)
+            balance = float(await svc.get_balance())
+        except Exception as exc:
+            balance_error = f"{type(exc).__name__}: {exc}"
+        finally:
+            if svc is not None:
+                try:
+                    await svc.close()
+                except Exception:
+                    pass
+
+    estimated = round(budget["planned_leases"] * bid, 4) if bid else None
+    sufficient = None
+    if balance is not None and estimated is not None:
+        sufficient = balance >= estimated
+
+    parts = [budget["message"]]
+    if balance is not None:
+        parts.append(f"账户余额 {balance:g}")
+    elif balance_error:
+        parts.append(f"余额查询失败（{balance_error}）")
+    if estimated is not None:
+        parts.append(
+            f"按单号出价 {bid:g} 估算最多花费 {estimated:g}（未收到码的号退订后一般不计费）"
+        )
+    else:
+        parts.append("未设置最高出价，无法估算费用上限")
+    return HuntBudgetResponse(
+        count=budget["count"],
+        requested_attempts=budget["requested_attempts"],
+        max_number_attempts=budget["max_number_attempts"],
+        planned_leases=budget["planned_leases"],
+        hunt_max_total_leases=budget["limit"],
+        clamped=budget["clamped"],
+        rejected=budget["rejected"],
+        provider=provider,
+        provider_label=SMS_PROVIDER_LABELS.get(provider) or provider,
+        balance=balance,
+        balance_error=balance_error,
+        max_price=bid,
+        estimated_max_cost=estimated,
+        balance_sufficient=sufficient,
+        message="；".join(parts),
+    )
+
+
+@router.post(
+    "/register/tasks/{task_id}/cancel",
+    response_model=TaskCancelResponse,
+    summary="取消单个引导 / 猎号任务（下一轮取号前收住）",
+)
+@router.post(
+    "/provision/tasks/{task_id}/cancel",
+    response_model=TaskCancelResponse,
+    summary="取消单个引导任务 (学术规范路径)",
+)
+async def cancel_registration_task(task_id: str, req: Optional[TaskCancelRequest] = None):
+    """自动 / 猎号任务的取消入口。
+
+    手动单号任务需要释放 MTProto 连接，所以直接转交 ManualRegistrationOrchestrator；
+    自动任务只置 cancel_requested，由猎号循环在下一轮取号前收尾（不打断进行中的 OTP 轮询）。
+    """
+    manager = RegistrationTaskManager.get_instance()
+    task = manager.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    reason = (req.reason if req else None) or ""
+    if task.get("mode") == "manual":
+        try:
+            result = await ManualRegistrationOrchestrator.cancel(task_id)
+        except ManualRegisterError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+        return TaskCancelResponse(
+            task_id=task_id,
+            status=result.get("status") or "canceled",
+            accepted=True,
+            terminated=(result.get("status") == "canceled"),
+            cancel_requested=True,
+            message=result.get("message") or "手动任务已取消",
+            logs=result.get("logs") or [],
+        )
+
+    result = manager.request_cancel(task_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+    if not result["changed"]:
+        return TaskCancelResponse(
+            task_id=task_id,
+            status=result["status"],
+            accepted=False,
+            terminated=False,
+            cancel_requested=bool(task.get("cancel_requested")),
+            message=f"任务已处于终态 {result['status']}，无需再次取消",
+            logs=list(task.get("logs") or []),
+        )
+
+    suffix = f"（原因: {reason}）" if reason else ""
+    if result["terminated"]:
+        await manager.append_log(task_id, f"[取消] 任务尚未启动，已直接置为 canceled{suffix}")
+        message = "任务尚未进入引导流程，已直接取消，未消耗号码与 Push Token"
+    else:
+        await manager.append_log(
+            task_id,
+            f"[取消] 已收到取消请求{suffix}：不再开新一轮取号；"
+            "进行中的 sendCode / OTP 轮询会跑完当前一轮后收尾退款"
+        )
+        message = "取消请求已受理：不再开新一轮取号，当前一轮结束后收尾"
+    refreshed = manager.get_task(task_id) or {}
+    return TaskCancelResponse(
+        task_id=task_id,
+        status=refreshed.get("status") or result["status"],
+        accepted=True,
+        terminated=result["terminated"],
+        cancel_requested=True,
+        message=message,
+        logs=list(refreshed.get("logs") or []),
+    )
+
+
+@router.post(
+    "/register/batches/{batch_id}/cancel",
+    response_model=BatchCancelResponse,
+    summary="取消整个批次：未启动的直接终止，运行中的下一轮收住",
+)
+@router.post(
+    "/provision/batches/{batch_id}/cancel",
+    response_model=BatchCancelResponse,
+    summary="取消整个批次 (学术规范路径)",
+)
+async def cancel_registration_batch(batch_id: str):
+    manager = RegistrationTaskManager.get_instance()
+    result = manager.request_batch_cancel(batch_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Batch not found")
+    for tid in result["requested"]:
+        await manager.append_log(
+            tid,
+            "[取消] 批次取消请求已受理：不再开新一轮取号，当前一轮结束后收尾"
+        )
+    for tid in result["terminated"]:
+        await manager.append_log(tid, "[取消] 批次取消：任务尚未启动，已直接置为 canceled")
+    return BatchCancelResponse(
+        batch_id=batch_id,
+        task_ids=result["task_ids"],
+        requested=result["requested"],
+        terminated=result["terminated"],
+        skipped=result["skipped"],
+        message=(
+            f"批次 {batch_id} 取消已受理：{len(result['terminated'])} 个未启动任务直接终止，"
+            f"{len(result['requested'])} 个运行中任务将在下一轮取号前收住，"
+            f"{len(result['skipped'])} 个已处于终态"
+        ),
+    )
 
 
 @router.post(

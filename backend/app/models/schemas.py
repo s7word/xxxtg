@@ -315,6 +315,15 @@ class AppConfigModel(BaseModel):
         le=500,
         description="前端启用猎号时的默认最大取号次数（扫平台号码上限）",
     )
+    hunt_max_total_leases: int = Field(
+        default=200,
+        ge=1,
+        le=5000,
+        description=(
+            "猎号联合上限：单任务取号次数 × 批次任务数 的乘积上限，即一次启动最多向接码平台"
+            "租号的次数。超过时后端会按批次数把每任务取号次数裁剪到上限内并记录日志"
+        ),
+    )
     phone_precheck_enabled: bool = Field(
         default=True,
         description=(
@@ -661,6 +670,26 @@ class RegisterTaskResponse(BaseModel):
     task_id: str
     status: str
     message: str
+    max_number_attempts: Optional[int] = Field(
+        default=None,
+        description="实际生效的取号次数（可能已被猎号联合上限裁剪）",
+    )
+    requested_max_number_attempts: Optional[int] = Field(
+        default=None,
+        description="请求里填写的取号次数，便于前端提示裁剪",
+    )
+    planned_leases: Optional[int] = Field(
+        default=None,
+        description="预计最多租号次数",
+    )
+    hunt_max_total_leases: Optional[int] = Field(
+        default=None,
+        description="生效的猎号联合上限",
+    )
+    attempts_clamped: bool = Field(
+        default=False,
+        description="取号次数是否因联合上限被裁剪",
+    )
 
 NodeProvisioningResponse = RegisterTaskResponse
 
@@ -675,6 +704,26 @@ class BatchRegisterResponse(BaseModel):
     message: str
     country: Optional[str] = None
     app_type: Optional[str] = None
+    max_number_attempts: Optional[int] = Field(
+        default=None,
+        description="实际生效的每任务取号次数（可能已被猎号联合上限裁剪）",
+    )
+    requested_max_number_attempts: Optional[int] = Field(
+        default=None,
+        description="请求里填写的每任务取号次数，便于前端提示裁剪",
+    )
+    planned_leases: Optional[int] = Field(
+        default=None,
+        description="预计最多租号次数 = 任务数 × 每任务取号次数",
+    )
+    hunt_max_total_leases: Optional[int] = Field(
+        default=None,
+        description="生效的猎号联合上限",
+    )
+    attempts_clamped: bool = Field(
+        default=False,
+        description="每任务取号次数是否因联合上限被裁剪",
+    )
 
 
 class SmsallTrialRequest(BaseModel):
@@ -732,10 +781,71 @@ class TaskStatusResponse(BaseModel):
     expires_at: Optional[str] = Field(default=None, description="手动等待验证码的截止时间")
     push_task_id: Optional[str] = Field(default=None, description="REGHelp Push Token 任务 id，用于 setStatus 退款审计")
     push_provider: Optional[str] = Field(default=None, description="本次生效的 Attestation 提供源: reghelp / antisafety")
+    hunt_attempt: Optional[int] = Field(default=None, description="猎号：当前是第几次取号")
+    hunt_max: Optional[int] = Field(default=None, description="猎号：本任务最多取号次数")
+    hunt_scanned: Optional[int] = Field(default=None, description="猎号：已扫过的号码数")
+    hunt_blacklisted: Optional[int] = Field(default=None, description="猎号：已拉黑/拦截的号码数")
+    hunt_last_reason: Optional[str] = Field(default=None, description="猎号：最后一次失败原因")
+    cancel_requested: bool = Field(default=False, description="是否已收到取消请求（下一轮取号前生效）")
     created_at: str
     updated_at: str
 
 NodeTaskStatusResponse = TaskStatusResponse
+
+
+class TaskCancelRequest(BaseModel):
+    """任务级取消请求（路径参数之外的可选载荷）"""
+    reason: Optional[str] = Field(default=None, max_length=200, description="可选的取消原因，写入任务日志")
+
+
+class TaskCancelResponse(BaseModel):
+    """任务级取消响应
+
+    猎号任务只在每轮取号前检查取消标记，因此 status 可能仍是 running：
+    accepted=true 表示已受理，terminated=true 表示任务当场就进了终态。
+    """
+    task_id: str
+    status: str
+    accepted: bool = Field(default=True, description="是否受理了本次取消")
+    terminated: bool = Field(default=False, description="任务是否已当场进入终态")
+    cancel_requested: bool = Field(default=False, description="任务上的取消标记是否已置位")
+    message: str
+    logs: List[str] = Field(default_factory=list)
+
+
+class BatchCancelResponse(BaseModel):
+    """批次级取消响应"""
+    batch_id: str
+    task_ids: List[str] = Field(default_factory=list)
+    requested: List[str] = Field(default_factory=list, description="已置取消标记、等下一轮收住的任务")
+    terminated: List[str] = Field(default_factory=list, description="尚未启动、已当场置为 canceled 的任务")
+    skipped: List[str] = Field(default_factory=list, description="已处于终态、无需取消的任务")
+    message: str
+
+
+class HuntBudgetResponse(BaseModel):
+    """猎号启动前的租号预算与余额闸门"""
+    count: int = Field(description="批次任务数")
+    requested_attempts: int = Field(description="请求的每任务取号次数")
+    max_number_attempts: int = Field(description="裁剪后实际生效的每任务取号次数")
+    planned_leases: int = Field(description="预计最多租号次数 = count × attempts")
+    hunt_max_total_leases: int = Field(description="生效的猎号联合上限")
+    clamped: bool = Field(default=False, description="是否因联合上限被裁剪")
+    rejected: bool = Field(default=False, description="任务数本身已超上限，无法裁剪")
+    provider: str = Field(description="接码提供源")
+    provider_label: Optional[str] = Field(default=None)
+    balance: Optional[float] = Field(default=None, description="接码账户余额（按平台结算币种原样返回）")
+    balance_error: Optional[str] = Field(default=None, description="余额查询失败原因")
+    max_price: Optional[float] = Field(default=None, description="生效的单号最高出价")
+    estimated_max_cost: Optional[float] = Field(
+        default=None,
+        description="planned_leases × max_price 的上限估算；未收到码的号退订后通常不计费",
+    )
+    balance_sufficient: Optional[bool] = Field(
+        default=None,
+        description="余额与上限估算都可得时的粗略判断；None 表示无法判断",
+    )
+    message: str
 
 
 # ==================== 手动单号注册调试控制台 ====================

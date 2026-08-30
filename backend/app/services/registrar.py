@@ -247,6 +247,9 @@ DEFAULT_HUNT_NO_NUMBER_RETRIES = 20
 DEFAULT_HUNT_NO_NUMBER_DELAY_SEC = 2.0
 DEFAULT_HUNT_PROXY_MAX_USES = 5
 DEFAULT_HUNT_DEVICE_MAX_USES = 8
+# 猎号联合上限：单任务取号次数 × 批次任务数 = 本次最多向接码平台租号的次数。
+# 500 × 10 会一次把余额抽干，所以默认把乘积压到 200，可由 config.hunt_max_total_leases 覆盖。
+DEFAULT_HUNT_MAX_TOTAL_LEASES = 200
 # 猎号跨轮复用 Push Token 时，REGHelp 的 180s 退款窗口会把 OTP 轮询越压越短。
 # Token 签发超过该秒数、或窗口余量已不足 HUNT_MIN_SMS_POLL_ATTEMPTS 次轮询时，
 # 先退旧 Token 再换新的，保证真 SMS 号有完整收码时间。
@@ -487,6 +490,63 @@ class RegistrationTaskManager:
             self.tasks[task_id]["updated_at"] = datetime.datetime.now().isoformat()
             for k, v in kwargs.items():
                 self.tasks[task_id][k] = v
+
+    def request_cancel(self, task_id: str) -> Optional[Dict[str, Any]]:
+        """给任务置取消标记，返回 (状态, 是否已直接终止) 摘要；任务不存在返回 None。
+
+        pending 任务还没有进入编排循环，直接置终态 canceled 即可；running 及其后续阶段
+        只能置 cancel_requested，由 `_hunt_cancel_requested` 在下一轮取号前收住。
+        """
+        with self._lock:
+            task = self.tasks.get(task_id)
+            if not task:
+                return None
+            status = task.get("status") or "pending"
+            now = datetime.datetime.now().isoformat()
+            if status in TERMINAL_TASK_STATUSES:
+                return {"task_id": task_id, "status": status, "changed": False, "terminated": False}
+            task["cancel_requested"] = True
+            task["cancel_requested_at"] = now
+            task["updated_at"] = now
+            if status == "pending":
+                task["status"] = "canceled"
+                return {"task_id": task_id, "status": "canceled", "changed": True, "terminated": True}
+            return {"task_id": task_id, "status": status, "changed": True, "terminated": False}
+
+    def request_batch_cancel(self, batch_id: str) -> Optional[Dict[str, Any]]:
+        """批次级取消：逐个任务置标记，返回受理 / 直接终止 / 已终态的分组。"""
+        with self._lock:
+            batch = self.batches.get(batch_id)
+            if not batch:
+                return None
+            task_ids = list(batch.get("task_ids") or [])
+            batch["cancel_requested"] = True
+            batch["updated_at"] = datetime.datetime.now().isoformat()
+        requested: List[str] = []
+        terminated: List[str] = []
+        skipped: List[str] = []
+        for tid in task_ids:
+            result = self.request_cancel(tid)
+            if result is None or not result["changed"]:
+                skipped.append(tid)
+            elif result["terminated"]:
+                terminated.append(tid)
+            else:
+                requested.append(tid)
+        return {
+            "batch_id": batch_id,
+            "task_ids": task_ids,
+            "requested": requested,
+            "terminated": terminated,
+            "skipped": skipped,
+        }
+
+    def cancel_requested(self, task_id: str) -> bool:
+        with self._lock:
+            task = self.tasks.get(task_id)
+            if not task:
+                return False
+            return task.get("status") == "canceled" or bool(task.get("cancel_requested"))
 
 
 NodeProvisioningTaskManager = RegistrationTaskManager
@@ -1549,18 +1609,82 @@ class RegistrationOrchestrator:
         }
 
     @classmethod
+    def resolve_hunt_lease_budget(
+        cls,
+        config,
+        *,
+        count: int = 1,
+        max_number_attempts: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """把「每任务取号次数 × 批次任务数」压到联合上限内。
+
+        猎号真正花钱的动作是向接码平台租号，单任务 500 次 × 10 路并发就是 5000 次租号，
+        足以一次抽干余额。这里统一算出计划租号次数，超限时按批次数把 attempts 裁到上限内，
+        并把裁剪结果交给调用方去播报——不能悄悄改用户填的数字。
+        """
+        try:
+            limit = int(getattr(config, "hunt_max_total_leases", DEFAULT_HUNT_MAX_TOTAL_LEASES) or DEFAULT_HUNT_MAX_TOTAL_LEASES)
+        except (TypeError, ValueError):
+            limit = DEFAULT_HUNT_MAX_TOTAL_LEASES
+        limit = max(1, min(limit, MAX_NUMBER_ATTEMPTS_CAP * BATCH_CONCURRENCY_MAX))
+
+        try:
+            safe_count = int(count or 1)
+        except (TypeError, ValueError):
+            safe_count = 1
+        safe_count = max(1, safe_count)
+
+        try:
+            requested = int(max_number_attempts or 1)
+        except (TypeError, ValueError):
+            requested = 1
+        requested = max(1, min(requested, MAX_NUMBER_ATTEMPTS_CAP))
+
+        attempts = requested
+        clamped = False
+        rejected = False
+        if safe_count > limit:
+            # 光是任务数就超过联合上限，没有可裁剪的空间，只能让调用方拒绝
+            rejected = True
+            attempts = 1
+        elif safe_count * requested > limit:
+            attempts = max(1, limit // safe_count)
+            clamped = attempts != requested
+
+        planned = safe_count * attempts
+        if rejected:
+            message = (
+                f"批次任务数 {safe_count} 已超过猎号联合上限 {limit}（hunt_max_total_leases），"
+                "请减少任务数或调高上限"
+            )
+        elif clamped:
+            message = (
+                f"每任务取号次数已从 {requested} 裁剪为 {attempts}："
+                f"{safe_count} 路 × {requested} 次 = {safe_count * requested} 次租号，"
+                f"超过联合上限 {limit}（hunt_max_total_leases）。"
+                f"当前计划最多租号 {planned} 次"
+            )
+        else:
+            message = f"计划最多租号 {planned} 次（{safe_count} 路 × {attempts} 次，联合上限 {limit}）"
+        return {
+            "count": safe_count,
+            "requested_attempts": requested,
+            "max_number_attempts": attempts,
+            "planned_leases": planned,
+            "limit": limit,
+            "clamped": clamped,
+            "rejected": rejected,
+            "message": message,
+        }
+
+    @classmethod
     def _hunt_cancel_requested(cls, task_id: str, manager: RegistrationTaskManager) -> bool:
         """猎号循环的取消检查钩子。
 
-        完整的 cancel API（含正在进行中的 sendCode/OTP 中断）尚未接入；当前只读取任务上
-        已有的取消标记，使外部一旦把任务置为 canceled/cancel_requested，循环下一轮就收住。
+        POST /api/register/tasks/{id}/cancel 只置 cancel_requested，不打断正在进行中的
+        sendCode / OTP 轮询；本钩子在每轮取号前读取标记，让循环在下一轮开始前收住。
         """
-        task = manager.get_task(task_id)
-        if not task:
-            return False
-        if task.get("status") == "canceled":
-            return True
-        return bool(task.get("cancel_requested"))
+        return manager.cancel_requested(task_id)
 
     @classmethod
     async def _finalize_exhausted_hunt(
@@ -1674,6 +1798,13 @@ class RegistrationOrchestrator:
         无库存默认软重试；代理/设备按次数轮换以降低 FLOOD。
         """
         manager = RegistrationTaskManager.get_instance()
+        # 排队期间被取消的任务不得被这里的 running 复活
+        if cls._hunt_cancel_requested(task_id, manager):
+            await manager.append_log(task_id, "[取消] 任务在进入引导流程前已被取消，不再租号")
+            manager.update_task_status(
+                task_id, "canceled", error="HUNT_CANCELED: 启动前取消，未消耗号码与 Push Token"
+            )
+            return
         manager.update_task_status(task_id, "running")
 
         config = ConfigManager.get_instance().config
@@ -1757,11 +1888,21 @@ class RegistrationOrchestrator:
             await manager.append_log(task_id, f"网络语言拓扑: {profile['system_lang_code']}, 时区偏置: {profile.get('tz_offset', -14400)}")
 
             if hunt_enabled:
+                # 代理被 1:1 钉死（批量槽位 / 显式指定）时不存在池内轮换语义，如实播报
+                proxy_pinned = bool(proxy_override or proxy_id)
+                proxy_note = (
+                    "出口已 1:1 钉死"
+                    + ("（批量槽位）" if proxy_override else "（用户显式指定）")
+                    + "，全程不轮换代理"
+                    if proxy_pinned
+                    else f"代理每 {hunt_limits['proxy_max_uses']} 次 sendCode 尝试轮换（池内需有其它同国节点）"
+                )
                 await manager.append_log(
                     task_id,
                     f"[猎号] 目标：注册成功即停，否则扫号拉黑。"
-                    f"最多取号 {max_attempts} 次；无库存软重试 {hunt_limits['no_number_retries']} 次；"
-                    f"代理每 {hunt_limits['proxy_max_uses']} 次 sendCode 轮换；"
+                    f"最多取号 {max_attempts} 次（即本任务最多向接码平台租号 {max_attempts} 次）；"
+                    f"无库存软重试 {hunt_limits['no_number_retries']} 次；"
+                    f"{proxy_note}；"
                     f"设备每 {hunt_limits['device_max_uses']} 次 sendCode 换指纹+Push"
                 )
                 manager.update_task_status(task_id, "running", hunt_max=max_attempts)
@@ -2593,7 +2734,20 @@ class RegistrationOrchestrator:
                 manager.batches[batch_id]["updated_at"] = datetime.datetime.now().isoformat()
 
         async def _run_one(tid: str) -> None:
+            # 批次已被取消时不再排队等槽位，也不占用代理槽（否则会白租一轮号）
+            if manager.cancel_requested(tid):
+                await manager.append_log(tid, "[取消] 批次已取消，跳过本任务的槽位排队")
+                manager.update_task_status(
+                    tid, "canceled", error="HUNT_CANCELED: 批次取消，未消耗号码与 Push Token"
+                )
+                return
             async with sem:
+                if manager.cancel_requested(tid):
+                    await manager.append_log(tid, "[取消] 取得槽位后发现批次已取消，立即释放")
+                    manager.update_task_status(
+                        tid, "canceled", error="HUNT_CANCELED: 批次取消，未消耗号码与 Push Token"
+                    )
+                    return
                 await manager.append_log(
                     tid,
                     f"[批量编排] batch_id={batch_id} 取得并发槽位 (concurrency={limit})，开始引导"
