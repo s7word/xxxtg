@@ -51,7 +51,7 @@
 
 <script setup>
 import { computed } from 'vue'
-import { Zap, Shield, Globe, SlidersHorizontal, Smartphone, KeyRound } from 'lucide-vue-next'
+import { Zap, Shield, Globe, SlidersHorizontal, Smartphone, KeyRound, Ban } from 'lucide-vue-next'
 import { useUi } from '../composables/useUi'
 import { useTasks } from '../composables/useTasks'
 import { useProxy } from '../composables/useProxy'
@@ -69,6 +69,7 @@ const iconMap = {
   zap: Zap,
   shield: Shield,
   key: KeyRound,
+  ban: Ban,
   globe: Globe,
   sliders: SlidersHorizontal,
   smartphone: Smartphone

@@ -448,13 +448,72 @@ class SmsAvailableCountriesResponse(BaseModel):
 
 
 class BannedPhonesCacheStatusResponse(BaseModel):
-    """本地已确认封禁号缓存状态与号段画像"""
+    """本地号码黑名单状态与号段画像"""
     enabled: bool = True
     size: int = 0
     path: str = ""
     message: str = ""
     prefixes: List[Dict[str, Any]] = Field(default_factory=list)
     countries: List[Dict[str, Any]] = Field(default_factory=list)
+    categories: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+class BannedPhoneItem(BaseModel):
+    phone: str = ""
+    digits: str = ""
+    reason: str = ""
+    source: str = ""
+    category: str = "banned"
+    country: Optional[str] = None
+    prefix: str = ""
+    note: str = ""
+    first_seen: str = ""
+    last_seen: str = ""
+    hits: int = 1
+
+
+class BannedPhonesSummary(BaseModel):
+    total: int = 0
+    banned: int = 0
+    already_registered: int = 0
+    manual: int = 0
+
+
+class BannedPhonesListResponse(BaseModel):
+    success: bool = True
+    summary: BannedPhonesSummary = Field(default_factory=BannedPhonesSummary)
+    items: List[BannedPhoneItem] = Field(default_factory=list)
+    total: int = 0
+    limit: int = 200
+    offset: int = 0
+    path: str = ""
+    message: str = ""
+
+
+class BannedPhoneAddRequest(BaseModel):
+    phone: str = Field(..., min_length=5, description="国际号码，可带 +")
+    reason: str = Field(default="MANUAL_BLACKLIST", description="入库原因")
+    category: Optional[str] = Field(
+        default="manual",
+        description="banned | already_registered | manual",
+    )
+    note: str = Field(default="", description="备注")
+    country: Optional[str] = None
+
+
+class BannedPhonesPurgeRequest(BaseModel):
+    category: Optional[str] = Field(
+        default=None,
+        description="仅清理指定分类；省略则清空全部",
+    )
+
+
+class BannedPhonesActionResponse(BaseModel):
+    success: bool = True
+    message: str = ""
+    deleted: int = 0
+    summary: Optional[BannedPhonesSummary] = None
+    item: Optional[BannedPhoneItem] = None
 
 
 class PhonePrecheckStatusResponse(BaseModel):

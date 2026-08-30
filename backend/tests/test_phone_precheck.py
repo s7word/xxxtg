@@ -263,15 +263,18 @@ class TestRegistrarPrecheckGate(unittest.IsolatedAsyncioTestCase):
             {"user_id": 6125786846, "username": "olduser"},
             method="resolve_phone",
         ))
-        should_continue = await RegistrationOrchestrator._apply_phone_precheck(
-            phone="+56911112222",
-            act_id="act-precheck",
-            sms_svc=self.sms,
-            task_id=self.task_id,
-            manager=self.manager,
-            precheck_svc=fake,
-        )
+        with patch("backend.app.services.registrar.BannedPhonesCache.remember") as remember:
+            should_continue = await RegistrationOrchestrator._apply_phone_precheck(
+                phone="+56911112222",
+                act_id="act-precheck",
+                sms_svc=self.sms,
+                task_id=self.task_id,
+                manager=self.manager,
+                precheck_svc=fake,
+            )
         self.assertFalse(should_continue)
+        remember.assert_called_once()
+        self.assertEqual(remember.call_args.kwargs.get("category"), "already_registered")
         self.assertEqual(self.sms.cancel_calls, ["act-precheck"])
         task = self.manager.get_task(self.task_id)
         self.assertTrue(task["precheck_intercepted"])

@@ -11,6 +11,12 @@ from backend.app.models.schemas import (
     TestApiResponse,
     PhonePrecheckStatusResponse,
     BannedPhonesCacheStatusResponse,
+    BannedPhoneItem,
+    BannedPhonesSummary,
+    BannedPhonesListResponse,
+    BannedPhoneAddRequest,
+    BannedPhonesPurgeRequest,
+    BannedPhonesActionResponse,
     RegisterTaskRequest,
     RegisterTaskResponse,
     BatchRegisterRequest,
@@ -1200,10 +1206,98 @@ async def phone_precheck_status():
 @router.get(
     "/banned-phones/status",
     response_model=BannedPhonesCacheStatusResponse,
-    summary="本地封禁号缓存与号段画像",
+    summary="本地号码黑名单状态与号段画像",
 )
 async def banned_phones_status():
     return BannedPhonesCache.describe_status().to_dict()
+
+
+@router.get(
+    "/banned-phones",
+    response_model=BannedPhonesListResponse,
+    summary="查询本地号码黑名单（拉黑 / 已注册 / 手动）",
+)
+async def list_banned_phones(
+    q: Optional[str] = Query(default=None, description="按号码数字模糊搜索"),
+    category: Optional[str] = Query(default=None, description="banned|already_registered|manual"),
+    country: Optional[str] = Query(default=None, description="国家码过滤，如 za/co/id"),
+    limit: int = Query(default=200, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
+):
+    items, total = BannedPhonesCache.list_items(
+        q=q, category=category, country=country, limit=limit, offset=offset,
+    )
+    summary_raw = BannedPhonesCache.summary()
+    status = BannedPhonesCache.describe_status()
+    return BannedPhonesListResponse(
+        success=True,
+        summary=BannedPhonesSummary(**summary_raw),
+        items=[BannedPhoneItem(**row) for row in items],
+        total=total,
+        limit=limit,
+        offset=offset,
+        path=status.path,
+        message=status.message,
+    )
+
+
+@router.post(
+    "/banned-phones",
+    response_model=BannedPhonesActionResponse,
+    summary="手动录入号码到本地黑名单",
+)
+async def add_banned_phone(req: BannedPhoneAddRequest):
+    from backend.app.services.banned_phones import SOURCE_MANUAL
+
+    record = BannedPhonesCache.remember(
+        req.phone,
+        reason=req.reason or "MANUAL_BLACKLIST",
+        source=SOURCE_MANUAL,
+        country=req.country,
+        category=req.category or "manual",
+        note=req.note or "",
+    )
+    if not record:
+        raise HTTPException(status_code=400, detail="号码无效")
+    return BannedPhonesActionResponse(
+        success=True,
+        message=f"已收录 {record.phone}",
+        deleted=0,
+        summary=BannedPhonesSummary(**BannedPhonesCache.summary()),
+        item=BannedPhoneItem(**record.to_dict()),
+    )
+
+
+@router.delete(
+    "/banned-phones/{phone}",
+    response_model=BannedPhonesActionResponse,
+    summary="从本地黑名单移除单个号码",
+)
+async def delete_banned_phone(phone: str):
+    ok = BannedPhonesCache.remove(phone)
+    return BannedPhonesActionResponse(
+        success=ok,
+        message="已移除" if ok else "未找到该号码",
+        deleted=1 if ok else 0,
+        summary=BannedPhonesSummary(**BannedPhonesCache.summary()),
+    )
+
+
+@router.post(
+    "/banned-phones/purge",
+    response_model=BannedPhonesActionResponse,
+    summary="按分类或全部清空本地号码黑名单",
+)
+async def purge_banned_phones(req: BannedPhonesPurgeRequest):
+    deleted = BannedPhonesCache.purge(category=req.category)
+    label = req.category or "全部"
+    return BannedPhonesActionResponse(
+        success=True,
+        message=f"已清理 {deleted} 条（范围: {label}）",
+        deleted=deleted,
+        summary=BannedPhonesSummary(**BannedPhonesCache.summary()),
+    )
+
 
 # ==================== 4. 密码学上下文快照与节点资产 ====================
 @router.get("/sessions", summary="获取已持久化的密码学上下文快照列表")

@@ -90,7 +90,7 @@ curl http://127.0.0.1:8000/api/health
 - `data/sessions/` — 注册产出 session
 - `lod_user/` — 探针账号 `.session` / `.json`
 - `data/device_dbs/` — 设备指纹库
-- `data/banned_phones_cache.json` — 封禁号本地缓存
+- `data/banned_phones_cache.json` — 号码黑名单（拉黑 / 已注册 / 手动）
 
 云机已打包同步过；后续改 config 需在服务器与 Git 之外单独备份。
 
@@ -117,6 +117,8 @@ frontend/src/
   components/console/        # 控制台 + 手动单号调试
   components/settings/       # 全局配置、REGHelp、5SIM 等
   components/proxy/          # 代理网格
+  components/tokens/          # Push Token 库存
+  components/blacklist/       # 号码黑名单查询管理
   components/vault/          # 账号金库
   components/devices/        # 设备指纹库
   composables/               # useManualRegister, useConfig, useTasks...
@@ -133,6 +135,7 @@ backend/app/
     proxyseller.py           # Proxy-Seller + 内置 CL/IN 静态池
     proxy_manager.py         # 自建代理池导入
     phone_precheck.py        # ResolvePhone 白号预检
+    banned_phones.py         # 本地号码黑名单（封禁/已注册）
     fivesim.py / grizzlysms.py / vak_sms 等 SMS 网关
     device_db_manager.py     # 设备指纹库管理
     account_vault.py         # 金库上传/探针
@@ -141,9 +144,9 @@ backend/app/
 
 ### 注册主流程（简化）
 
-1. SMS 取号 → 2. **预检**（ResolvePhone，不烧 Push）→ 3. REGHelp Push Token → 4. MTProto connect → 5. `auth.sendCode` → 6. 等短信 / 处理 SentCodeTypeApp → 7. signIn/signUp → 8. 可选 auto_set_2fa
+1. SMS 取号 → 1.4 **本地黑名单**（已拉黑/已注册号直接退订）→ 2. **预检**（ResolvePhone，不烧 Push）→ 3. REGHelp Push Token → 4. MTProto connect → 5. `auth.sendCode` → 6. 等短信 / 处理 SentCodeTypeApp → 7. signIn/signUp → 8. 可选 auto_set_2fa
 
-失败时：SMS `cancel` +（若 REGHelp）`setStatus` 退款（#26 已实现，需 `ref=task_id`）。
+失败时：SMS `cancel` +（若 REGHelp）`setStatus` 退款（#26 已实现，需 `ref=task_id`）。预检已注册 / `SENT_CODE_TYPE_APP` / `PHONE_NUMBER_BANNED` 会写入本地黑名单，防止平台二次下发。
 
 ---
 

@@ -35,6 +35,8 @@ from backend.app.services.reghelp import PUSH_REFUND_MIN_SECONDS, PUSH_REFUND_WI
 from backend.app.services.banned_phones import (
     LOCAL_BANNED_REASON,
     SOURCE_ANTISAFETY,
+    SOURCE_PRECHECK,
+    SOURCE_SENT_CODE,
     SOURCE_TELEGRAM_RPC,
     BannedPhonesCache,
 )
@@ -662,10 +664,16 @@ class RegistrationOrchestrator:
         record = service.lookup(phone)
         if not record:
             return True
+        # 再次租到同一号时累加命中，便于管理页观察平台复用频率
+        if hasattr(service, "touch"):
+            touched = service.touch(phone)
+            if touched:
+                record = touched
+        category = getattr(record, "category", "") or "banned"
         await manager.append_log(
             task_id,
-            f"[本地封禁库拦截] 通信句柄 {phone} 已在 banned_phones_cache 中 "
-            f"(原因={record.reason}, 来源={record.source}, 命中={record.hits}次)，"
+            f"[号码黑名单拦截] 通信句柄 {phone} 已在本地黑名单 "
+            f"(分类={category}, 原因={record.reason}, 来源={record.source}, 命中={record.hits}次)，"
             "跳过白号预检 / Push Token / auth.sendCode，直接撤销退订换号",
         )
         await cls._refund_and_revoke_channel(sms_svc, act_id, task_id, manager, LOCAL_BANNED_REASON)
@@ -675,6 +683,7 @@ class RegistrationOrchestrator:
             error=f"{LOCAL_BANNED_REASON}: 号码 {phone} 已被本机确认为 {record.reason}",
             phone=phone,
             banned_cache_hit=True,
+            blacklist_category=category,
         )
         return False
 
@@ -705,6 +714,13 @@ class RegistrationOrchestrator:
         if result.intercept or result.is_registered is True:
             intercept_log = format_precheck_intercept_log(phone, result.user_id)
             await manager.append_log(task_id, intercept_log)
+            BannedPhonesCache.remember(
+                phone,
+                reason=PRECHECK_ALREADY_REGISTERED,
+                source=SOURCE_PRECHECK,
+                category="already_registered",
+                note=f"precheck uid={result.user_id}" if result.user_id else "precheck registered",
+            )
             await cls._refund_and_revoke_channel(
                 sms_svc, act_id, task_id, manager, PRECHECK_ALREADY_REGISTERED
             )
@@ -1837,6 +1853,15 @@ class RegistrationOrchestrator:
             reason = getattr(ex, "reason", None) or "SENT_CODE_TYPE_APP"
             err = f"站内信验证码无法被带外通道接收 ({reason}): {str(ex) or repr(ex)}"
             await manager.append_log(task_id, f"❌ {err}")
+            if phone:
+                BannedPhonesCache.remember(
+                    phone,
+                    reason=reason,
+                    source=SOURCE_SENT_CODE,
+                    country=target_country,
+                    category="already_registered",
+                    note="auth.sendCode 仅下发站内 App 推送",
+                )
             await cls._refund_and_revoke_channel(sms_svc, act_id, task_id, manager, reason)
             await cls._refund_push_token(
                 bypass_svc, push_task_id, push_provider, push_token_obtained_at,

@@ -104,12 +104,85 @@ class TestBannedPhonesHelpers(unittest.TestCase):
             parsed = BannedPhonesCacheStatusResponse(**status.to_dict())
             self.assertEqual(parsed.size, 1)
             self.assertIn("628385", parsed.message)
+            self.assertEqual(first.category, "banned")
+
+    def test_already_registered_and_list_manage(self):
+        from backend.app.services.banned_phones import (
+            CATEGORY_ALREADY_REGISTERED,
+            SOURCE_PRECHECK,
+            SOURCE_SENT_CODE,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "banned_phones_cache.json"
+            BannedPhonesCache.reset_memory()
+            BannedPhonesCache.remember(
+                "+27821234567",
+                reason="SENT_CODE_TYPE_APP",
+                source=SOURCE_SENT_CODE,
+                country="za",
+                path=path,
+            )
+            BannedPhonesCache.remember(
+                "+573001112233",
+                reason="PRECHECK_PHONE_ALREADY_REGISTERED",
+                source=SOURCE_PRECHECK,
+                path=path,
+            )
+            BannedPhonesCache.remember(
+                "+6283856982093",
+                reason="MANUAL_BLACKLIST",
+                source="manual",
+                category="manual",
+                note="ops",
+                path=path,
+            )
+            items, total = BannedPhonesCache.list_items(path=path)
+            self.assertEqual(total, 3)
+            summary = BannedPhonesCache.summary(path=path)
+            self.assertEqual(summary["already_registered"], 2)
+            self.assertEqual(summary["manual"], 1)
+
+            filtered, n = BannedPhonesCache.list_items(
+                category=CATEGORY_ALREADY_REGISTERED, path=path,
+            )
+            self.assertEqual(n, 2)
+            self.assertTrue(all(r["category"] == CATEGORY_ALREADY_REGISTERED for r in filtered))
+
+            za_items, za_n = BannedPhonesCache.list_items(country="za", path=path)
+            self.assertEqual(za_n, 1)
+            self.assertEqual(za_items[0]["digits"], "27821234567")
+
+            self.assertTrue(BannedPhonesCache.remove("+573001112233", path=path))
+            self.assertEqual(BannedPhonesCache.size(path=path), 2)
+            deleted = BannedPhonesCache.purge(category="manual", path=path)
+            self.assertEqual(deleted, 1)
+            self.assertEqual(BannedPhonesCache.size(path=path), 1)
 
     def test_unknown_phone_is_not_banned(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "banned_phones_cache.json"
             BannedPhonesCache.reset_memory()
             self.assertIsNone(BannedPhonesCache.lookup("+56911112222", path=path))
+
+    def test_category_priority_prefers_banned(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "banned_phones_cache.json"
+            BannedPhonesCache.reset_memory()
+            BannedPhonesCache.remember(
+                "+27820001111",
+                reason="SENT_CODE_TYPE_APP",
+                source="sent_code_app",
+                path=path,
+            )
+            again = BannedPhonesCache.remember(
+                "+27820001111",
+                reason="PHONE_NUMBER_BANNED",
+                source=SOURCE_TELEGRAM_RPC,
+                path=path,
+            )
+            self.assertEqual(again.category, "banned")
+            self.assertEqual(again.hits, 2)
 
 
 class TestRegistrarBannedCacheGate(unittest.IsolatedAsyncioTestCase):
@@ -141,7 +214,7 @@ class TestRegistrarBannedCacheGate(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(task["banned_cache_hit"])
         self.assertIn(LOCAL_BANNED_REASON, task["error"])
         logs = "\n".join(task["logs"])
-        self.assertIn("[本地封禁库拦截]", logs)
+        self.assertIn("[号码黑名单拦截]", logs)
         self.assertIn("[自动退订/撤销信道句柄完成]", logs)
         TaskStatusResponse(**{k: task[k] for k in TaskStatusResponse.model_fields if k in task})
 
