@@ -1461,7 +1461,9 @@ async def banned_phones_status():
 )
 async def list_banned_phones(
     q: Optional[str] = Query(default=None, description="按号码数字模糊搜索"),
-    category: Optional[str] = Query(default=None, description="banned|already_registered|manual"),
+    category: Optional[str] = Query(
+        default=None, description="banned|already_registered|app_delivery_unusable|manual"
+    ),
     country: Optional[str] = Query(default=None, description="国家码过滤，如 za/co/id"),
     limit: int = Query(default=200, ge=1, le=1000),
     offset: int = Query(default=0, ge=0),

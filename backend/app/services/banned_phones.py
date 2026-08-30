@@ -8,8 +8,14 @@ PHONE_NUMBER_BANNED：被销毁/注销的账号在通讯录里与「从未注册
 - Telegram 返回 PHONE_NUMBER_BANNED
 - AntiSafety /check 历史库命中 BANNED
 - 白号预检确认已注册（PRECHECK_PHONE_ALREADY_REGISTERED）
-- auth.sendCode 仅下发 SENT_CODE_TYPE_APP（站内推送，号码已占用）
+- auth.sendCode 仅下发 SENT_CODE_TYPE_APP（本次 APP 投递不可用，带 TTL 临时拉黑）
 - 控制台手动录入
+
+分类分「永久」与「带 TTL」两种：
+- banned / already_registered / manual 是已确认的结论，永久有效；
+- app_delivery_unusable 只是「这一次验证码进了站内 App」的观测。白号预检通过后仍走
+  App 的号可能是 Push Token / allow_app_hash 造成的，并不等于号码已注册，所以只临时
+  拉黑（默认 48h），过期后自动放回可试池，不能把它当 already_registered 永久判死。
 
 接码平台会回收并再次出租同一号码。再次租到时，在 Push Token / sendCode
 之前直接退订，避免重复消耗 Attestation 与走多余注册路程。
@@ -21,7 +27,7 @@ import logging
 import os
 import threading
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -41,18 +47,37 @@ SOURCE_MANUAL = "manual"
 
 CATEGORY_BANNED = "banned"
 CATEGORY_ALREADY_REGISTERED = "already_registered"
+# 「本次 auth.sendCode 把码投进了站内 App」——不可用是事实，已注册只是猜测，故带 TTL
+CATEGORY_APP_DELIVERY = "app_delivery_unusable"
 CATEGORY_MANUAL = "manual"
 
+# 优先级只决定同一号码被多次收录时保留哪个结论：数值越大越权威。
+# app_delivery_unusable 最低——任何一次确凿结论（已注册 / 封禁 / 手动）都应把它顶掉并转永久。
 CATEGORY_PRIORITY = {
-    CATEGORY_MANUAL: 0,
-    CATEGORY_ALREADY_REGISTERED: 1,
-    CATEGORY_BANNED: 2,
+    CATEGORY_APP_DELIVERY: 0,
+    CATEGORY_MANUAL: 1,
+    CATEGORY_ALREADY_REGISTERED: 2,
+    CATEGORY_BANNED: 3,
 }
 
 CATEGORY_LABELS = {
     CATEGORY_BANNED: "已拉黑",
     CATEGORY_ALREADY_REGISTERED: "已注册",
+    CATEGORY_APP_DELIVERY: "APP投递不可用",
     CATEGORY_MANUAL: "手动",
+}
+
+ALL_CATEGORIES = (
+    CATEGORY_BANNED,
+    CATEGORY_ALREADY_REGISTERED,
+    CATEGORY_APP_DELIVERY,
+    CATEGORY_MANUAL,
+)
+
+# 带 TTL 的分类及其默认存活小时数；未列出的分类一律永久有效。
+DEFAULT_APP_DELIVERY_TTL_HOURS = 48.0
+TTL_CATEGORY_DEFAULTS = {
+    CATEGORY_APP_DELIVERY: DEFAULT_APP_DELIVERY_TTL_HOURS,
 }
 
 _LOCK = threading.RLock()
@@ -62,6 +87,42 @@ _MEM_PATH: Optional[Path] = None
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
+def _parse_iso(value: Optional[str]) -> Optional[datetime]:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def resolve_ttl_hours(category: str, ttl_hours: Optional[float] = None) -> Optional[float]:
+    """返回该分类实际生效的 TTL 小时数；None 表示永久有效。"""
+    if category not in TTL_CATEGORY_DEFAULTS:
+        return None
+    if ttl_hours is None:
+        return TTL_CATEGORY_DEFAULTS[category]
+    try:
+        hours = float(ttl_hours)
+    except (TypeError, ValueError):
+        return TTL_CATEGORY_DEFAULTS[category]
+    if hours <= 0:
+        return TTL_CATEGORY_DEFAULTS[category]
+    return hours
+
+
+def _expiry_for(category: str, ttl_hours: Optional[float], base: Optional[datetime] = None) -> Optional[str]:
+    hours = resolve_ttl_hours(category, ttl_hours)
+    if hours is None:
+        return None
+    origin = base or datetime.now(timezone.utc)
+    return (origin + timedelta(hours=hours)).replace(microsecond=0).isoformat()
 
 
 def normalize_digits(phone: Optional[str]) -> str:
@@ -114,8 +175,14 @@ def category_for_reason(reason: Optional[str], explicit: Optional[str] = None) -
     if explicit in CATEGORY_PRIORITY:
         return explicit
     r = str(reason or "").upper()
+    # SENT_CODE_TYPE_APP 只说明这一次码进了站内 App（可能是 Push / allow_app_hash 导致），
+    # 不足以判定号码已注册，因此归入带 TTL 的临时分类而不是永久 already_registered
     if r in {
         "SENT_CODE_TYPE_APP",
+        "APP_DELIVERY_UNUSABLE",
+    }:
+        return CATEGORY_APP_DELIVERY
+    if r in {
         "PRECHECK_PHONE_ALREADY_REGISTERED",
         "ALREADY_REGISTERED",
         "PHONE_ALREADY_REGISTERED",
@@ -152,15 +219,26 @@ class BannedPhoneRecord:
     first_seen: str = ""
     last_seen: str = ""
     hits: int = 1
+    # 仅带 TTL 的分类会写入；None 表示永久有效
+    expires_at: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
+
+    def is_expired(self, now: Optional[datetime] = None) -> bool:
+        deadline = _parse_iso(self.expires_at)
+        if deadline is None:
+            return False
+        return (now or datetime.now(timezone.utc)) >= deadline
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "BannedPhoneRecord":
         digits = normalize_digits(data.get("digits") or data.get("phone"))
         reason = str(data.get("reason") or "PHONE_NUMBER_BANNED")
         category = category_for_reason(reason, data.get("category"))
+        expires_at = str(data.get("expires_at") or "").strip() or None
+        if category not in TTL_CATEGORY_DEFAULTS:
+            expires_at = None
         return cls(
             phone=str(data.get("phone") or format_plus(digits)),
             digits=digits,
@@ -173,6 +251,7 @@ class BannedPhoneRecord:
             first_seen=str(data.get("first_seen") or ""),
             last_seen=str(data.get("last_seen") or ""),
             hits=int(data.get("hits") or 1),
+            expires_at=expires_at,
         )
 
 
@@ -198,6 +277,32 @@ def _cache_path(path: Optional[Path] = None) -> Path:
     return Path(path).resolve() if path is not None else CACHE_PATH
 
 
+def _migrate_app_delivery_unlocked(payload: Dict[str, Any]) -> int:
+    """历史遗留：SentCodeTypeApp 曾被写成永久 already_registered，按 TTL 分类回迁。
+
+    这些号只被观测到「码进了站内 App」，从未被预检或 Telegram 确认已注册，永久拉黑会
+    把大量可用号误杀。回迁后以 last_seen 为基准补一个 TTL，多半立刻过期并被自然清理。
+    """
+    changed = 0
+    for digits, raw in (payload.get("phones") or {}).items():
+        if not isinstance(raw, dict):
+            continue
+        if str(raw.get("source") or "") != SOURCE_SENT_CODE:
+            continue
+        if str(raw.get("reason") or "").upper() != "SENT_CODE_TYPE_APP":
+            continue
+        if str(raw.get("category") or "") == CATEGORY_APP_DELIVERY:
+            continue
+        raw["category"] = CATEGORY_APP_DELIVERY
+        raw["expires_at"] = _expiry_for(
+            CATEGORY_APP_DELIVERY,
+            None,
+            base=_parse_iso(raw.get("last_seen")) or _parse_iso(raw.get("first_seen")),
+        )
+        changed += 1
+    return changed
+
+
 def _load_unlocked(path: Path) -> Dict[str, Any]:
     global _MEM, _MEM_PATH
     if _MEM is not None and _MEM_PATH == path:
@@ -214,6 +319,18 @@ def _load_unlocked(path: Path) -> Dict[str, Any]:
                     "updated_at": str(raw.get("updated_at") or ""),
                     "phones": {normalize_digits(k): v for k, v in phones.items() if normalize_digits(k)},
                 }
+                migrated = _migrate_app_delivery_unlocked(payload)
+                if migrated:
+                    logger.info(
+                        "banned_phones_cache 回迁 %s 条 SENT_CODE_TYPE_APP 记录："
+                        "永久 already_registered → 带 TTL 的 %s",
+                        migrated,
+                        CATEGORY_APP_DELIVERY,
+                    )
+                    try:
+                        _save_unlocked(path, payload)
+                    except Exception as exc:
+                        logger.warning("banned_phones_cache 回迁结果落盘失败: %s", exc)
         except Exception as exc:
             logger.warning("读取 banned_phones_cache 失败，回退空库: %s", exc)
     _MEM = payload
@@ -232,7 +349,7 @@ def _save_unlocked(path: Path, payload: Dict[str, Any]) -> None:
 
 
 class BannedPhonesCache:
-    """进程内 + JSON 持久化的号码黑名单（封禁 / 已注册）。"""
+    """进程内 + JSON 持久化的号码黑名单（封禁 / 已注册 / APP 投递不可用）。"""
 
     @classmethod
     def reset_memory(cls, path: Optional[Path] = None) -> None:
@@ -244,20 +361,65 @@ class BannedPhonesCache:
                 _load_unlocked(_cache_path(path))
 
     @classmethod
+    def _drop_expired_unlocked(cls, dest: Path, payload: Dict[str, Any], digits: str) -> None:
+        global _MEM, _MEM_PATH
+        payload["phones"].pop(digits, None)
+        payload["updated_at"] = _now_iso()
+        try:
+            _save_unlocked(dest, payload)
+        except Exception as exc:
+            logger.warning("清理过期黑名单条目落盘失败: %s", exc)
+        _MEM = payload
+        _MEM_PATH = dest
+
+    @classmethod
+    def _active_records_unlocked(cls, payload: Dict[str, Any]) -> List[BannedPhoneRecord]:
+        """只返回未过期的记录：过期条目对外等同于未命中。"""
+        now = datetime.now(timezone.utc)
+        rows: List[BannedPhoneRecord] = []
+        for digits, raw in (payload.get("phones") or {}).items():
+            try:
+                record = BannedPhoneRecord.from_dict(raw if isinstance(raw, dict) else {"phone": digits})
+            except Exception:
+                continue
+            if record.is_expired(now):
+                continue
+            rows.append(record)
+        return rows
+
+    @classmethod
+    def _active(cls, path: Optional[Path] = None) -> List[BannedPhoneRecord]:
+        with _LOCK:
+            payload = _load_unlocked(_cache_path(path))
+            return cls._active_records_unlocked(payload)
+
+    @classmethod
     def lookup(cls, phone: Optional[str], path: Optional[Path] = None) -> Optional[BannedPhoneRecord]:
         digits = normalize_digits(phone)
         if not digits:
             return None
+        dest = _cache_path(path)
         with _LOCK:
-            payload = _load_unlocked(_cache_path(path))
+            payload = _load_unlocked(dest)
             raw = payload["phones"].get(digits)
             if not raw:
                 return None
             try:
-                return BannedPhoneRecord.from_dict(raw)
+                record = BannedPhoneRecord.from_dict(raw)
             except Exception as exc:
                 logger.debug("解析封禁号记录失败: %s", exc)
                 return None
+            if record.is_expired():
+                # TTL 到点即视为未命中，并顺手清掉，避免临时结论变成事实上的永久拉黑
+                logger.info(
+                    "banned_phones_cache 条目已过期，放回可试池: %s category=%s expires_at=%s",
+                    record.phone,
+                    record.category,
+                    record.expires_at,
+                )
+                cls._drop_expired_unlocked(dest, payload, digits)
+                return None
+            return record
 
     @classmethod
     def touch(
@@ -277,6 +439,9 @@ class BannedPhonesCache:
             if not existing:
                 return None
             record = BannedPhoneRecord.from_dict(existing)
+            if record.is_expired():
+                cls._drop_expired_unlocked(dest, payload, digits)
+                return None
             record.last_seen = now
             record.hits = int(record.hits or 1) + 1
             payload["phones"][digits] = record.to_dict()
@@ -296,8 +461,15 @@ class BannedPhonesCache:
         country: Optional[str] = None,
         category: Optional[str] = None,
         note: Optional[str] = None,
+        ttl_hours: Optional[float] = None,
         path: Optional[Path] = None,
     ) -> Optional[BannedPhoneRecord]:
+        """收录一个号码。
+
+        `ttl_hours` 只对带 TTL 的分类（当前是 app_delivery_unusable）生效；省略时用该分类
+        的默认存活时长。若同一号码此前已有更权威的永久结论（已注册 / 封禁 / 手动），分类
+        与永久性都不会被临时观测降级。
+        """
         digits = normalize_digits(phone)
         if not digits:
             return None
@@ -309,6 +481,10 @@ class BannedPhonesCache:
             existing = payload["phones"].get(digits)
             if existing:
                 record = BannedPhoneRecord.from_dict(existing)
+                # 过期条目按新记录重开，不继承旧 hits/首见，否则统计会一直虚高
+                if record.is_expired():
+                    existing = None
+            if existing:
                 record.last_seen = now
                 record.hits = int(record.hits or 1) + 1
                 if reason:
@@ -335,18 +511,20 @@ class BannedPhonesCache:
                     last_seen=now,
                     hits=1,
                 )
+            record.expires_at = _expiry_for(record.category, ttl_hours)
             payload["phones"][digits] = record.to_dict()
             payload["updated_at"] = now
             _save_unlocked(dest, payload)
             _MEM = payload
             _MEM_PATH = dest
         logger.info(
-            "banned_phones_cache 收录 %s category=%s reason=%s source=%s hits=%s",
+            "banned_phones_cache 收录 %s category=%s reason=%s source=%s hits=%s expires_at=%s",
             record.phone,
             record.category,
             record.reason,
             record.source,
             record.hits,
+            record.expires_at or "永久",
         )
         return record
 
@@ -399,22 +577,39 @@ class BannedPhonesCache:
             return deleted
 
     @classmethod
-    def size(cls, path: Optional[Path] = None) -> int:
+    def purge_expired(cls, path: Optional[Path] = None) -> int:
+        """清掉所有已过 TTL 的条目（拦截路径也会按需惰性清理）。"""
+        global _MEM, _MEM_PATH
+        dest = _cache_path(path)
+        now = datetime.now(timezone.utc)
         with _LOCK:
-            return len(_load_unlocked(_cache_path(path)).get("phones") or {})
+            payload = _load_unlocked(dest)
+            keep: Dict[str, Any] = {}
+            deleted = 0
+            for digits, raw in (payload.get("phones") or {}).items():
+                record = BannedPhoneRecord.from_dict(raw if isinstance(raw, dict) else {"phone": digits})
+                if record.is_expired(now):
+                    deleted += 1
+                else:
+                    keep[digits] = raw
+            if deleted:
+                payload["phones"] = keep
+                payload["updated_at"] = _now_iso()
+                _save_unlocked(dest, payload)
+                _MEM = payload
+                _MEM_PATH = dest
+            return deleted
+
+    @classmethod
+    def size(cls, path: Optional[Path] = None) -> int:
+        return len(cls._active(path))
 
     @classmethod
     def summary(cls, path: Optional[Path] = None) -> Dict[str, int]:
-        with _LOCK:
-            phones = _load_unlocked(_cache_path(path)).get("phones") or {}
-        out = {
-            "total": 0,
-            CATEGORY_BANNED: 0,
-            CATEGORY_ALREADY_REGISTERED: 0,
-            CATEGORY_MANUAL: 0,
-        }
-        for digits, raw in phones.items():
-            record = BannedPhoneRecord.from_dict(raw if isinstance(raw, dict) else {"phone": digits})
+        out: Dict[str, int] = {"total": 0}
+        for key in ALL_CATEGORIES:
+            out[key] = 0
+        for record in cls._active(path):
             out["total"] += 1
             key = record.category if record.category in out else CATEGORY_BANNED
             out[key] = out.get(key, 0) + 1
@@ -434,11 +629,8 @@ class BannedPhonesCache:
         needle = normalize_digits(q) if q else ""
         country_key = (country or "").strip().lower() or None
         category_key = category if category in CATEGORY_PRIORITY else None
-        with _LOCK:
-            phones = _load_unlocked(_cache_path(path)).get("phones") or {}
         rows: List[BannedPhoneRecord] = []
-        for digits, raw in phones.items():
-            record = BannedPhoneRecord.from_dict(raw if isinstance(raw, dict) else {"phone": digits})
+        for record in cls._active(path):
             if needle and needle not in record.digits:
                 continue
             if category_key and record.category != category_key:
@@ -455,12 +647,9 @@ class BannedPhonesCache:
 
     @classmethod
     def prefix_stats(cls, prefix_length: int = 6, path: Optional[Path] = None) -> List[Dict[str, Any]]:
-        with _LOCK:
-            phones = _load_unlocked(_cache_path(path)).get("phones") or {}
         buckets: Dict[str, Dict[str, Any]] = {}
-        for digits, raw in phones.items():
-            record = BannedPhoneRecord.from_dict(raw if isinstance(raw, dict) else {"phone": digits})
-            key = prefix_of(record.digits or digits, prefix_length)
+        for record in cls._active(path):
+            key = prefix_of(record.digits, prefix_length)
             bucket = buckets.setdefault(
                 key,
                 {"prefix": key, "country": record.country or infer_country(key), "count": 0, "hits": 0},
@@ -471,12 +660,9 @@ class BannedPhonesCache:
 
     @classmethod
     def country_stats(cls, path: Optional[Path] = None) -> List[Dict[str, Any]]:
-        with _LOCK:
-            phones = _load_unlocked(_cache_path(path)).get("phones") or {}
         buckets: Dict[str, Dict[str, Any]] = {}
-        for digits, raw in phones.items():
-            record = BannedPhoneRecord.from_dict(raw if isinstance(raw, dict) else {"phone": digits})
-            key = record.country or infer_country(record.digits or digits) or "unknown"
+        for record in cls._active(path):
+            key = record.country or infer_country(record.digits) or "unknown"
             bucket = buckets.setdefault(key, {"country": key, "count": 0, "hits": 0})
             bucket["count"] += 1
             bucket["hits"] += int(record.hits or 1)
@@ -486,7 +672,7 @@ class BannedPhonesCache:
     def category_stats(cls, path: Optional[Path] = None) -> List[Dict[str, Any]]:
         summary = cls.summary(path=path)
         rows = []
-        for key in (CATEGORY_BANNED, CATEGORY_ALREADY_REGISTERED, CATEGORY_MANUAL):
+        for key in ALL_CATEGORIES:
             rows.append({
                 "category": key,
                 "label": CATEGORY_LABELS.get(key, key),
@@ -502,14 +688,16 @@ class BannedPhonesCache:
         countries = cls.country_stats(path=dest)
         categories = cls.category_stats(path=dest)
         if size == 0:
-            message = "本地号码黑名单为空：尚无封禁 / 已注册 / 手动录入记录"
+            message = "本地号码黑名单为空：尚无封禁 / 已注册 / APP 投递不可用 / 手动录入记录"
         else:
             top = prefixes[0]["prefix"] if prefixes else "-"
             banned_n = next((c["count"] for c in categories if c["category"] == CATEGORY_BANNED), 0)
             reg_n = next((c["count"] for c in categories if c["category"] == CATEGORY_ALREADY_REGISTERED), 0)
+            app_n = next((c["count"] for c in categories if c["category"] == CATEGORY_APP_DELIVERY), 0)
             message = (
                 f"本地号码黑名单已收录 {size} 个"
-                f"（拉黑 {banned_n} / 已注册 {reg_n}）；最高风险号段 {top}"
+                f"（拉黑 {banned_n} / 已注册 {reg_n} / APP投递不可用 {app_n} 条带TTL）；"
+                f"最高风险号段 {top}"
             )
         return BannedPhonesStatus(
             enabled=True,

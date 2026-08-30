@@ -25,6 +25,16 @@ logger = logging.getLogger("PhonePrecheck")
 PRECHECK_ALREADY_REGISTERED = "PRECHECK_PHONE_ALREADY_REGISTERED"
 PRECHECK_CLEAN = "PRECHECK_PHONE_CLEAN"
 PRECHECK_DEGRADED = "PRECHECK_NO_PROBE_SESSION"
+PRECHECK_SESSION_UNAUTHORIZED = "PRECHECK_SESSION_UNAUTHORIZED"
+PRECHECK_SESSION_MISSING = "PRECHECK_SESSION_MISSING"
+
+# 探测池整体不可用（无探针 / session 全失效）：预检等同于关闭，调用方必须显式告警，
+# 否则猎号会在「以为有预检兜底」的错觉下把 Push Token 与租号预算烧在二手号上。
+PROBE_POOL_UNUSABLE_REASONS = frozenset({
+    PRECHECK_DEGRADED,
+    PRECHECK_SESSION_UNAUTHORIZED,
+    PRECHECK_SESSION_MISSING,
+})
 
 INTERCEPT_LOG_TEMPLATE = (
     "[预检拦截] 检测到号码 {phone} 已在 Telegram 注册并存在活跃用户 "
@@ -138,7 +148,7 @@ class PhonePrecheckService:
 
             return is_account_probe_active(
                 getattr(acc, "account_id", None),
-                bool(getattr(acc, "has_session", False)),
+                bool(getattr(acc, "session_valid", getattr(acc, "has_session", False))),
                 config=config,
             )
         except Exception:
@@ -150,7 +160,7 @@ class PhonePrecheckService:
         items = list(accounts) if accounts is not None else AccountVaultService.scan_accounts()
         probes = []
         for acc in items:
-            if not getattr(acc, "has_session", False):
+            if not getattr(acc, "session_valid", getattr(acc, "has_session", False)):
                 continue
             if not cls._account_is_probe_active(acc, config=config):
                 continue
@@ -434,7 +444,7 @@ class PhonePrecheckService:
 
         session_path = AccountVaultService.resolve_session_file(account)
         if not session_path:
-            return cls.degraded_result("PRECHECK_SESSION_MISSING")
+            return cls.degraded_result(PRECHECK_SESSION_MISSING)
 
         bound = to_telethon_proxy(proxy)
         work_session = TelegramAppsHelper._copy_session_workspace(session_path)
@@ -449,7 +459,7 @@ class PhonePrecheckService:
             await connect_telethon_with_timeout(client, timeout=PROBE_CONNECT_TIMEOUT)
             me = await client.get_me()
             if not me:
-                return cls.degraded_result("PRECHECK_SESSION_UNAUTHORIZED")
+                return cls.degraded_result(PRECHECK_SESSION_UNAUTHORIZED)
             return await cls._query_with_client(client, phone)
         finally:
             try:

@@ -5,6 +5,7 @@ import os
 import sys
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -109,6 +110,7 @@ class TestBannedPhonesHelpers(unittest.TestCase):
     def test_already_registered_and_list_manage(self):
         from backend.app.services.banned_phones import (
             CATEGORY_ALREADY_REGISTERED,
+            CATEGORY_APP_DELIVERY,
             SOURCE_PRECHECK,
             SOURCE_SENT_CODE,
         )
@@ -140,14 +142,22 @@ class TestBannedPhonesHelpers(unittest.TestCase):
             items, total = BannedPhonesCache.list_items(path=path)
             self.assertEqual(total, 3)
             summary = BannedPhonesCache.summary(path=path)
-            self.assertEqual(summary["already_registered"], 2)
+            # SENT_CODE_TYPE_APP 只算「APP 投递不可用」，不再计入永久已注册
+            self.assertEqual(summary["already_registered"], 1)
+            self.assertEqual(summary["app_delivery_unusable"], 1)
             self.assertEqual(summary["manual"], 1)
 
             filtered, n = BannedPhonesCache.list_items(
                 category=CATEGORY_ALREADY_REGISTERED, path=path,
             )
-            self.assertEqual(n, 2)
+            self.assertEqual(n, 1)
             self.assertTrue(all(r["category"] == CATEGORY_ALREADY_REGISTERED for r in filtered))
+
+            app_rows, app_n = BannedPhonesCache.list_items(
+                category=CATEGORY_APP_DELIVERY, path=path,
+            )
+            self.assertEqual(app_n, 1)
+            self.assertTrue(app_rows[0]["expires_at"])
 
             za_items, za_n = BannedPhonesCache.list_items(country="za", path=path)
             self.assertEqual(za_n, 1)
@@ -183,6 +193,148 @@ class TestBannedPhonesHelpers(unittest.TestCase):
             )
             self.assertEqual(again.category, "banned")
             self.assertEqual(again.hits, 2)
+
+
+class TestAppDeliveryTtl(unittest.TestCase):
+    """APP 投递不可用是临时观测：必须带 TTL，过期后不再拦截。"""
+
+    def setUp(self):
+        from backend.app.services.banned_phones import SOURCE_SENT_CODE
+
+        self.source_sent_code = SOURCE_SENT_CODE
+        self.tmp = tempfile.TemporaryDirectory()
+        self.path = Path(self.tmp.name) / "banned_phones_cache.json"
+        BannedPhonesCache.reset_memory()
+
+    def tearDown(self):
+        BannedPhonesCache.reset_memory()
+        self.tmp.cleanup()
+
+    def _remember_app(self, phone="+27820001111", ttl_hours=None):
+        from backend.app.services.banned_phones import CATEGORY_APP_DELIVERY
+
+        return BannedPhonesCache.remember(
+            phone,
+            reason="SENT_CODE_TYPE_APP",
+            source=self.source_sent_code,
+            category=CATEGORY_APP_DELIVERY,
+            ttl_hours=ttl_hours,
+            path=self.path,
+        )
+
+    def test_sent_code_app_is_not_permanent_already_registered(self):
+        from backend.app.services.banned_phones import CATEGORY_APP_DELIVERY
+
+        record = self._remember_app()
+        self.assertEqual(record.category, CATEGORY_APP_DELIVERY)
+        self.assertTrue(record.expires_at)
+        hit = BannedPhonesCache.lookup("+27820001111", path=self.path)
+        self.assertIsNotNone(hit)
+        self.assertEqual(hit.category, CATEGORY_APP_DELIVERY)
+
+    def test_expired_entry_stops_intercepting_and_is_cleaned(self):
+        self._remember_app(ttl_hours=24.0)
+        # 手工把到期时间拨到过去，等价于 TTL 到点
+        BannedPhonesCache.reset_memory()
+        import json
+
+        payload = json.loads(self.path.read_text(encoding="utf-8"))
+        stale = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+        payload["phones"]["27820001111"]["expires_at"] = stale
+        self.path.write_text(json.dumps(payload), encoding="utf-8")
+        BannedPhonesCache.reset_memory()
+
+        self.assertIsNone(BannedPhonesCache.lookup("+27820001111", path=self.path))
+        self.assertIsNone(BannedPhonesCache.touch("+27820001111", path=self.path))
+        # 过期条目对外不可见，也不再占用统计
+        self.assertEqual(BannedPhonesCache.size(path=self.path), 0)
+        self.assertEqual(BannedPhonesCache.summary(path=self.path)["total"], 0)
+        items, total = BannedPhonesCache.list_items(path=self.path)
+        self.assertEqual((items, total), ([], 0))
+        # 惰性清理已把它从库里删掉
+        payload = json.loads(self.path.read_text(encoding="utf-8"))
+        self.assertEqual(payload["phones"], {})
+
+    def test_custom_ttl_hours_is_honoured(self):
+        record = self._remember_app(ttl_hours=6.0)
+        deadline = datetime.fromisoformat(record.expires_at)
+        delta = (deadline - datetime.now(timezone.utc)).total_seconds()
+        self.assertLess(abs(delta - 6 * 3600), 120)
+
+    def test_precheck_registered_stays_permanent(self):
+        from backend.app.services.banned_phones import (
+            CATEGORY_ALREADY_REGISTERED,
+            SOURCE_PRECHECK,
+        )
+
+        record = BannedPhonesCache.remember(
+            "+573001112233",
+            reason="PRECHECK_PHONE_ALREADY_REGISTERED",
+            source=SOURCE_PRECHECK,
+            category=CATEGORY_ALREADY_REGISTERED,
+            path=self.path,
+        )
+        self.assertEqual(record.category, CATEGORY_ALREADY_REGISTERED)
+        self.assertIsNone(record.expires_at)
+
+    def test_permanent_conclusion_overrides_ttl_entry(self):
+        self._remember_app(phone="+27820002222")
+        upgraded = BannedPhonesCache.remember(
+            "+27820002222",
+            reason="PHONE_NUMBER_BANNED",
+            source=SOURCE_TELEGRAM_RPC,
+            path=self.path,
+        )
+        self.assertEqual(upgraded.category, "banned")
+        self.assertIsNone(upgraded.expires_at)
+
+    def test_ttl_entry_never_downgrades_permanent_entry(self):
+        BannedPhonesCache.remember(
+            "+27820003333",
+            reason="PHONE_NUMBER_BANNED",
+            source=SOURCE_TELEGRAM_RPC,
+            path=self.path,
+        )
+        again = self._remember_app(phone="+27820003333")
+        self.assertEqual(again.category, "banned")
+        self.assertIsNone(again.expires_at)
+
+    def test_legacy_permanent_app_records_are_migrated(self):
+        """历史上被写成永久 already_registered 的 APP 号，加载时回迁为带 TTL 分类。"""
+        import json
+
+        from backend.app.services.banned_phones import CATEGORY_APP_DELIVERY
+
+        legacy = {
+            "version": 1,
+            "updated_at": "",
+            "phones": {
+                "27820004444": {
+                    "phone": "+27820004444",
+                    "digits": "27820004444",
+                    "reason": "SENT_CODE_TYPE_APP",
+                    "source": self.source_sent_code,
+                    "category": "already_registered",
+                    "first_seen": "2026-01-01T00:00:00+00:00",
+                    "last_seen": "2026-01-01T00:00:00+00:00",
+                    "hits": 3,
+                }
+            },
+        }
+        self.path.write_text(json.dumps(legacy), encoding="utf-8")
+        BannedPhonesCache.reset_memory()
+
+        # 迁移后 TTL 以 2026-01-01 为基准，早已过期 → 不再拦截
+        self.assertIsNone(BannedPhonesCache.lookup("+27820004444", path=self.path))
+
+        fresh_last_seen = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+        legacy["phones"]["27820004444"]["last_seen"] = fresh_last_seen
+        self.path.write_text(json.dumps(legacy), encoding="utf-8")
+        BannedPhonesCache.reset_memory()
+        record = BannedPhonesCache.lookup("+27820004444", path=self.path)
+        self.assertIsNotNone(record)
+        self.assertEqual(record.category, CATEGORY_APP_DELIVERY)
+        self.assertTrue(record.expires_at)
 
 
 class TestRegistrarBannedCacheGate(unittest.IsolatedAsyncioTestCase):

@@ -324,6 +324,25 @@ class AppConfigModel(BaseModel):
             "租号的次数。超过时后端会按批次数把每任务取号次数裁剪到上限内并记录日志"
         ),
     )
+    hunt_app_blacklist_ttl_hours: float = Field(
+        default=48.0,
+        gt=0.0,
+        le=720.0,
+        description=(
+            "auth.sendCode 仅下发站内 App 推送时的临时拉黑时长（小时）。"
+            "APP 投递可能由 Push Token / allow_app_hash 造成，不等于号码已注册，"
+            "因此只按 TTL 临时拉黑（默认 48h），到期后自动放回可试池"
+        ),
+    )
+    hunt_app_delivery_fuse: int = Field(
+        default=5,
+        ge=0,
+        le=100,
+        description=(
+            "猎号熔断：连续多少次 sendCode 都只投站内 App 就提前结束本任务并写 HUNT_APP_FUSE。"
+            "0 表示关闭熔断。用于避免把整个取号预算烧在同一失败模式上"
+        ),
+    )
     phone_precheck_enabled: bool = Field(
         default=True,
         description=(
@@ -512,12 +531,17 @@ class BannedPhoneItem(BaseModel):
     first_seen: str = ""
     last_seen: str = ""
     hits: int = 1
+    expires_at: Optional[str] = Field(
+        default=None,
+        description="带 TTL 的分类（app_delivery_unusable）到期时间；None 表示永久有效",
+    )
 
 
 class BannedPhonesSummary(BaseModel):
     total: int = 0
     banned: int = 0
     already_registered: int = 0
+    app_delivery_unusable: int = 0
     manual: int = 0
 
 
@@ -537,7 +561,7 @@ class BannedPhoneAddRequest(BaseModel):
     reason: str = Field(default="MANUAL_BLACKLIST", description="入库原因")
     category: Optional[str] = Field(
         default="manual",
-        description="banned | already_registered | manual",
+        description="banned | already_registered | app_delivery_unusable | manual",
     )
     note: str = Field(default="", description="备注")
     country: Optional[str] = None
@@ -1456,6 +1480,13 @@ class PushTokenVaultItem(BaseModel):
     last_used_at: Optional[str] = None
     last_outcome: Optional[str] = None
     last_lease_task_id: Optional[str] = None
+    lease_task_id: Optional[str] = Field(
+        default=None, description="当前持有该令牌的注册任务；None 表示空闲可租"
+    )
+    leased_at: Optional[str] = None
+    leased_until: Optional[str] = Field(
+        default=None, description="租约兜底到期时间；到期后其它任务可接管"
+    )
 
 
 class PushTokenVaultSummary(BaseModel):
@@ -1466,6 +1497,8 @@ class PushTokenVaultSummary(BaseModel):
     reusable: int = 0
     consumed: int = 0
     refunded: int = 0
+    retired: int = 0
+    leased: int = Field(default=0, description="当前被某个注册任务持有（租约有效）的令牌数")
 
 
 class PushTokenVaultListResponse(BaseModel):

@@ -4,8 +4,13 @@
       <div>
         <h2>🚫 号码黑名单</h2>
         <p>
-          本地记录已确认<strong>拉黑</strong>或<strong>已注册</strong>（含站内 App 推送）的号码。
+          本地记录已确认<strong>拉黑</strong>或<strong>已注册</strong>的号码。
           接码平台再次下发时，在预检 / Push Token / sendCode 之前直接退订，避免重复走注册路程。
+        </p>
+        <p class="ce-tiny ce-muted">
+          <strong>APP投递不可用</strong> 是临时分类：只说明那一次验证码进了站内 App
+          （也可能是 Push Token / allow_app_hash 造成），不等于号码已注册，
+          到 TTL（默认 48h，可在参数拓扑 <code>hunt_app_blacklist_ttl_hours</code> 调整）自动放回可试池。
         </p>
       </div>
       <div class="ce-actions">
@@ -25,6 +30,9 @@
       <div class="ce-stat"><span>总计</span><span>{{ blacklistSummary.total }}</span></div>
       <div class="ce-stat"><span>已拉黑</span><span>{{ blacklistSummary.banned }}</span></div>
       <div class="ce-stat"><span>已注册</span><span>{{ blacklistSummary.already_registered }}</span></div>
+      <div class="ce-stat">
+        <span>APP投递不可用</span><span>{{ blacklistSummary.app_delivery_unusable }}</span>
+      </div>
       <div class="ce-stat"><span>手动</span><span>{{ blacklistSummary.manual }}</span></div>
     </div>
 
@@ -45,6 +53,7 @@
           <option value="">全部分类</option>
           <option value="banned">已拉黑</option>
           <option value="already_registered">已注册</option>
+          <option value="app_delivery_unusable">APP投递不可用（临时）</option>
           <option value="manual">手动</option>
         </select>
         <input
@@ -68,6 +77,7 @@
           <option value="manual">手动</option>
           <option value="banned">已拉黑</option>
           <option value="already_registered">已注册</option>
+          <option value="app_delivery_unusable">APP投递不可用（临时）</option>
         </select>
         <input
           v-model="addForm.note"
@@ -101,6 +111,10 @@
               <span class="ce-badge" :class="categoryClass(item.category)">{{ categoryLabel(item.category) }}</span>
               <span class="ce-badge">{{ item.reason || '-' }}</span>
               <span class="ce-badge">命中 {{ item.hits }}</span>
+              <span v-if="item.expires_at" class="ce-badge is-info">
+                到期 {{ shortTime(item.expires_at) }}
+              </span>
+              <span v-else class="ce-badge">永久</span>
             </div>
             <div class="ce-tiny ce-muted mono">
               首见 {{ shortTime(item.first_seen) }}
@@ -142,6 +156,7 @@ const {
 const categoryLabel = (c) => {
   if (c === 'banned') return '已拉黑'
   if (c === 'already_registered') return '已注册'
+  if (c === 'app_delivery_unusable') return 'APP投递不可用'
   if (c === 'manual') return '手动'
   return c || '未知'
 }
@@ -149,6 +164,7 @@ const categoryLabel = (c) => {
 const categoryClass = (c) => {
   if (c === 'banned') return 'is-danger'
   if (c === 'already_registered') return 'is-warn'
+  if (c === 'app_delivery_unusable') return 'is-warn'
   if (c === 'manual') return 'is-info'
   return ''
 }

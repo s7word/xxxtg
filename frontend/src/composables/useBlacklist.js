@@ -10,6 +10,7 @@ const blacklistSummary = reactive({
   total: 0,
   banned: 0,
   already_registered: 0,
+  app_delivery_unusable: 0,
   manual: 0,
 })
 const blacklistItems = ref([])
