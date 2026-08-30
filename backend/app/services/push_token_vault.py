@@ -242,6 +242,29 @@ class PushTokenVault:
             self._save_unlocked()
             return dict(row)
 
+    def mark_retired(
+        self,
+        *,
+        vault_id: Optional[str] = None,
+        reghelp_task_id: Optional[str] = None,
+        token: Optional[str] = None,
+        reason: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """主动作废：猎号轮换设备/窗口后不希望立刻把同一枚 Token 租回来。
+
+        已 consumed / refunded 的行保持原状态，其余一律置为 retired，退出复用候选。
+        """
+        with self._lock:
+            row = self._find_unlocked(vault_id, reghelp_task_id, token)
+            if not row:
+                return None
+            if row.get("status") not in {STATUS_REFUNDED, STATUS_CONSUMED}:
+                row["status"] = STATUS_RETIRED
+            row["last_outcome"] = reason or "retired"
+            row["updated_at"] = _utc_now()
+            self._save_unlocked()
+            return dict(row)
+
     def mark_failed_keep(
         self,
         *,
@@ -303,6 +326,7 @@ class PushTokenVault:
             reusable = 0
             consumed = 0
             refunded = 0
+            retired = 0
             for row in self._items:
                 status = row.get("status")
                 uses = int(row.get("use_count") or 0)
@@ -317,6 +341,8 @@ class PushTokenVault:
                     consumed += 1
                 elif status == STATUS_REFUNDED:
                     refunded += 1
+                elif status == STATUS_RETIRED:
+                    retired += 1
             return {
                 "total": total,
                 "available": available,
@@ -325,6 +351,7 @@ class PushTokenVault:
                 "reusable": reusable,
                 "consumed": consumed,
                 "refunded": refunded,
+                "retired": retired,
             }
 
     def delete(self, item_id: str) -> bool:
@@ -341,6 +368,7 @@ class PushTokenVault:
         *,
         refunded: bool = True,
         consumed: bool = True,
+        retired: bool = True,
         exhausted_max_uses: Optional[int] = None,
     ) -> int:
         with self._lock:
@@ -353,6 +381,8 @@ class PushTokenVault:
                 if refunded and status == STATUS_REFUNDED:
                     drop = True
                 if consumed and status == STATUS_CONSUMED:
+                    drop = True
+                if retired and status == STATUS_RETIRED:
                     drop = True
                 if exhausted_max_uses is not None and status == STATUS_AVAILABLE and uses >= int(exhausted_max_uses):
                     drop = True

@@ -698,10 +698,37 @@ def _score_proxy_item(item: Dict[str, Any]) -> Tuple[int, float, str]:
     return (health_rank, latency_rank, proxy_identity(item))
 
 
-def _pick_scored(items: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+def normalize_exclude_identities(exclude: Optional[Iterable[Any]]) -> set:
+    """把代理条目 / 身份字符串混合列表统一成 proxy_identity 字符串集合。"""
+    out = set()
+    for entry in exclude or ():
+        if not entry:
+            continue
+        if isinstance(entry, dict):
+            out.add(proxy_identity(entry))
+        else:
+            out.add(str(entry))
+    return out
+
+
+def _pick_scored(
+    items: List[Dict[str, Any]],
+    *,
+    exclude: Optional[Iterable[Any]] = None,
+) -> Optional[Dict[str, Any]]:
+    """按健康度/延迟排序取首个节点；exclude 内的身份优先跳过。
+
+    池内全部被排除时退回原排序首位，调用方可用 proxy_identity 比对判断「其实没换成」。
+    """
     if not items:
         return None
-    chosen = sorted(items, key=_score_proxy_item)[0]
+    ordered = sorted(items, key=_score_proxy_item)
+    blocked = normalize_exclude_identities(exclude)
+    if blocked:
+        for item in ordered:
+            if proxy_identity(item) not in blocked:
+                return normalize_custom_proxy_item(item) or item
+    chosen = ordered[0]
     return normalize_custom_proxy_item(chosen) or chosen
 
 
@@ -732,10 +759,12 @@ def select_proxy_for_registration(
     country: Optional[str] = None,
     *,
     proxy_id: Optional[str] = None,
+    exclude: Optional[Iterable[Any]] = None,
 ) -> Optional[Dict[str, Any]]:
     """注册流水线选代理：仅 registration/all，优先用户绑定国家，其次同国/真正全球节点。
 
     显式 proxy_id 时 100% 遵从用户指定，不施加国家或角色约束。
+    exclude 传入当前正在使用的节点（条目或 proxy_identity），用于猎号轮换真正换出口。
     """
     if proxy_id:
         found = find_custom_proxy(proxy_id=proxy_id)
@@ -746,7 +775,7 @@ def select_proxy_for_registration(
     if not items:
         return None
     if not country:
-        return _pick_scored(items)
+        return _pick_scored(items, exclude=exclude)
     bound = [item for item in items if match_assigned_country(item, country)]
     fallback = [
         item for item in items
@@ -755,7 +784,7 @@ def select_proxy_for_registration(
     pool = bound or fallback
     if not pool:
         return None
-    return _pick_scored(pool)
+    return _pick_scored(pool, exclude=exclude)
 
 
 def select_proxy_for_precheck(country: Optional[str] = None) -> Optional[Dict[str, Any]]:
@@ -876,6 +905,7 @@ __all__ = [
     "make_custom_proxy_id",
     "merge_imported_proxies",
     "merge_proxy_pools",
+    "normalize_exclude_identities",
     "parse_proxy_line",
     "parse_proxy_text",
     "persist_custom_proxies",

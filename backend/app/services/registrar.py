@@ -247,6 +247,25 @@ DEFAULT_HUNT_NO_NUMBER_RETRIES = 20
 DEFAULT_HUNT_NO_NUMBER_DELAY_SEC = 2.0
 DEFAULT_HUNT_PROXY_MAX_USES = 5
 DEFAULT_HUNT_DEVICE_MAX_USES = 8
+# 猎号跨轮复用 Push Token 时，REGHelp 的 180s 退款窗口会把 OTP 轮询越压越短。
+# Token 签发超过该秒数、或窗口余量已不足 HUNT_MIN_SMS_POLL_ATTEMPTS 次轮询时，
+# 先退旧 Token 再换新的，保证真 SMS 号有完整收码时间。
+HUNT_PUSH_TOKEN_MAX_AGE_SECONDS = 90.0
+HUNT_MIN_SMS_POLL_ATTEMPTS = 8
+# 猎号 FLOOD_WAIT：短等待就地退避（上限 30s），≥该秒数直接终止整个猎号任务。
+HUNT_FLOOD_ABORT_SECONDS = 3600
+HUNT_FLOOD_BACKOFF_CAP_SECONDS = 30.0
+# 猎号专用的内部原因标识 → REGHelp 已支持的规范原因。
+# 主动轮换/扫尽的共同事实是「这枚 Token 始终没等到短信」，与 NO_CODE 同类（setStatus=NOSMS）；
+# 被频控打死则按 FLOOD_WAIT 上报。收敛在这里，避免为猎号私有标识改动对外映射表。
+HUNT_REFUND_REASON_ALIASES = {
+    "HUNT_DEVICE_ROTATE": "NO_CODE",
+    "HUNT_PUSH_ROTATE": "NO_CODE",
+    "HUNT_EXHAUSTED": "NO_CODE",
+    "HUNT_CANCELED": "NO_CODE",
+    "HUNT_FLOOD_ABORT": "FLOOD_WAIT",
+    "HUNT_FLOOD_NO_PROXY": "FLOOD_WAIT",
+}
 
 
 class SentCodeAppDeliveryError(Exception):
@@ -574,16 +593,39 @@ class RegistrationOrchestrator:
         push_provider: Optional[str],
         push_token_obtained_at: Optional[float],
         interval: float = SMS_POLL_INTERVAL_SECONDS,
+        min_attempts: int = 1,
     ) -> int:
-        """REGHelp 路径把短信轮询截断到退款窗口内，给 setStatus 留出余量。"""
+        """REGHelp 路径把短信轮询截断到退款窗口内，给 setStatus 留出余量。
+
+        `min_attempts` 是收码保底：猎号会传 HUNT_MIN_SMS_POLL_ATTEMPTS，宁可丢掉这枚
+        Token 的退款也不能把真 SMS 号的收码窗口砍到收不到码（退款只是成本，收不到码是白扫）。
+        """
         requested = max(1, int(requested_attempts or 1))
+        floor = max(1, min(int(min_attempts or 1), requested))
         if push_provider != "reghelp" or push_token_obtained_at is None:
             return requested
         elapsed = time.monotonic() - push_token_obtained_at
         remain = PUSH_REFUND_WINDOW_SECONDS - PUSH_REFUND_SETSTATUS_RESERVE_SECONDS - elapsed
         if remain <= interval:
-            return 1
-        return min(requested, max(1, int(remain // interval)))
+            return floor
+        return min(requested, max(floor, int(remain // interval)))
+
+    @classmethod
+    def _push_token_window_exhausted(
+        cls,
+        push_provider: Optional[str],
+        push_token_obtained_at: Optional[float],
+        requested_attempts: int = DEFAULT_SMS_POLL_ATTEMPTS,
+    ) -> bool:
+        """猎号复用中的 Push Token 是否已老到会拖累下一轮收码窗口。"""
+        if push_provider != "reghelp" or push_token_obtained_at is None:
+            return False
+        if (time.monotonic() - push_token_obtained_at) >= HUNT_PUSH_TOKEN_MAX_AGE_SECONDS:
+            return True
+        capped = cls._sms_poll_attempts_for_push_window(
+            requested_attempts, push_provider, push_token_obtained_at
+        )
+        return capped < HUNT_MIN_SMS_POLL_ATTEMPTS
 
     @classmethod
     async def _refund_push_token(
@@ -596,22 +638,27 @@ class RegistrationOrchestrator:
         task_id: str,
         manager: RegistrationTaskManager,
         reason: str,
+        retire: bool = False,
     ) -> None:
         """失败/退订分支尝试触发 REGHelp Push Token `setStatus` 自动退款审计。
 
         仅当 `push_provider == "reghelp"` 且已持有 `push_task_id` 时才会发起请求。
         Token 签发未满 60s 时先等待再 setStatus；超 180s 仍会尝试（平台可能拒绝）。
         未映射原因与平台拒绝会写进任务日志，绝不导致任务失败。
+
+        `retire=True` 用于猎号主动轮换（换设备指纹 / 换收码窗口）：无论退款是否被平台
+        受理，都把该 Token 移出本地复用候选，避免下一轮立刻又把同一枚租回来。
         """
         from backend.app.services.push_token_vault import PushTokenVault, REUSE_PROVIDER
 
         vault = PushTokenVault.get_instance()
+        mark_unused = vault.mark_retired if retire else vault.mark_failed_keep
         if push_provider == REUSE_PROVIDER:
-            vault.mark_failed_keep(reghelp_task_id=push_task_id, reason=reason)
+            mark_unused(reghelp_task_id=push_task_id, reason=reason)
             return
         if not bypass_svc or not push_task_id or push_provider != "reghelp":
             if push_task_id or push_provider == "reghelp":
-                vault.mark_failed_keep(reghelp_task_id=push_task_id, reason=reason)
+                mark_unused(reghelp_task_id=push_task_id, reason=reason)
             return
         if push_token_obtained_at is not None:
             elapsed = time.monotonic() - push_token_obtained_at
@@ -639,16 +686,16 @@ class RegistrationOrchestrator:
             refund_status = await bypass_svc.refund_push_token(
                 push_task_id,
                 phone,
-                reason,
+                HUNT_REFUND_REASON_ALIASES.get(reason, reason),
                 log_callback=lambda msg: manager.append_log(task_id, msg),
             )
             if refund_status:
                 vault.mark_refunded(reghelp_task_id=push_task_id)
             else:
-                vault.mark_failed_keep(reghelp_task_id=push_task_id, reason=reason)
+                mark_unused(reghelp_task_id=push_task_id, reason=reason)
         except Exception as exc:
             logger.warning("REGHelp Push Token 退款回写异常 (id=%s, reason=%s): %s", push_task_id, reason, exc)
-            vault.mark_failed_keep(reghelp_task_id=push_task_id, reason=reason)
+            mark_unused(reghelp_task_id=push_task_id, reason=reason)
             await manager.append_log(
                 task_id,
                 f"⚠️ [REGHelp 退款] setStatus 异常 id={push_task_id} reason={reason}: {exc}"
@@ -663,10 +710,13 @@ class RegistrationOrchestrator:
         task_id: str,
         manager: RegistrationTaskManager,
         cache=None,
+        soft: bool = False,
     ) -> bool:
         """租号后最先检查本地已确认封禁库。命中则立即退订，不消耗 Push Token。
 
         返回 True 表示可以继续；False 表示已拦截并退订，调用方必须立即 return。
+        `soft=True`（猎号中途）只退订不落终态，避免 filtered/error/banned_cache_hit
+        残留到后续轮次成功后的任务快照里。
         """
         service = cache or BannedPhonesCache
         record = service.lookup(phone)
@@ -685,14 +735,15 @@ class RegistrationOrchestrator:
             "跳过白号预检 / Push Token / auth.sendCode，直接撤销退订换号",
         )
         await cls._refund_and_revoke_channel(sms_svc, act_id, task_id, manager, LOCAL_BANNED_REASON)
-        manager.update_task_status(
-            task_id,
-            "filtered",
-            error=f"{LOCAL_BANNED_REASON}: 号码 {phone} 已被本机确认为 {record.reason}",
-            phone=phone,
-            banned_cache_hit=True,
-            blacklist_category=category,
-        )
+        if not soft:
+            manager.update_task_status(
+                task_id,
+                "filtered",
+                error=f"{LOCAL_BANNED_REASON}: 号码 {phone} 已被本机确认为 {record.reason}",
+                phone=phone,
+                banned_cache_hit=True,
+                blacklist_category=category,
+            )
         return False
 
     @classmethod
@@ -706,10 +757,12 @@ class RegistrationOrchestrator:
         proxy: Optional[Dict[str, Any]] = None,
         precheck_svc=None,
         config=None,
+        soft: bool = False,
     ) -> bool:
         """租号后、申请 Push Token 之前做白号预检。
 
         返回 True 表示可以继续注册流水线；False 表示已拦截并退订，调用方必须立即 return。
+        `soft=True`（猎号中途）只退订不落终态，避免 filtered/error 残留污染最终结果。
         """
         service = precheck_svc or PhonePrecheckService
         await manager.append_log(task_id, f"正在对通信句柄 {phone} 执行 Telegram 号码注册状态预检探测...")
@@ -732,14 +785,15 @@ class RegistrationOrchestrator:
             await cls._refund_and_revoke_channel(
                 sms_svc, act_id, task_id, manager, PRECHECK_ALREADY_REGISTERED
             )
-            manager.update_task_status(
-                task_id,
-                "filtered",
-                error=f"{PRECHECK_ALREADY_REGISTERED}: 号码 {phone} 已在 Telegram 注册 (uid={result.user_id})",
-                phone=phone,
-                precheck_intercepted=True,
-                precheck_user_id=result.user_id,
-            )
+            if not soft:
+                manager.update_task_status(
+                    task_id,
+                    "filtered",
+                    error=f"{PRECHECK_ALREADY_REGISTERED}: 号码 {phone} 已在 Telegram 注册 (uid={result.user_id})",
+                    phone=phone,
+                    precheck_intercepted=True,
+                    precheck_user_id=result.user_id,
+                )
             return False
         if result.degraded or result.is_registered is None:
             if result.reason in {"PRECHECK_NO_PROBE_SESSION", "PRECHECK_DISABLED", ""}:
@@ -763,8 +817,12 @@ class RegistrationOrchestrator:
         proxy_override: Optional[Dict[str, Any]] = None,
         proxy_id: Optional[str] = None,
         proxy_mode: str = "custom_pool",
+        exclude: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
-        """按用户策略解析本次任务实际使用的出口代理（显式 / 自建池 / API / 后备）。"""
+        """按用户策略解析本次任务实际使用的出口代理（显式 / 自建池 / API / 后备）。
+
+        `exclude` 仅作用于自建池路径：猎号轮换时把当前出口身份排除，避免「换了个寂寞」。
+        """
         from backend.app.models.schemas import normalize_proxy_mode
         from backend.app.services.proxy_manager import find_custom_proxy
         from backend.app.services.proxyseller import format_proxy_endpoint
@@ -811,6 +869,7 @@ class RegistrationOrchestrator:
                 target_country=target_country,
                 task_id=task_id,
                 manager=manager,
+                exclude=exclude,
             )
         if not active_proxy and mode == "auto":
             active_proxy = await cls._resolve_proxy_seller_auto(
@@ -852,14 +911,75 @@ class RegistrationOrchestrator:
         return active_proxy
 
     @classmethod
+    async def _rotate_hunt_proxy(
+        cls,
+        config,
+        target_country: str,
+        task_id: str,
+        manager: RegistrationTaskManager,
+        current_proxy: Optional[Dict[str, Any]],
+        proxy_mode: str,
+        reason: str,
+        proxy_override: Optional[Dict[str, Any]] = None,
+        proxy_id: Optional[str] = None,
+    ) -> Tuple[Dict[str, Any], bool]:
+        """猎号轮换出口，返回 (生效代理, 是否真的换掉了)。
+
+        代理是 1:1 预分配（批量槽位 proxy_override）或用户显式指定（proxy_id）时不存在
+        「池内换一个」的语义，直接如实记录不轮换，绝不打出假的「已轮换」日志。
+        换出来的节点身份与原节点相同（池里只有一个候选）时同样返回 False。
+        """
+        from backend.app.services.proxyseller import format_proxy_endpoint, proxy_identity
+
+        current_identity = proxy_identity(current_proxy) if current_proxy else None
+        if proxy_override or proxy_id:
+            await manager.append_log(
+                task_id,
+                f"[猎号] {reason}：当前为"
+                + ("批量槽位 1:1 绑定" if proxy_override else "用户显式指定")
+                + f"出口 {format_proxy_endpoint(current_proxy or {})}，本模式不轮换代理"
+            )
+            return (current_proxy or {}), False
+
+        rotated_proxy = await cls.resolve_active_proxy(
+            config=config,
+            target_country=target_country,
+            task_id=task_id,
+            manager=manager,
+            proxy_override=None,
+            proxy_id=None,
+            proxy_mode=proxy_mode,
+            exclude=[current_identity] if current_identity else None,
+        )
+        new_identity = proxy_identity(rotated_proxy) if rotated_proxy else None
+        if not rotated_proxy or (current_identity and new_identity == current_identity):
+            await manager.append_log(
+                task_id,
+                f"⚠️ [猎号] {reason}：可用注册代理池内没有其它候选节点，出口仍为 "
+                f"{format_proxy_endpoint(current_proxy or {})}（未轮换）"
+            )
+            return (rotated_proxy or current_proxy or {}), False
+        await manager.append_log(
+            task_id,
+            f"[猎号] {reason}：出口已轮换 {format_proxy_endpoint(current_proxy or {})} → "
+            f"{format_proxy_endpoint(rotated_proxy)}"
+        )
+        return rotated_proxy, True
+
+    @classmethod
     async def _resolve_custom_proxy(
         cls,
         config,
         target_country: str,
         task_id: str,
         manager: RegistrationTaskManager,
+        exclude: Optional[List[str]] = None,
     ) -> Optional[Dict[str, Any]]:
-        """优先从用户自建代理池按目标国家匹配节点。"""
+        """优先从用户自建代理池按目标国家匹配节点。
+
+        `exclude` 传入当前出口身份（proxy_identity），猎号轮换时用于真正换节点；
+        池内无其它候选时仍返回原节点，由调用方按身份比对如实记录「未换成」。
+        """
         from backend.app.services.proxy_manager import custom_pool_summary, select_proxy_for_registration
         from backend.app.services.proxyseller import format_proxy_endpoint
 
@@ -868,7 +988,7 @@ class RegistrationOrchestrator:
         summary = custom_pool_summary(target_country)
         if not summary.get("total"):
             return None
-        chosen = select_proxy_for_registration(target_country)
+        chosen = select_proxy_for_registration(target_country, exclude=exclude)
         if not chosen:
             await manager.append_log(
                 task_id,
@@ -1429,6 +1549,72 @@ class RegistrationOrchestrator:
         }
 
     @classmethod
+    def _hunt_cancel_requested(cls, task_id: str, manager: RegistrationTaskManager) -> bool:
+        """猎号循环的取消检查钩子。
+
+        完整的 cancel API（含正在进行中的 sendCode/OTP 中断）尚未接入；当前只读取任务上
+        已有的取消标记，使外部一旦把任务置为 canceled/cancel_requested，循环下一轮就收住。
+        """
+        task = manager.get_task(task_id)
+        if not task:
+            return False
+        if task.get("status") == "canceled":
+            return True
+        return bool(task.get("cancel_requested"))
+
+    @classmethod
+    async def _finalize_exhausted_hunt(
+        cls,
+        *,
+        task_id: str,
+        manager: RegistrationTaskManager,
+        bypass_svc: Optional[AttestationGatewayService],
+        push_token: Optional[str],
+        push_task_id: Optional[str],
+        push_provider: Optional[str],
+        push_token_obtained_at: Optional[float],
+        phone: Optional[str],
+        attempts_used: int,
+        max_attempts: int,
+        scanned: int,
+        blacklisted: int,
+        last_failure_reason: Optional[str],
+        stop_reason: Optional[str] = None,
+    ) -> None:
+        """猎号未能进入 OTP 阶段时的统一终态收尾。
+
+        终态码优先用具体的提前终止原因（FLOOD/取消），否则一律给 HUNT_EXHAUSTED，
+        并把扫号次数 / 拉黑数 / 最后一次失败原因一起写进任务，便于前端与复盘。
+        """
+        code = stop_reason or "HUNT_EXHAUSTED"
+        if push_token or push_task_id:
+            # 这枚 Token 从头到尾没换来一条短信，按扫尽/频控原因走退款审计
+            await cls._refund_push_token(
+                bypass_svc, push_task_id, push_provider, push_token_obtained_at,
+                phone, task_id, manager, code,
+            )
+        detail = (
+            f"取号 {attempts_used}/{max_attempts} 次，扫号 {scanned} 个，"
+            f"拉黑/拦截 {blacklisted} 个"
+            + (f"，最后一次失败原因 {last_failure_reason}" if last_failure_reason else "")
+        )
+        if code == "HUNT_EXHAUSTED":
+            summary = f"[猎号] 已用尽取号次数仍未注册成功（{detail}）"
+        else:
+            summary = f"[猎号] 提前终止（{code}）：{detail}"
+        await manager.append_log(task_id, summary)
+        manager.update_task_status(
+            task_id,
+            "canceled" if code == "HUNT_CANCELED" else "failed",
+            error=f"{code}: {detail}",
+            hunt_attempt=attempts_used,
+            hunt_max=max_attempts,
+            hunt_scanned=scanned,
+            hunt_blacklisted=blacklisted,
+            hunt_last_reason=last_failure_reason,
+        )
+
+    @classmethod
     async def _lease_number_with_retries(
         cls,
         sms_svc,
@@ -1538,6 +1724,14 @@ class RegistrationOrchestrator:
         sms_poll_attempts = DEFAULT_SMS_POLL_ATTEMPTS
         proxy_send_uses = 0
         device_send_uses = 0
+        # 猎号收尾统计与交接标记：
+        # phone_disposed 表示号码已在循环内 cancel + 拉黑 + 上报完毕，外层兜底不得重复处理
+        hunt_scanned = 0
+        hunt_blacklisted = 0
+        last_failure_reason: Optional[str] = None
+        hunt_stop_reason: Optional[str] = None
+        entered_otp_stage = False
+        phone_disposed = False
 
         try:
             await manager.append_log(
@@ -1597,22 +1791,32 @@ class RegistrationOrchestrator:
                         task_id, "running", hunt_attempt=attempt_idx, hunt_max=max_attempts
                     )
 
-                # 出口/设备轮换：sendCode 次数达到上限后降低 FLOOD 风险
-                if hunt_enabled and proxy_send_uses >= hunt_limits["proxy_max_uses"] and not proxy_override and not proxy_id:
+                # 猎号取消钩子：外部请求取消后不再开新一轮（完整 cancel API 另行接入）
+                if cls._hunt_cancel_requested(task_id, manager):
+                    hunt_stop_reason = "HUNT_CANCELED"
                     await manager.append_log(
-                        task_id,
-                        f"[猎号] 当前代理已用于 sendCode {proxy_send_uses} 次，达到上限 "
-                        f"{hunt_limits['proxy_max_uses']}，轮换出口（保留设备与 Push）"
+                        task_id, f"[猎号] 收到取消请求，在第 {attempt_idx} 轮开始前停止扫号"
                     )
-                    active_proxy = await cls.resolve_active_proxy(
+                    break
+
+                # 出口/设备轮换：sendCode 次数达到上限后降低 FLOOD 风险
+                if hunt_enabled and proxy_send_uses >= hunt_limits["proxy_max_uses"]:
+                    active_proxy, _rotated = await cls._rotate_hunt_proxy(
                         config=config,
                         target_country=target_country,
                         task_id=task_id,
                         manager=manager,
-                        proxy_override=None,
-                        proxy_id=None,
+                        current_proxy=active_proxy,
                         proxy_mode=proxy_mode,
+                        reason=(
+                            f"当前代理已用于 sendCode {proxy_send_uses} 次"
+                            f"（上限 {hunt_limits['proxy_max_uses']}，保留设备与 Push）"
+                        ),
+                        proxy_override=proxy_override,
+                        proxy_id=proxy_id,
                     )
+                    # 换不掉（池内只有一个节点 / 出口被钉死）时同样清零计数：
+                    # 否则每轮都会重复评估并重复播报同一条「未轮换」告警
                     proxy_send_uses = 0
 
                 if hunt_enabled and device_send_uses >= hunt_limits["device_max_uses"]:
@@ -1622,9 +1826,10 @@ class RegistrationOrchestrator:
                         f"{hunt_limits['device_max_uses']}，重采样设备并更换 Push"
                     )
                     if push_token or push_task_id:
+                        # retire=True：新设备指纹不能再挂旧 Token，退款后同时移出本地复用候选
                         await cls._refund_push_token(
                             bypass_svc, push_task_id, push_provider, push_token_obtained_at,
-                            phone, task_id, manager, "HUNT_DEVICE_ROTATE",
+                            phone, task_id, manager, "HUNT_DEVICE_ROTATE", retire=True,
                         )
                     push_token = None
                     push_task_id = None
@@ -1638,6 +1843,27 @@ class RegistrationOrchestrator:
                         task_id,
                         f"[猎号] 新设备: {profile['device_model']} ({profile['system_version']}), App: {profile['app_version']}"
                     )
+
+                # 收码窗口保护：复用的 REGHelp Token 太老会把本轮 OTP 轮询压到几秒，
+                # 真 SMS 号也收不到码。宁可先退掉旧 Token 重新申请，也不能进一个收不到码的轮次。
+                if hunt_enabled and push_token is not None and cls._push_token_window_exhausted(
+                    push_provider, push_token_obtained_at, DEFAULT_SMS_POLL_ATTEMPTS
+                ):
+                    token_age = time.monotonic() - (push_token_obtained_at or time.monotonic())
+                    await manager.append_log(
+                        task_id,
+                        f"[猎号] 复用中的 Push Token 已签发 {token_age:.0f}s，"
+                        f"剩余退款窗口不足 {HUNT_MIN_SMS_POLL_ATTEMPTS} 次 OTP 轮询，"
+                        "先退旧 Token 再申请新的，保证本轮收码窗口完整"
+                    )
+                    await cls._refund_push_token(
+                        bypass_svc, push_task_id, push_provider, push_token_obtained_at,
+                        phone, task_id, manager, "HUNT_PUSH_ROTATE", retire=True,
+                    )
+                    push_token = None
+                    push_task_id = None
+                    push_provider = None
+                    push_token_obtained_at = None
 
                 # 1. 租用带外通信句柄（热门/稀缺国家需携带 maxPrice 动态竞价，否则卡在底价空桶）
                 if bid_label is not None:
@@ -1665,6 +1891,8 @@ class RegistrationOrchestrator:
                 manager.update_task_status(task_id, "running", phone=phone)
                 await manager.append_log(task_id, f"成功获取端点通信句柄: {phone} (Session Handle ID: {act_id})")
 
+                hunt_scanned += 1
+
                 # 1.4 本地封禁号缓存：接码回收号复用时零成本拦截
                 if not await cls._apply_banned_cache_gate(
                     phone=phone,
@@ -1672,8 +1900,12 @@ class RegistrationOrchestrator:
                     sms_svc=sms_svc,
                     task_id=task_id,
                     manager=manager,
+                    soft=hunt_enabled,
                 ):
-                    if attempt_idx < max_attempts:
+                    act_id = None  # 闸门已 cancel，置空避免任何后续路径重复退订
+                    if hunt_enabled:
+                        hunt_blacklisted += 1
+                        last_failure_reason = LOCAL_BANNED_REASON
                         await manager.append_log(
                             task_id,
                             f"[猎号] 号码 {phone} 命中黑名单，换号继续（尚未消耗 Push Token）"
@@ -1691,8 +1923,12 @@ class RegistrationOrchestrator:
                     manager=manager,
                     proxy=active_proxy,
                     config=config,
+                    soft=hunt_enabled,
                 ):
-                    if attempt_idx < max_attempts:
+                    act_id = None
+                    if hunt_enabled:
+                        hunt_blacklisted += 1
+                        last_failure_reason = PRECHECK_ALREADY_REGISTERED
                         await manager.append_log(
                             task_id,
                             f"[猎号] 号码 {phone} 预检已注册，换号继续（尚未消耗 Push Token）"
@@ -1716,7 +1952,11 @@ class RegistrationOrchestrator:
                         )
                         await cls._refund_and_revoke_channel(sms_svc, act_id, task_id, manager, "PHONE_PREAUDIT_BANNED")
                         await bypass_svc.report_result(check_id, aid, "REJECTED")
-                        if attempt_idx < max_attempts:
+                        act_id = None
+                        check_id = None
+                        if hunt_enabled:
+                            hunt_blacklisted += 1
+                            last_failure_reason = "PHONE_PREAUDIT_BANNED"
                             await manager.append_log(
                                 task_id,
                                 f"[猎号] 预审封禁 {phone}，换号继续（Push Token 保持复用）"
@@ -1860,12 +2100,19 @@ class RegistrationOrchestrator:
                     await cls._refund_and_revoke_channel(sms_svc, act_id, task_id, manager, reason)
                     if check_id:
                         await bypass_svc.report_result(check_id, aid, reason)
+                    # 本轮已完成 cancel / remember / report_result，向外抛之前必须把句柄与
+                    # 拉黑标记交接掉，否则外层兜底会对同一号码再退订一次、再拉黑一次
+                    act_id = None
+                    check_id = None
+                    phone_disposed = True
                     await cls._disconnect_client_quiet(client)
                     client = None
                     cls._discard_incomplete_session(session_path, meta_path)
                     session_path = None
                     meta_path = None
-                    if attempt_idx < max_attempts:
+                    hunt_blacklisted += 1
+                    last_failure_reason = reason
+                    if hunt_enabled:
                         proxy_send_uses += 1
                         device_send_uses += 1
                         await manager.append_log(
@@ -1879,23 +2126,57 @@ class RegistrationOrchestrator:
                         continue
                     raise
                 except (PhoneNumberFloodError, FloodWaitError) as flood_ex:
-                    sec = getattr(flood_ex, "seconds", 0) or 0
+                    sec = int(getattr(flood_ex, "seconds", 0) or 0)
                     await cls._refund_and_revoke_channel(sms_svc, act_id, task_id, manager, "FLOOD_WAIT")
+                    act_id = None
                     await cls._disconnect_client_quiet(client)
                     client = None
                     cls._discard_incomplete_session(session_path, meta_path)
                     session_path = None
                     meta_path = None
-                    if hunt_enabled and attempt_idx < max_attempts and sec < 3600:
-                        proxy_send_uses = hunt_limits["proxy_max_uses"]  # 强制下一轮换代理
+                    last_failure_reason = "FLOOD_WAIT"
+                    if not hunt_enabled:
+                        raise
+                    if sec >= HUNT_FLOOD_ABORT_SECONDS:
+                        # 小时级频控意味着这条出口/设备组合已经被打死，继续扫只会白烧号
+                        hunt_stop_reason = "HUNT_FLOOD_ABORT"
                         await manager.append_log(
                             task_id,
-                            f"[猎号] FLOOD_WAIT {sec}s，强制轮换代理后换号继续 "
+                            f"❌ [猎号] FLOOD_WAIT {sec}s ≥ {HUNT_FLOOD_ABORT_SECONDS}s，"
+                            "判定该出口/设备组合已被重度限流，终止猎号任务"
+                        )
+                        break
+                    active_proxy, rotated = await cls._rotate_hunt_proxy(
+                        config=config,
+                        target_country=target_country,
+                        task_id=task_id,
+                        manager=manager,
+                        current_proxy=active_proxy,
+                        proxy_mode=proxy_mode,
+                        reason=f"FLOOD_WAIT {sec}s 强制换出口",
+                        proxy_override=proxy_override,
+                        proxy_id=proxy_id,
+                    )
+                    if not rotated:
+                        # 换不到新出口就继续用同一个 IP 撞频控，只会把号和 Token 一起烧掉
+                        hunt_stop_reason = "HUNT_FLOOD_NO_PROXY"
+                        await manager.append_log(
+                            task_id,
+                            f"❌ [猎号] FLOOD_WAIT {sec}s 且无法轮换出口，终止猎号任务"
+                            "（请在代理池补充可用于注册的同国节点后重试）"
+                        )
+                        break
+                    proxy_send_uses = 0
+                    backoff = min(float(sec), HUNT_FLOOD_BACKOFF_CAP_SECONDS)
+                    if backoff > 0:
+                        await manager.append_log(
+                            task_id,
+                            f"[猎号] FLOOD_WAIT {sec}s，换出口后退避 {backoff:.0f}s 再换号继续 "
                             f"({attempt_idx}/{max_attempts})"
                         )
-                        manager.update_task_status(task_id, "running")
-                        continue
-                    raise
+                        await asyncio.sleep(backoff)
+                    manager.update_task_status(task_id, "running")
+                    continue
                 except PhoneNumberBannedError:
                     if phone:
                         BannedPhonesCache.remember(
@@ -1907,12 +2188,17 @@ class RegistrationOrchestrator:
                     await cls._refund_and_revoke_channel(sms_svc, act_id, task_id, manager, "PHONE_NUMBER_BANNED")
                     if check_id:
                         await bypass_svc.report_result(check_id, aid, "BANNED")
+                    act_id = None
+                    check_id = None
+                    phone_disposed = True
                     await cls._disconnect_client_quiet(client)
                     client = None
                     cls._discard_incomplete_session(session_path, meta_path)
                     session_path = None
                     meta_path = None
-                    if attempt_idx < max_attempts:
+                    hunt_blacklisted += 1
+                    last_failure_reason = "PHONE_NUMBER_BANNED"
+                    if hunt_enabled:
                         proxy_send_uses += 1
                         device_send_uses += 1
                         await manager.append_log(
@@ -1924,8 +2210,13 @@ class RegistrationOrchestrator:
                         continue
                     raise
 
+                # 猎号收码保底：宁可放弃这枚 Token 的退款，也不能把真 SMS 号的
+                # OTP 窗口截到收不到码（上面已在进轮前轮换过老 Token，这里只兜底）
                 capped_attempts = cls._sms_poll_attempts_for_push_window(
-                    sms_poll_attempts, push_provider, push_token_obtained_at
+                    sms_poll_attempts,
+                    push_provider,
+                    push_token_obtained_at,
+                    min_attempts=HUNT_MIN_SMS_POLL_ATTEMPTS if hunt_enabled else 1,
                 )
                 if capped_attempts < sms_poll_attempts:
                     elapsed = (
@@ -1944,21 +2235,30 @@ class RegistrationOrchestrator:
                         task_id,
                         f"[猎号] 第 {attempt_idx} 次号码进入短信/OTP 通道，停止扫号，继续完成注册"
                     )
+                entered_otp_stage = True
                 break
-            else:
-                # while 正常耗尽且未 break：全部被闸门拦截
-                await manager.append_log(
-                    task_id,
-                    f"[猎号] 已用尽 {max_attempts} 次取号仍未注册成功（平台号码已尽量扫完并拉黑）"
-                )
-                manager.update_task_status(
-                    task_id,
-                    "failed",
-                    error=f"HUNT_EXHAUSTED: 猎号 {max_attempts} 次未注册成功",
+
+            if not entered_otp_stage:
+                # 猎号每一轮都被闸门/失败分支拦下（或被 FLOOD/取消提前收住）：
+                # 统一在这里收尾，给出可读的扫尽终态，而不是把最后一次的原因当成全局结论
+                await cls._finalize_exhausted_hunt(
+                    task_id=task_id,
+                    manager=manager,
+                    bypass_svc=bypass_svc,
+                    push_token=push_token,
+                    push_task_id=push_task_id,
+                    push_provider=push_provider,
+                    push_token_obtained_at=push_token_obtained_at,
+                    phone=phone,
+                    attempts_used=attempt_idx,
+                    max_attempts=max_attempts,
+                    scanned=hunt_scanned,
+                    blacklisted=hunt_blacklisted,
+                    last_failure_reason=last_failure_reason,
+                    stop_reason=hunt_stop_reason,
                 )
                 return
 
-            # 7. 异步等待带外挑战证明
             # 7. 异步等待带外挑战证明
             await manager.append_log(task_id, "正在等待带外遥测通道下发瞬时挑战证明 (OTP)...")
             sms_code = await sms_svc.wait_for_code(
@@ -2133,7 +2433,7 @@ class RegistrationOrchestrator:
         except PhoneNumberBannedError:
             err = f"通信句柄 {phone} 处于服务端拒绝服务状态 (PHONE_NUMBER_BANNED)"
             await manager.append_log(task_id, f"❌ {err}")
-            if phone:
+            if phone and not phone_disposed:
                 BannedPhonesCache.remember(
                     phone,
                     reason="PHONE_NUMBER_BANNED",
@@ -2185,7 +2485,7 @@ class RegistrationOrchestrator:
             reason = getattr(ex, "reason", None) or "SENT_CODE_TYPE_APP"
             err = f"站内信验证码无法被带外通道接收 ({reason}): {str(ex) or repr(ex)}"
             await manager.append_log(task_id, f"❌ {err}")
-            if phone:
+            if phone and not phone_disposed:
                 BannedPhonesCache.remember(
                     phone,
                     reason=reason,
