@@ -8,6 +8,8 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
 from backend.app.api.routes import router as api_router
+from backend.app.api.smsall_hooks import hooks_router
+from backend.app.services.auth import install_auth
 
 logging.basicConfig(
     level=logging.INFO,
@@ -22,6 +24,9 @@ app = FastAPI(
     description="分布式多协议边缘节点状态机仿真、带外挑战响应与密码学上下文审计框架"
 )
 
+# Session + 鉴权网关先挂，CORS 后挂（后添加的中间件更靠外）
+install_auth(app)
+
 # CORS 配置
 app.add_middleware(
     CORSMiddleware,
@@ -29,10 +34,12 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["Content-Disposition", "X-Vault-Export-Filename"],
 )
 
 # 1. 优先挂载 API 路由
 app.include_router(api_router)
+app.include_router(hooks_router)
 
 @app.get("/api/health", summary="系统健康检查探针")
 async def health_check():
@@ -93,6 +100,12 @@ if FRONTEND_DIST.exists() and (FRONTEND_DIST / "index.html").exists():
 
     @app.get("/{full_path:path}")
     async def serve_spa_frontend(full_path: str):
+        # 未命中的 /api/*、/hooks/* 绝不能回落成 index.html，否则前端 res.json() 会报 Unexpected token '<'
+        raw = (full_path or "").lstrip("/")
+        if raw.startswith("api/") or raw.startswith("hooks/") or raw in {"api", "hooks", "docs", "redoc", "openapi.json"}:
+            from fastapi import HTTPException
+
+            raise HTTPException(status_code=404, detail=f"Not Found: /{raw}")
         safe_file = resolve_spa_file(full_path, FRONTEND_DIST)
         if safe_file is not None:
             return FileResponse(str(safe_file))

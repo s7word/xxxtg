@@ -4,6 +4,24 @@ import { pushToast } from './useUi'
 
 const { config, form, saveConfig } = useConfig()
 
+const readJson = async (res) => {
+  const text = await res.text()
+  const trimmed = (text || '').trim()
+  if (!trimmed) {
+    throw new Error(`空响应 (HTTP ${res.status})`)
+  }
+  if (trimmed[0] === '<' || trimmed.startsWith('<!DOCTYPE')) {
+    throw new Error(
+      `接口返回了 HTML 而非 JSON (HTTP ${res.status})，可能是未登录、路径错误或网关异常`
+    )
+  }
+  try {
+    return JSON.parse(trimmed)
+  } catch (e) {
+    throw new Error(`响应不是合法 JSON (HTTP ${res.status}): ${e.message}`)
+  }
+}
+
 const proxyPool = ref([])
 const proxyPoolMeta = reactive({
   success: null,
@@ -30,7 +48,16 @@ const testing = reactive({
   connectivity: false,
   customimport: false,
   customall: false,
-  customclear: false
+  customclear: false,
+  ensuretg: false
+})
+
+const residentLists = ref([])
+const residentListsMeta = reactive({
+  success: null,
+  message: '',
+  bot_skipped: 0,
+  package_active: null
 })
 
 export const customProxiesForCountry = computed(() => {
@@ -101,6 +128,23 @@ export const fetchCustomProxyList = async (country) => {
   }
 }
 
+export const fetchResidentLists = async () => {
+  try {
+    const res = await fetch('/api/proxy-seller/resident-lists')
+    const data = await res.json()
+    residentLists.value = Array.isArray(data.lists) ? data.lists : []
+    residentListsMeta.success = data.success
+    residentListsMeta.message = data.message || ''
+    residentListsMeta.bot_skipped = Number(data.bot_skipped) || 0
+    residentListsMeta.package_active = data.package_active
+    return data
+  } catch (e) {
+    residentListsMeta.success = false
+    residentListsMeta.message = e.message
+    return null
+  }
+}
+
 export const refreshProxyPool = async (country, refresh = true) => {
   testing.proxypool = true
   try {
@@ -119,6 +163,7 @@ export const refreshProxyPool = async (country, refresh = true) => {
       return !country || code.includes(String(country).toLowerCase())
     })
     if (regional) matchedProxy.value = regional
+    await fetchResidentLists()
     return data
   } catch (e) {
     proxyPoolMeta.success = false
@@ -126,6 +171,41 @@ export const refreshProxyPool = async (country, refresh = true) => {
     return null
   } finally {
     testing.proxypool = false
+  }
+}
+
+export const ensureTgResidentList = async (country, { create = true, ports = 10, probe = false } = {}) => {
+  testing.ensuretg = true
+  try {
+    const res = await fetch('/api/proxy-seller/ensure-tg', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        target_country: country,
+        create,
+        ports,
+        probe,
+        api_key: config.proxy_seller_key
+      })
+    })
+    const data = await res.json()
+    proxyPoolMeta.success = data.success
+    proxyPoolMeta.message = data.message || ''
+    if (data.success) {
+      pushToast('ok', data.message || `已确保 ${data.title || '_tg'} 列表`)
+    } else {
+      pushToast('danger', data.message || '自主拉取 _tg 列表失败')
+    }
+    await fetchResidentLists()
+    await refreshProxyPool(country, true)
+    return data
+  } catch (e) {
+    proxyPoolMeta.success = false
+    proxyPoolMeta.message = e.message
+    pushToast('danger', `自主拉取 _tg 列表失败: ${e.message}`)
+    return { success: false, message: e.message }
+  } finally {
+    testing.ensuretg = false
   }
 }
 
@@ -319,6 +399,8 @@ export const useProxy = () => ({
   proxyPool,
   proxyPoolMeta,
   matchedProxy,
+  residentLists,
+  residentListsMeta,
   customProxies,
   customProxyText,
   customProxyImportProbe,
@@ -333,7 +415,9 @@ export const useProxy = () => ({
   testing,
   applyCustomProxyPayload,
   fetchCustomProxyList,
+  fetchResidentLists,
   refreshProxyPool,
+  ensureTgResidentList,
   previewAutoSelect,
   setProxyAsFallback,
   importCustomProxyText,

@@ -1012,6 +1012,7 @@ class ProxySellerListResponse(BaseModel):
 
 class ProxySellerAutoSelectRequest(BaseModel):
     target_country: Optional[str] = Field(default=None, description="目标区域 ISO-2 / ISO-3 / 国家名")
+    country: Optional[str] = Field(default=None, description="target_country 别名")
     apply_fallback: bool = Field(default=False, description="是否一键写入 config.fallback_proxy")
     probe: bool = Field(default=False, description="是否按顺序测活后挑选")
     allow_fallback: bool = Field(
@@ -1020,6 +1021,9 @@ class ProxySellerAutoSelectRequest(BaseModel):
     )
     refresh: bool = Field(default=False, description="是否绕过本地缓存强制拉取 API")
     api_key: Optional[str] = None
+
+    def resolved_country(self) -> Optional[str]:
+        return (self.target_country or self.country or "").strip() or None
 
 
 class ProxySellerAutoSelectResponse(BaseModel):
@@ -1070,11 +1074,15 @@ class ProxySellerResidentListsResponse(BaseModel):
 
 class ProxySellerEnsureTgRequest(BaseModel):
     target_country: Optional[str] = Field(default=None, description="目标国家 ISO-2 / ISO-3 / 国家名")
+    country: Optional[str] = Field(default=None, description="target_country 别名，兼容前端/脚本传 country")
     create: bool = Field(default=True, description="没有 {CC}_tg 时是否 POST resident/list/add")
     ports: int = Field(default=10, ge=1, le=20)
     probe: bool = Field(default=False, description="是否对导出节点测活")
     rotation: int = Field(default=3600, ge=0)
     api_key: Optional[str] = None
+
+    def resolved_country(self) -> Optional[str]:
+        return (self.target_country or self.country or "").strip() or None
 
 
 class ProxySellerEnsureTgResponse(BaseModel):

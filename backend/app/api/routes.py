@@ -780,7 +780,7 @@ async def auto_select_proxy_seller(req: ProxySellerAutoSelectRequest):
     config_mgr = ConfigManager.get_instance()
     svc = _proxy_seller_service(req.api_key)
     try:
-        target = (req.target_country or config_mgr.config.target_country or "").strip()
+        target = (req.resolved_country() or config_mgr.config.target_country or "").strip()
         selection = await svc.select_best_proxy(
             target_country=target,
             probe=req.probe,
@@ -874,7 +874,7 @@ async def ensure_proxy_seller_tg_list(req: ProxySellerEnsureTgRequest):
     config_mgr = ConfigManager.get_instance()
     svc = _proxy_seller_service(req.api_key)
     try:
-        target = (req.target_country or config_mgr.config.target_country or "").strip()
+        target = (req.resolved_country() or config_mgr.config.target_country or "").strip()
         result = await svc.ensure_tg_resident_list(
             target,
             create=req.create,

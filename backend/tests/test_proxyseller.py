@@ -17,7 +17,9 @@ os.chdir(REPO_ROOT)
 
 from backend.app.models.schemas import (  # noqa: E402
     ProxySellerAutoSelectRequest,
+    ProxySellerEnsureTgRequest,
     ProxySellerListResponse,
+    ProxySellerResidentListsResponse,
     ProxySellerTestAllRequest,
 )
 from backend.app.services.proxyseller import (  # noqa: E402
@@ -28,13 +30,20 @@ from backend.app.services.proxyseller import (  # noqa: E402
     STATIC_RESIDENTIAL_PORTS,
     STATIC_RESIDENTIAL_USERNAME,
     builtin_static_residential_items,
+    country_code_from_tg_title,
     expand_country_aliases,
     format_proxy_endpoint,
     infer_country_from_phone,
+    is_bot_list_title,
+    is_resident_tg,
     is_static_residential,
+    is_xxxtg_list_title,
     match_proxy_country,
     merge_proxy_pools,
+    parse_export_ports,
+    parse_resident_geo,
     proxy_identity,
+    resident_list_to_proxies,
     static_residential_count,
     normalize_proxy_item,
     _extract_raw_items,
@@ -148,9 +157,33 @@ class TestCountryMatching(unittest.TestCase):
         self.assertEqual(infer_country_from_phone("56971948355"), "cl")
         self.assertEqual(infer_country_from_phone("+14165550199"), "ca")
         self.assertEqual(infer_country_from_phone("+12125550199"), "us")
+        self.assertEqual(infer_country_from_phone("+212612345678"), "ma")
         self.assertEqual(infer_country_from_phone("+447911123456"), "gb")
         self.assertIsNone(infer_country_from_phone(""))
         self.assertIsNone(infer_country_from_phone(None))
+
+    def test_morocco_resolves_and_matches(self):
+        from backend.app.services.proxyseller import resolve_iso2_country, country_alpha3
+
+        self.assertEqual(resolve_iso2_country("ma"), "MA")
+        self.assertEqual(resolve_iso2_country("MAR"), "MA")
+        self.assertEqual(resolve_iso2_country("Morocco"), "MA")
+        self.assertEqual(country_alpha3("ma"), "MAR")
+        aliases = expand_country_aliases("ma")
+        self.assertIn("ma", aliases)
+        self.assertIn("mar", aliases)
+        morocco = normalize_proxy_item({
+            "ip": "160.178.169.9",
+            "port_socks5": 10000,
+            "login": "u",
+            "password": "p",
+            "country": "MA",
+            "country_code": "ma",
+            "country_alpha3": "MAR",
+        })
+        self.assertTrue(match_proxy_country(morocco, "ma"))
+        self.assertTrue(match_proxy_country(morocco, "morocco"))
+        self.assertFalse(match_proxy_country(morocco, "it"))
 
 
 class TestProxyNormalization(unittest.TestCase):
@@ -238,7 +271,7 @@ class TestProxySellerServicePool(unittest.IsolatedAsyncioTestCase):
             second = await svc.get_proxy_list(country="chile")
             self.assertEqual(len(first), 1)
             self.assertEqual(len(second), 1)
-            self.assertEqual(svc.client.request.await_count, 1)
+            self.assertEqual(svc.client.request.await_count, 2)
             meta = svc.cache_meta()
             self.assertTrue(meta["cached"])
             self.assertGreaterEqual(meta["total_cached"], 1)
@@ -622,6 +655,233 @@ class TestCustomPoolRouting(unittest.IsolatedAsyncioTestCase):
                 await svc.close()
 
 
+def _resident_row(title, country, **overrides):
+    ports = overrides.pop("ports", "10")
+    row = {
+        "id": overrides.pop("id", 1),
+        "title": title,
+        "login": overrides.pop("login", "tg_login"),
+        "password": overrides.pop("password", "tg_pass"),
+        "geo": overrides.pop("geo", [{"country": country, "region": "", "city": "", "isp": ""}]),
+        "export": overrides.pop("export", {"ports": ports, "ext": "txt"}),
+        "rotation": overrides.pop("rotation", 3600),
+    }
+    row.update(overrides)
+    return row
+
+
+def _path_after_key(url, api_key="test-key"):
+    marker = f"/{api_key}/"
+    if marker in url:
+        return url.split(marker, 1)[1]
+    return url
+
+
+class TestResidentTgLists(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        ProxySellerService._pool_cache.clear()
+        ProxySellerService._health.clear()
+        ProxySellerService._rr_cursor.clear()
+        self._custom_patch = patch(
+            "backend.app.services.proxyseller.load_custom_proxy_items",
+            return_value=[],
+        )
+        self._custom_patch.start()
+        self.addCleanup(self._custom_patch.stop)
+
+    def _install_router(self, svc, *, lists=None, proxy_payload=None, add_payload=None, package=None):
+        self.add_calls = []
+        lists_payload = {"status": "success", "data": lists if lists is not None else [], "errors": []}
+        proxy_payload = proxy_payload or {"status": "success", "data": {"items": []}, "errors": []}
+        package_payload = {
+            "status": "success",
+            "data": package if package is not None else {"is_active": True},
+            "errors": [],
+        }
+
+        async def handler(method, url, params=None, json=None):
+            path = _path_after_key(url, svc.api_key)
+            if path.startswith("resident/lists"):
+                return DummyResponse(lists_payload)
+            if path.startswith("resident/package"):
+                return DummyResponse(package_payload)
+            if path.startswith("resident/list/add"):
+                self.add_calls.append({"method": method, "json": json, "path": path})
+                return DummyResponse(add_payload or {"status": "success", "data": {}, "errors": []})
+            return DummyResponse(proxy_payload)
+
+        svc.client.request = AsyncMock(side_effect=handler)
+        return svc
+
+    def test_bot_and_xxxtg_title_helpers(self):
+        self.assertTrue(is_bot_list_title("bot_api_IN"))
+        self.assertTrue(is_bot_list_title("bot_api_US"))
+        self.assertTrue(is_bot_list_title("bot_api_BR"))
+        self.assertTrue(is_bot_list_title("bot_账号检查用测试"))
+        self.assertTrue(is_bot_list_title("bot_api"))
+        self.assertTrue(is_bot_list_title("IN_bot"))
+        self.assertTrue(is_bot_list_title("foo_bot_bar"))
+        self.assertFalse(is_bot_list_title("CL_tg"))
+        self.assertFalse(is_bot_list_title("ZA_tg"))
+        self.assertFalse(is_bot_list_title("IN_tg"))
+
+        self.assertTrue(is_xxxtg_list_title("CL_tg"))
+        self.assertTrue(is_xxxtg_list_title("cl_tg"))
+        self.assertTrue(is_xxxtg_list_title("ZA_tg"))
+        self.assertFalse(is_xxxtg_list_title("bot_api_IN"))
+        self.assertFalse(is_xxxtg_list_title("bot_tg"))
+        self.assertFalse(is_xxxtg_list_title("IN_bot"))
+        self.assertFalse(is_xxxtg_list_title("bot_api"))
+        self.assertEqual(country_code_from_tg_title("CL_tg"), "cl")
+        self.assertEqual(country_code_from_tg_title("za_tg"), "za")
+
+    def test_parse_geo_and_export_ports(self):
+        from_list = parse_resident_geo([{"country": "IN", "region": "", "city": "", "isp": ""}])
+        self.assertEqual(from_list["country"], "IN")
+        from_dict = parse_resident_geo({"country": "CL"})
+        self.assertEqual(from_dict["country"], "CL")
+        self.assertEqual(parse_export_ports({"ports": "50"}), 50)
+        self.assertEqual(parse_export_ports({"ports": 10}), 10)
+
+        bot_proxies = resident_list_to_proxies(_resident_row("bot_api_IN", "IN"))
+        self.assertEqual(bot_proxies, [])
+        za = resident_list_to_proxies(_resident_row("ZA_tg", "ZA", ports="50"), max_ports=10)
+        self.assertEqual(len(za), 10)
+        self.assertEqual(za[0]["addr"], STATIC_RESIDENTIAL_HOST)
+        self.assertEqual(za[0]["port"], 10000)
+        self.assertEqual(za[-1]["port"], 10009)
+        self.assertEqual(za[0]["country_code"], "za")
+        self.assertEqual(za[0]["source"], "resident_tg")
+        self.assertTrue(is_resident_tg(za[0]))
+        self.assertNotIn("raw", za[0])
+        self.assertIn("_c_ZA", za[0]["username"])
+        self.assertIn("ttl_24h", za[0]["username"])
+
+        pinned = resident_list_to_proxies(
+            _resident_row("CL_tg", "CL", login="dead_list_login", password="dead_list_pass"),
+            max_ports=1,
+            tools_login="api2toolsuser",
+            tools_password="tools_secret",
+        )
+        self.assertEqual(len(pinned), 1)
+        self.assertTrue(pinned[0]["username"].startswith("api2toolsuser_c_CL_"))
+        self.assertIn("s_tgcl10000", pinned[0]["username"])
+        self.assertEqual(pinned[0]["password"], "tools_secret")
+        self.assertNotIn("dead_list_login", pinned[0]["username"])
+
+    async def test_bot_api_lists_are_never_candidates(self):
+        svc = ProxySellerService("test-key", include_static=False)
+        self._install_router(
+            svc,
+            lists=[
+                _resident_row("bot_api_IN", "IN", id=11, login="bot_in"),
+                _resident_row("bot_api_US", "US", id=12, login="bot_us"),
+                _resident_row("ZA_tg", "ZA", id=13, login="za_login"),
+            ],
+        )
+        try:
+            items = await svc.get_proxy_list(refresh=True, include_health=False)
+            tg_items = [item for item in items if is_resident_tg(item)]
+            self.assertTrue(tg_items)
+            self.assertTrue(all(item.get("list_title") == "ZA_tg" for item in tg_items))
+            self.assertFalse(any(
+                is_bot_list_title(item.get("list_title")) for item in items
+            ))
+            summary = await svc.summarize_resident_tg_lists()
+            self.assertEqual(summary["bot_skipped"], 2)
+            self.assertEqual([row["title"] for row in summary["lists"]], ["ZA_tg"])
+            dumped = str(summary)
+            self.assertNotIn("tg_pass", dumped)
+            self.assertNotIn("bot_in", dumped)
+            self.assertTrue(any("_c_ZA" in (item.get("username") or "") for item in tg_items))
+        finally:
+            await svc.close()
+
+    async def test_ensure_existing_za_tg_does_not_create(self):
+        svc = ProxySellerService("test-key", include_static=False)
+        self._install_router(
+            svc,
+            lists=[_resident_row("ZA_tg", "ZA", id=3, login="za_user", password="za_pass")],
+        )
+        try:
+            result = await svc.ensure_tg_resident_list("za", create=True)
+            self.assertTrue(result["success"])
+            self.assertFalse(result["created"])
+            self.assertEqual(self.add_calls, [])
+            self.assertTrue(result["proxies"])
+            node = result["proxies"][0]
+            self.assertEqual(node["addr"], STATIC_RESIDENTIAL_HOST)
+            self.assertEqual(node["port"], 10000)
+            self.assertEqual(node["country_code"], "za")
+            self.assertNotIn("za_pass", result["message"] or "")
+        finally:
+            await svc.close()
+
+    async def test_ensure_missing_cl_tg_posts_add(self):
+        svc = ProxySellerService("test-key", include_static=False)
+        created = _resident_row("CL_tg", "CL", id=99, login="cl_tg_user", password="cl_tg_pass")
+        self._install_router(
+            svc,
+            lists=[_resident_row("bot_api_IN", "IN", id=1, login="bot_in")],
+            add_payload={"status": "success", "data": created, "errors": []},
+        )
+        try:
+            result = await svc.ensure_tg_resident_list("cl", create=True)
+            self.assertTrue(result["success"])
+            self.assertTrue(result["created"])
+            self.assertEqual(result["title"], "CL_tg")
+            self.assertEqual(len(self.add_calls), 1)
+            body = self.add_calls[0]["json"]
+            self.assertEqual(body["title"], "CL_tg")
+            self.assertEqual(body["geo"]["country"], "CL")
+            self.assertEqual(body["export"]["ports"], 10)
+            self.assertEqual(body["rotation"], 3600)
+            self.assertNotIn("cl_tg_pass", result["message"] or "")
+            self.assertEqual(result["proxies"][0]["addr"], STATIC_RESIDENTIAL_HOST)
+            self.assertEqual(result["proxies"][0]["country_code"], "cl")
+        finally:
+            await svc.close()
+
+    async def test_ensure_create_false_returns_hint(self):
+        svc = ProxySellerService("test-key", include_static=False)
+        self._install_router(svc, lists=[_resident_row("bot_api_MX", "MX")])
+        try:
+            result = await svc.ensure_tg_resident_list("cl", create=False)
+            self.assertFalse(result["success"])
+            self.assertFalse(result["created"])
+            self.assertEqual(result["proxies"], [])
+            self.assertIn("CL_tg", result["hint"] or result["message"])
+            self.assertEqual(self.add_calls, [])
+        finally:
+            await svc.close()
+
+    async def test_ensure_unknown_country_does_not_invent(self):
+        svc = ProxySellerService("test-key", include_static=False)
+        self._install_router(svc, lists=[])
+        try:
+            result = await svc.ensure_tg_resident_list("xx", create=True)
+            self.assertFalse(result["success"])
+            self.assertEqual(self.add_calls, [])
+        finally:
+            await svc.close()
+
+    async def test_refresh_pool_exposes_resident_tg_source(self):
+        svc = ProxySellerService("test-key", include_static=False)
+        self._install_router(
+            svc,
+            lists=[_resident_row("IN_tg", "IN", id=7, login="in_tg_user")],
+            proxy_payload={"status": "success", "data": {"ipv4": [_usa_raw()]}, "errors": []},
+        )
+        try:
+            items = await svc.get_proxy_list(refresh=True, include_health=False)
+            tg_items = [item for item in items if item.get("source") == "resident_tg"]
+            self.assertTrue(tg_items)
+            self.assertEqual(tg_items[0]["list_title"], "IN_tg")
+            self.assertEqual(svc.cache_meta().get("resident_count"), len(tg_items))
+        finally:
+            await svc.close()
+
+
 class TestSchemas(unittest.TestCase):
     def test_request_models(self):
         req = ProxySellerAutoSelectRequest(target_country="cl", apply_fallback=True)
@@ -630,6 +890,10 @@ class TestSchemas(unittest.TestCase):
         self.assertEqual(listing.total, 0)
         batch = ProxySellerTestAllRequest(country="id", limit=5)
         self.assertEqual(batch.limit, 5)
+        ensure = ProxySellerEnsureTgRequest(target_country="za", create=True, ports=10)
+        self.assertTrue(ensure.create)
+        resident = ProxySellerResidentListsResponse(success=True, message="ok", bot_skipped=3)
+        self.assertEqual(resident.bot_skipped, 3)
 
 
 if __name__ == "__main__":

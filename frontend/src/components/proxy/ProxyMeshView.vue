@@ -93,14 +93,22 @@
       <div class="ce-panel stack">
         <div class="ce-panel-head">
           <h3>🌐 Proxy-Seller 动态区域池</h3>
-          <div class="row-wrap">
-            <button class="ce-btn-ghost" :disabled="testing.proxypool" @click="refreshProxyPool(config.target_country, true)">
-              {{ testing.proxypool ? '刷新中...' : '从 API 刷新' }}
-            </button>
-            <button class="ce-btn-ghost" :disabled="testing.proxyseller" @click="testProxySeller">
-              {{ testing.proxyseller ? '测试中...' : '拓扑发现' }}
-            </button>
-          </div>
+        <div class="row-wrap">
+          <button class="ce-btn-ghost" :disabled="testing.proxypool" @click="refreshProxyPool(proxyOpsCountry, true)">
+            {{ testing.proxypool ? '刷新中...' : '从 API 刷新' }}
+          </button>
+          <button class="ce-btn-ghost" :disabled="testing.ensuretg" @click="ensureTgResidentList(proxyOpsCountry)">
+            {{ testing.ensuretg ? '拉取中...' : '自主拉取 _tg 列表' }}
+          </button>
+          <button class="ce-btn-ghost" :disabled="testing.proxyseller" @click="testProxySeller">
+            {{ testing.proxyseller ? '测试中...' : '拓扑发现' }}
+          </button>
+        </div>
+        <div class="row-wrap" style="align-items:center;gap:8px">
+          <label class="ce-label" style="margin:0">操作国家</label>
+          <input v-model="proxyOpsCountry" type="text" class="ce-input w-sm mono" placeholder="ma / za / cl" />
+          <span class="ce-tiny ce-muted">自主拉取 / 自动分配按此 ISO-2，默认跟控制台目标国</span>
+        </div>
         </div>
         <div>
           <label class="ce-label">Relay Provider API Key</label>
@@ -111,10 +119,10 @@
           节点引导时自动分配与拓扑匹配的中继跳点
         </label>
         <div class="row-wrap">
-          <button class="ce-btn-ghost" :disabled="testing.autoselect" @click="previewAutoSelect(config.target_country, false)">
+          <button class="ce-btn-ghost" :disabled="testing.autoselect" @click="previewAutoSelect(proxyOpsCountry, false)">
             {{ testing.autoselect ? '匹配中...' : '查看当前国家自动分配' }}
           </button>
-          <button class="ce-btn-ghost" :disabled="testing.autoselect" @click="previewAutoSelect(config.target_country, true)">
+          <button class="ce-btn-ghost" :disabled="testing.autoselect" @click="previewAutoSelect(proxyOpsCountry, true)">
             一键设为后备代理
           </button>
           <button class="ce-btn-ghost" :disabled="testing.proxyall" @click="testAllProxySeller">
@@ -125,6 +133,11 @@
           {{ proxyPoolMeta.message }}
           <span v-if="proxyPoolMeta.available_countries?.length" class="ce-muted"> 账户区域: {{ proxyPoolMeta.available_countries.join(', ') }}</span>
         </div>
+        <div class="ce-alert">
+          xxxtg 列表: {{ residentListTitles || '无' }}
+          <span class="ce-muted"> 已忽略 {{ residentListsMeta.bot_skipped || 0 }} 条 bot_* 列表</span>
+          <span v-if="residentListsMeta.package_active === true" class="ce-badge is-success">流量包有效</span>
+        </div>
         <div v-if="matchedProxy" class="ce-alert is-ok">
           当前 {{ (matchedProxy.country_code || config.target_country || '').toString().toUpperCase() }} 自动分配:
           <span class="mono">{{ matchedProxy.proxy_type }}://{{ matchedProxy.addr }}:{{ matchedProxy.port }}</span>
@@ -134,6 +147,7 @@
           <div v-for="(p, idx) in proxyPool" :key="p.id || (p.addr + ':' + p.port + idx)" class="ce-item">
             <div class="row grow">
               <span class="ce-badge is-info">{{ (p.country_code || p.country_alpha3 || p.country || '?').toString().toUpperCase() }}</span>
+              <span v-if="p.source === 'resident_tg'" class="ce-badge is-success">{{ p.list_title || '_tg' }}</span>
               <span class="mono">{{ p.addr }}:{{ p.port }}</span>
               <span class="ce-muted">{{ p.proxy_type }}</span>
               <span :class="p.healthy === true ? 'ce-badge is-success' : (p.healthy === false ? 'ce-badge is-danger' : 'ce-muted')">
@@ -185,20 +199,39 @@
 </template>
 
 <script setup>
+import { computed, onMounted, ref, watch } from 'vue'
 import { countryFlag, latencyWidth } from '../../composables/useShared'
 import { useConfig } from '../../composables/useConfig'
 import { useProxy } from '../../composables/useProxy'
 import { useProbes } from '../../composables/useProbes'
 
-const { config } = useConfig()
+const { config, form } = useConfig()
 const {
-  proxyPool, proxyPoolMeta, matchedProxy, customProxies, customProxyText, customProxyImportProbe,
+  proxyPool, proxyPoolMeta, matchedProxy, residentLists, residentListsMeta,
+  customProxies, customProxyText, customProxyImportProbe,
   customProxyImportCountry, customProxyMeta, customProxyRoleCounts, ROLE_OPTIONS, roleLabel,
-  testing, refreshProxyPool, previewAutoSelect,
+  testing, refreshProxyPool, ensureTgResidentList, fetchResidentLists, previewAutoSelect,
   setProxyAsFallback, importCustomProxyText, testAllCustomProxies, setCustomProxyAsFallback,
   updateCustomProxyItem, deleteCustomProxy, clearCustomProxyPool
 } = useProxy()
 const { testResults, testProxySeller, testAllProxySeller, testProxyConnectivity } = useProbes()
+
+const proxyOpsCountry = ref((form.country || config.target_country || '').toString())
+watch(
+  () => [form.country, config.target_country],
+  ([formCountry, target]) => {
+    const next = (formCountry || target || '').toString()
+    if (next && !proxyOpsCountry.value) proxyOpsCountry.value = next
+  },
+)
+
+const residentListTitles = computed(() =>
+  (residentLists.value || []).map((item) => item.title).filter(Boolean).join(' · ')
+)
+
+onMounted(() => {
+  fetchResidentLists()
+})
 
 const roleBadgeClass = (role) => {
   if (role === 'registration') return 'is-info'

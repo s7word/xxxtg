@@ -7,6 +7,12 @@
         GET  /proxy/list            返回账户下全部类型的活跃代理
         GET  /proxy/list/{type}     ipv4 / ipv6 / mobile / isp / mix / mix_isp / resident
         Query: country=Alpha3 (USA/CHL/...), latest=Y/N, orderId, ends=Y
+    住宅流量包列表 (xxxtg 专用 {ISO2}_tg，禁止改动 bot_*):
+        GET  /resident/lists        账户下全部住宅列表
+        POST /resident/list/add     创建列表（不另扣「买 IP」费，单测必须 mock）
+        GET  /resident/geo
+        GET  /resident/package
+        连接: {login}:{password}@res.proxy-seller.com:10000–10999
 
     购买/租用 (预留，不会被注册流水线自动调用):
         GET  /reference/list/{type} 查询 countryId / periodId / 支付方式
@@ -21,6 +27,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import time
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 import httpx
@@ -55,12 +62,15 @@ COUNTRY_PROFILES: Dict[str, Tuple[str, ...]] = {
     "ke": ("ken", "kenya"),
     "kr": ("kor", "south korea", "korea", "republic of korea"),
     "kz": ("kaz", "kazakhstan"),
+    "ma": ("mar", "morocco", "maroc"),
     "mx": ("mex", "mexico"),
     "ng": ("nga", "nigeria"),
     "nl": ("nld", "netherlands", "holland"),
     "pe": ("per", "peru"),
     "ph": ("phl", "philippines"),
+    "pk": ("pak", "pakistan"),
     "pl": ("pol", "poland"),
+    "ro": ("rou", "romania"),
     "ru": ("rus", "russia", "russian federation"),
     "sa": ("sau", "saudi arabia", "ksa"),
     "sg": ("sgp", "singapore"),
@@ -82,6 +92,12 @@ DEFAULT_PROBE_TIMEOUT = 8.0
 # 同一 host 上不同账密对应不同区域隧道，因此按 region 分组，identity 必须带 username。
 STATIC_RESIDENTIAL_HOST = "res.proxy-seller.com"
 STATIC_CATALOG_TYPE = "resident_static"
+RESIDENT_TG_SOURCE = "resident_tg"
+RESIDENT_TG_CATALOG = "resident_tg"
+RESIDENT_TG_PORT_START = 10000
+RESIDENT_TG_PORT_CAP = 20
+RESIDENT_TG_TITLE_RE = re.compile(r"^([A-Za-z]{2})_tg$", re.IGNORECASE)
+API_TOOLS_TITLES = frozenset({"api-tools", "apitools"})
 STATIC_REGIONAL_POOLS: Dict[str, Dict[str, Any]] = {
     "cl": {
         "iso2": "cl",
@@ -159,6 +175,7 @@ PHONE_DIAL_TO_ISO2: Dict[str, str] = {
     "92": "pk",
     "93": "af",
     "98": "ir",
+    "212": "ma",
     "234": "ng",
     "254": "ke",
     "380": "ua",
@@ -196,25 +213,60 @@ def infer_country_from_phone(phone: Optional[str]) -> Optional[str]:
     return best_iso
 
 
+def _geo_aliases_for_iso2(iso2: str) -> Set[str]:
+    """用全球地理目录补全 COUNTRY_PROFILES 未收录国家的别名（如 MA/摩洛哥）。"""
+    code = _norm(iso2)
+    if not code or len(code) != 2 or not code.isalpha():
+        return set()
+    family: Set[str] = {code}
+    try:
+        from backend.app.services.geo_catalog import lookup_country
+
+        row = lookup_country(code)
+    except Exception:
+        row = None
+    if not row:
+        return family
+    for key in ("code", "iso2", "iso3", "name", "name_en", "name_zh"):
+        val = _norm(row.get(key))
+        if val:
+            family.add(val)
+    return {item for item in family if item}
+
+
 def expand_country_aliases(query: Optional[str]) -> Set[str]:
     """把 ISO-2 / ISO-3 / 国家名展开为可互相比对的别名集合。
 
-    两位两个码只做精确命中，避免 `id` 误匹配 India / `in` 误匹配 Indonesia。
-    国家全称才启用子串模糊匹配。
+    两位码只做精确命中，避免 `id` 误匹配 India / `in` 误匹配 Indonesia。
+    国家全称才启用子串模糊匹配。未在 COUNTRY_PROFILES 的国家回落到 geo_catalog。
     """
     token = _norm(query)
     if not token:
         return set()
     aliases: Set[str] = {token}
+    hit_profile = False
     for iso2, extras in COUNTRY_PROFILES.items():
         names = {_norm(item) for item in extras}
         alpha3 = _norm(extras[0]) if extras else ""
         family = {iso2, alpha3, *names}
         if token == iso2 or (alpha3 and token == alpha3) or token in names:
             aliases.update(family)
+            hit_profile = True
             continue
         if len(token) >= 4 and any(len(name) >= 4 and (token in name or name in token) for name in names):
             aliases.update(family)
+            hit_profile = True
+    if not hit_profile:
+        try:
+            from backend.app.services.geo_catalog import resolve_iso2
+
+            resolved = resolve_iso2(token)
+        except Exception:
+            resolved = None
+        if resolved:
+            aliases.update(_geo_aliases_for_iso2(resolved))
+        elif len(token) == 2 and token.isalpha():
+            aliases.update(_geo_aliases_for_iso2(token))
     return {item for item in aliases if item}
 
 
@@ -229,6 +281,15 @@ def country_alpha3(query: Optional[str]) -> Optional[str]:
         family = {iso2, *(_norm(item) for item in extras)}
         if token in family:
             return extras[0].upper()
+    try:
+        from backend.app.services.geo_catalog import resolve_iso2, lookup_country
+
+        iso2 = resolve_iso2(token)
+        row = lookup_country(iso2) if iso2 else None
+        if row and row.get("iso3"):
+            return str(row["iso3"]).upper()
+    except Exception:
+        pass
     return None
 
 
@@ -500,6 +561,337 @@ def is_custom_proxy(proxy: Optional[Dict[str, Any]]) -> bool:
     )
 
 
+def is_resident_tg(proxy: Optional[Dict[str, Any]]) -> bool:
+    if not proxy:
+        return False
+    return (
+        _norm(proxy.get("source")) == RESIDENT_TG_SOURCE
+        or _norm(proxy.get("catalog_type")) == RESIDENT_TG_CATALOG
+    )
+
+
+def is_bot_list_title(title: Any) -> bool:
+    """bot_* / bot_api* / 含 _bot token 的列表一律视为 autoc_tg 资产，禁止读写改。"""
+    text = _norm(title)
+    if not text:
+        return False
+    if text.startswith("bot_") or text.startswith("bot_api") or text.startswith("botapi"):
+        return True
+    if "_bot" in text:
+        return True
+    return False
+
+
+def is_xxxtg_list_title(title: Any) -> bool:
+    """大小写不敏感，以 _tg 结尾，且不是 bot 列表。"""
+    text = _norm(title)
+    if not text.endswith("_tg"):
+        return False
+    return not is_bot_list_title(title)
+
+
+def find_api_tools_list(lists: Iterable[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Api-Tools 是住宅流量包的通用连接账密；新建 {CC}_tg 列表自带 login 实测无法 SOCKS 鉴权。"""
+    for row in lists or []:
+        if not isinstance(row, dict):
+            continue
+        title = str(row.get("title") or "")
+        if is_bot_list_title(title):
+            continue
+        login = str(row.get("login") or "").strip()
+        password = str(row.get("password") or "").strip()
+        if not login or not password:
+            continue
+        token = title.strip().lower()
+        if token in API_TOOLS_TITLES or login.lower().startswith("api"):
+            return row
+    return None
+
+
+def tools_auth_from_lists(lists: Iterable[Dict[str, Any]]) -> Tuple[Optional[str], Optional[str]]:
+    tools = find_api_tools_list(lists)
+    if not tools:
+        return None, None
+    login = str(tools.get("login") or "").strip() or None
+    password = str(tools.get("password") or "").strip() or None
+    return login, password
+
+
+def build_resident_tg_username(
+    base_login: str,
+    *,
+    country: Optional[str] = None,
+    port: Optional[int] = None,
+) -> str:
+    """login_c_CL_s_tg10000_ttl_24h — 用 Api-Tools 账密按国家钉死出口。"""
+    base = (base_login or "").strip()
+    if not base:
+        return ""
+    parts = [base]
+    cc = (country or "").strip().upper()
+    if len(cc) == 2 and cc.isalpha():
+        parts.append(f"c_{cc}")
+    if port:
+        sid = f"tg{(cc or 'xx').lower()}{int(port)}"
+        parts.append(f"s_{sid[:48]}")
+        parts.append("ttl_24h")
+    return "_".join(parts)
+
+
+def resolve_iso2_country(query: Optional[str]) -> Optional[str]:
+    """把 ISO-2 / ISO-3 / 国家名解析为两位大写 ISO-2。
+
+    优先 COUNTRY_PROFILES；未收录时回落 geo_catalog（支持 MA 等全球国家）。
+    任意两位字母若不在地理目录中则拒绝，避免 invent 出 XX_tg。
+    """
+    token = _norm(query)
+    if not token:
+        return None
+    aliases = expand_country_aliases(token)
+    for iso2 in COUNTRY_PROFILES:
+        if iso2 in aliases:
+            return iso2.upper()
+    try:
+        from backend.app.services.geo_catalog import lookup_country, resolve_iso2
+
+        resolved = resolve_iso2(token)
+        if resolved and lookup_country(resolved):
+            return resolved.upper()
+    except Exception:
+        pass
+    return None
+
+
+def tg_list_title_for_country(country: str) -> str:
+    return f"{str(country).strip().upper()}_tg"
+
+
+def country_code_from_tg_title(title: Any) -> Optional[str]:
+    text = str(title or "").strip()
+    match = RESIDENT_TG_TITLE_RE.match(text)
+    if not match:
+        return None
+    return match.group(1).lower()
+
+
+def parse_resident_geo(geo: Any) -> Dict[str, str]:
+    """官方文档写成 object，实际常见为 list[{country, region, city, isp}]。"""
+    if isinstance(geo, list):
+        geo = geo[0] if geo else {}
+    if not isinstance(geo, dict):
+        return {"country": "", "region": "", "city": "", "isp": ""}
+    raw = geo.get("country") or geo.get("code") or geo.get("iso") or geo.get("iso2") or ""
+    country = str(raw).strip().upper()
+    return {
+        "country": country,
+        "region": str(geo.get("region") or ""),
+        "city": str(geo.get("city") or ""),
+        "isp": str(geo.get("isp") or ""),
+    }
+
+
+def parse_export_ports(export: Any, default: int = 10) -> int:
+    """export.ports 经常是字符串 '50'，表示条数而不是起始端口。"""
+    raw = export.get("ports") if isinstance(export, dict) else export
+    parsed = _as_int(raw, default)
+    if parsed is None or parsed <= 0:
+        return default
+    return parsed
+
+
+def _looks_like_resident_list(row: Any) -> bool:
+    if not isinstance(row, dict):
+        return False
+    title = row.get("title")
+    if not isinstance(title, str) or not title.strip():
+        return False
+    if row.get("ip") or row.get("ip_only") or row.get("port_socks5") or row.get("port_socks"):
+        return False
+    return True
+
+
+def _resident_lists_payload_recognized(payload: Any) -> bool:
+    """区分真正的 /resident/lists 与被 mock 成 /proxy/list 的载荷，避免误 POST list/add。"""
+    if isinstance(payload, list):
+        if not payload:
+            return True
+        return any(_looks_like_resident_list(item) for item in payload)
+    if not isinstance(payload, dict):
+        return False
+    if _looks_like_resident_list(payload):
+        return True
+    nested = payload.get("items")
+    if not isinstance(nested, list):
+        nested = payload.get("lists")
+    if isinstance(nested, list):
+        if not nested:
+            return True
+        return any(_looks_like_resident_list(item) for item in nested)
+    return False
+
+
+def _extract_resident_list_rows(payload: Any) -> List[Dict[str, Any]]:
+    if payload is None:
+        return []
+    rows: List[Any] = []
+    if isinstance(payload, list):
+        rows = payload
+    elif isinstance(payload, dict):
+        if any(key in payload for key in PROXY_TYPE_BUCKETS) and "title" not in payload:
+            return []
+        nested = payload.get("items")
+        if not isinstance(nested, list):
+            nested = payload.get("lists")
+        if isinstance(nested, list):
+            rows = nested
+        elif _looks_like_resident_list(payload):
+            rows = [payload]
+    return [item for item in rows if _looks_like_resident_list(item)]
+
+
+def parse_resident_lists_payload(data: Any) -> Tuple[List[Dict[str, Any]], bool]:
+    if isinstance(data, dict) and data.get("data") is not None:
+        payload = data.get("data")
+    else:
+        payload = data
+    return _extract_resident_list_rows(payload), _resident_lists_payload_recognized(payload)
+
+
+def find_tg_resident_list(lists: Iterable[Dict[str, Any]], iso2: str) -> Optional[Dict[str, Any]]:
+    """优先 title 精确等于 {CC}_tg；其次 *_tg 且 geo.country 匹配。跳过全部 bot 列表。"""
+    wanted = tg_list_title_for_country(iso2)
+    wanted_cc = str(iso2).strip().upper()
+    geo_hit: Optional[Dict[str, Any]] = None
+    for row in lists or []:
+        if not isinstance(row, dict):
+            continue
+        title = str(row.get("title") or "")
+        if is_bot_list_title(title) or not is_xxxtg_list_title(title):
+            continue
+        if title.strip().lower() == wanted.lower():
+            return row
+        geo_cc = parse_resident_geo(row.get("geo")).get("country") or ""
+        if geo_cc == wanted_cc and geo_hit is None:
+            geo_hit = row
+    return geo_hit
+
+
+def resident_list_to_proxies(
+    list_row: Optional[Dict[str, Any]],
+    *,
+    max_ports: int = 10,
+    tools_login: Optional[str] = None,
+    tools_password: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """把 xxxtg *_tg 列表归一化为 res.proxy-seller.com:10000.. 节点。绝不转换 bot 列表。
+
+    连接账密优先用 Api-Tools（加 _c_{CC} 钉国家）；列表自身 login 仅作后备。
+    """
+    if not isinstance(list_row, dict):
+        return []
+    title = str(list_row.get("title") or "")
+    if is_bot_list_title(title) or not is_xxxtg_list_title(title):
+        return []
+    list_login = str(list_row.get("login") or list_row.get("username") or "").strip()
+    list_password = str(list_row.get("password") or "").strip()
+    login = (tools_login or "").strip() or list_login
+    password = (tools_password or "").strip() or list_password
+    if not login:
+        return []
+
+    geo = parse_resident_geo(list_row.get("geo"))
+    iso2 = None
+    if geo.get("country"):
+        iso2 = resolve_iso2_country(geo["country"]) or (
+            geo["country"].lower() if len(geo["country"]) == 2 else None
+        )
+    title_iso = country_code_from_tg_title(title)
+    if title_iso and (not iso2 or title.strip().lower() == tg_list_title_for_country(title_iso).lower()):
+        # 精确 {CC}_tg 标题优先用于国家推断
+        if title_iso:
+            iso2 = title_iso
+    elif not iso2 and title_iso:
+        iso2 = title_iso
+    if iso2:
+        iso2 = iso2.lower()
+
+    cap = _as_int(max_ports, 10) or 10
+    cap = max(1, min(cap, RESIDENT_TG_PORT_CAP))
+    parsed_ports = parse_export_ports(list_row.get("export"), default=10)
+    n = min(parsed_ports or 10, cap, RESIDENT_TG_PORT_CAP)
+    n = max(1, n)
+
+    list_id = list_row.get("id")
+    rotation = list_row.get("rotation")
+    country_name = None
+    alpha3 = None
+    if iso2:
+        extras = COUNTRY_PROFILES.get(iso2)
+        if extras:
+            country_name = extras[1] if len(extras) > 1 else iso2.upper()
+            alpha3 = extras[0].upper()
+        else:
+            country_name = iso2.upper()
+
+    collected: List[Dict[str, Any]] = []
+    for offset in range(n):
+        port = RESIDENT_TG_PORT_START + offset
+        conn_user = build_resident_tg_username(login, country=iso2, port=port)
+        normalized = normalize_proxy_item(
+            {
+                "id": f"resident-tg-{list_id or title}-{port}",
+                "ip": STATIC_RESIDENTIAL_HOST,
+                "protocol": "socks5",
+                "port": int(port),
+                "login": conn_user or login,
+                "password": password,
+                "country": country_name or (iso2.upper() if iso2 else None),
+                "country_alpha3": alpha3,
+                "country_code": iso2,
+                "status": "ACTIVE",
+                "status_type": "ACTIVE",
+                "type": RESIDENT_TG_CATALOG,
+                "rotation": rotation,
+            },
+            bucket=RESIDENT_TG_CATALOG,
+        )
+        if not normalized:
+            continue
+        normalized["source"] = RESIDENT_TG_SOURCE
+        normalized["catalog_type"] = RESIDENT_TG_CATALOG
+        normalized["list_id"] = list_id
+        normalized["list_title"] = title
+        normalized["region"] = iso2
+        normalized.pop("raw", None)
+        collected.append(normalized)
+    return collected
+
+
+def _package_is_active(pkg: Optional[Dict[str, Any]]) -> Optional[bool]:
+    if not isinstance(pkg, dict) or not pkg:
+        return None
+    if "is_active" in pkg:
+        return bool(pkg.get("is_active"))
+    if "active" in pkg:
+        return bool(pkg.get("active"))
+    status = _norm(pkg.get("status") or pkg.get("state"))
+    if status in {"active", "ok", "enabled", "valid"}:
+        return True
+    if status in {"inactive", "expired", "disabled"}:
+        return False
+    return None
+
+
+def _source_rank(item: Dict[str, Any]) -> int:
+    if is_custom_proxy(item):
+        return 0
+    if is_resident_tg(item):
+        return 1
+    if is_static_residential(item):
+        return 2
+    return 3
+
+
 def normalize_custom_proxy_item(item: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     """把用户粘贴/持久化的自定义代理归一化为调度结构。"""
     if not isinstance(item, dict):
@@ -644,11 +1036,16 @@ class ProxySellerService:
         if not self.api_key:
             raise RuntimeError("未配置 Proxy-Seller API Key")
         url = f"{self.BASE_URL}/{self.api_key}/{path.lstrip('/')}"
-        resp = await self.client.request(method, url, params=params, json=json_body)
+        try:
+            resp = await self.client.request(method, url, params=params, json=json_body)
+        except httpx.HTTPError as exc:
+            status = getattr(getattr(exc, "response", None), "status_code", None)
+            detail = f"HTTP {status}" if status else "网络错误"
+            raise RuntimeError(f"Proxy-Seller 请求失败 ({detail})") from None
         try:
             data = resp.json()
         except Exception as exc:
-            raise RuntimeError(f"Proxy-Seller 响应不是合法 JSON (HTTP {resp.status_code}): {exc}") from exc
+            raise RuntimeError(f"Proxy-Seller 响应不是合法 JSON (HTTP {resp.status_code})") from exc
         if not isinstance(data, dict):
             raise RuntimeError("Proxy-Seller 响应结构异常")
         if data.get("status") == "error" or (data.get("errors") and data.get("status") != "success"):
@@ -702,8 +1099,25 @@ class ProxySellerService:
 
         static_items = builtin_static_residential_items() if self.include_static else []
         custom_items = load_custom_proxy_items()
-        # 自建池优先：同一 identity 时保留用户粘贴的节点及其测活结果
-        items = merge_proxy_pools(custom_items, api_items, static_items)
+        resident_items: List[Dict[str, Any]] = []
+        if self.api_key:
+            try:
+                raw_lists, recognized = await self._load_resident_lists()
+                if recognized or raw_lists:
+                    tools_login, tools_password = tools_auth_from_lists(raw_lists)
+                    for row in raw_lists:
+                        resident_items.extend(
+                            resident_list_to_proxies(
+                                row,
+                                max_ports=10,
+                                tools_login=tools_login,
+                                tools_password=tools_password,
+                            )
+                        )
+            except Exception as exc:
+                logger.warning("Proxy-Seller 住宅 _tg 列表不可用（%s）", exc)
+        # 自建 > xxxtg *_tg 住宅列表 > 官方 /proxy/list > 内置静态 CL/IN
+        items = merge_proxy_pools(custom_items, resident_items, api_items, static_items)
         if not items:
             if api_error:
                 raise RuntimeError(api_error)
@@ -712,6 +1126,8 @@ class ProxySellerService:
         parts = []
         if custom_items:
             parts.append("custom")
+        if resident_items:
+            parts.append("resident_tg")
         if api_items:
             parts.append("api")
         if static_items:
@@ -721,6 +1137,8 @@ class ProxySellerService:
             source = "custom_pool"
         elif source == "static":
             source = "static_residential"
+        elif source == "resident_tg":
+            source = "resident_tg"
         entry = self._cache_entry()
         entry["items"] = items
         entry["fetched_at"] = time.time()
@@ -728,11 +1146,13 @@ class ProxySellerService:
         entry["api_count"] = len(api_items)
         entry["static_count"] = len(static_items)
         entry["custom_count"] = len(custom_items)
+        entry["resident_count"] = len(resident_items)
         entry["source"] = source
         logger.info(
-            "已刷新出口中继池: 合计 %s 个节点 (自建=%s, API=%s, 静态住宅=%s, source=%s)",
+            "已刷新出口中继池: 合计 %s 个节点 (自建=%s, _tg住宅=%s, API=%s, 静态住宅=%s, source=%s)",
             len(items),
             len(custom_items),
+            len(resident_items),
             len(api_items),
             len(static_items),
             source,
@@ -824,6 +1244,7 @@ class ProxySellerService:
             "api_count": entry.get("api_count"),
             "static_count": entry.get("static_count"),
             "custom_count": entry.get("custom_count"),
+            "resident_count": entry.get("resident_count"),
         }
 
     def _sort_candidates(self, proxies: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -837,7 +1258,7 @@ class ProxySellerService:
                 health_rank = 2
             else:
                 health_rank = 1
-            source_rank = 0 if is_custom_proxy(item) else (1 if is_static_residential(item) else 2)
+            source_rank = _source_rank(item)
             status = _norm(item.get("status_type") or item.get("status"))
             active_rank = 0 if (not status or "active" in status or "custom" in status) else 1
             return (health_rank, source_rank, active_rank, proxy_identity(item))
@@ -869,6 +1290,20 @@ class ProxySellerService:
         allow_fallback 仅表示「允许调用方使用配置后备」，不再从其它区域池里抽节点。
         """
         country = _norm(target_country) or infer_country_from_phone(phone)
+        if country and self.api_key:
+            try:
+                ensured = await self.ensure_tg_resident_list(country, create=True)
+                if ensured.get("created") or ensured.get("proxies"):
+                    cached = self._cache_entry().get("items") or []
+                    have_tg = any(
+                        is_resident_tg(item) and match_proxy_country(item, country)
+                        for item in cached
+                    )
+                    if ensured.get("created") or not have_tg:
+                        self.invalidate_cache()
+                        refresh = True
+            except Exception as exc:
+                logger.warning("自主确保 xxxtg 住宅列表失败（%s）", exc)
         regional = await self.get_proxy_list(country=country or None, refresh=refresh, include_health=False)
         fallback_used = False
         source = "regional"
@@ -877,9 +1312,12 @@ class ProxySellerService:
         if regional:
             candidates = self._rotate(country or "*", self._sort_candidates(regional))
             custom_hit = any(is_custom_proxy(item) for item in regional)
+            resident_hit = any(is_resident_tg(item) for item in regional)
             static_hit = any(is_static_residential(item) for item in regional)
             if custom_hit and all(is_custom_proxy(item) for item in regional):
                 source = "custom_pool"
+            elif resident_hit and all(is_resident_tg(item) for item in regional):
+                source = "resident_tg"
             elif static_hit and all(is_static_residential(item) for item in regional):
                 source = "static_residential"
             else:
@@ -888,6 +1326,8 @@ class ProxySellerService:
             extras = []
             if custom_hit:
                 extras.append("用户自建代理池")
+            if resident_hit:
+                extras.append("xxxtg 专用住宅列表")
             if static_hit:
                 extras.append("内置静态住宅节点")
             if extras:
@@ -943,6 +1383,12 @@ class ProxySellerService:
             source = "custom_pool"
             if "自建" not in (message or ""):
                 message = f"{message}（用户自建代理池）"
+        elif selected and is_resident_tg(selected):
+            source = "resident_tg"
+            title = selected.get("list_title") or ""
+            extra = f"xxxtg 专用住宅列表 {title}".strip()
+            if "xxxtg" not in (message or ""):
+                message = f"{message}（{extra}）"
         elif selected and is_static_residential(selected):
             source = "static_residential"
             if "内置静态住宅" not in (message or ""):
@@ -1070,6 +1516,225 @@ class ProxySellerService:
             }
 
     probe_relay_path_connectivity = test_proxy_connectivity
+
+    async def _load_resident_lists(self) -> Tuple[List[Dict[str, Any]], bool]:
+        data = await self._request("GET", "resident/lists")
+        return parse_resident_lists_payload(data)
+
+    async def fetch_resident_lists(self) -> List[Dict[str, Any]]:
+        rows, _recognized = await self._load_resident_lists()
+        return rows
+
+    async def fetch_resident_package(self) -> Dict[str, Any]:
+        data = await self._request("GET", "resident/package")
+        payload = data.get("data", data) if isinstance(data, dict) else data
+        return payload if isinstance(payload, dict) else {}
+
+    def _created_list_row(self, payload: Any, *, title: str, iso2: str, ports: int, rotation: int) -> Dict[str, Any]:
+        row = payload.get("data", payload) if isinstance(payload, dict) else {}
+        if not isinstance(row, dict):
+            row = {}
+        nested = row.get("item") or row.get("list")
+        if isinstance(nested, dict):
+            row = nested
+        merged = dict(row)
+        merged.setdefault("title", title)
+        merged.setdefault("geo", {"country": iso2})
+        export = merged.get("export") if isinstance(merged.get("export"), dict) else {}
+        export.setdefault("ports", ports)
+        export.setdefault("ext", "txt")
+        merged["export"] = export
+        merged.setdefault("rotation", rotation)
+        return merged
+
+    async def ensure_tg_resident_list(
+        self,
+        country: Optional[str],
+        *,
+        create: bool = False,
+        ports: int = 10,
+        rotation: int = 3600,
+    ) -> Dict[str, Any]:
+        """确保目标国家存在 xxxtg 专用 {CC}_tg 列表。绝不改动 bot_* 列表。"""
+        iso2 = resolve_iso2_country(country)
+        if not iso2:
+            hint = f"无法识别国家 {country!s}，请使用 COUNTRY_PROFILES 中的两位 ISO-2（如 CL / ZA）"
+            return {
+                "success": False,
+                "created": False,
+                "title": None,
+                "proxies": [],
+                "hint": hint,
+                "message": hint,
+            }
+        title = tg_list_title_for_country(iso2)
+        port_count = max(1, min(_as_int(ports, 10) or 10, RESIDENT_TG_PORT_CAP))
+        rotation_val = _as_int(rotation, 3600) or 3600
+
+        try:
+            rows, recognized = await self._load_resident_lists()
+        except Exception as exc:
+            hint = f"读取住宅列表失败: {exc}"
+            return {
+                "success": False,
+                "created": False,
+                "title": title,
+                "proxies": [],
+                "hint": hint,
+                "message": hint,
+            }
+
+        found = find_tg_resident_list(rows, iso2)
+        if found:
+            tools_login, tools_password = tools_auth_from_lists(rows)
+            proxies = resident_list_to_proxies(
+                found,
+                max_ports=port_count,
+                tools_login=tools_login,
+                tools_password=tools_password,
+            )
+            existing_title = str(found.get("title") or title)
+            return {
+                "success": True,
+                "created": False,
+                "title": existing_title,
+                "list_id": found.get("id"),
+                "proxies": proxies,
+                "hint": None,
+                "message": f"已存在 xxxtg 专用列表 {existing_title}，导出 {len(proxies)} 个节点",
+            }
+
+        if not create:
+            hint = (
+                f"账户中没有 {title} 列表。设置 create=true 可自主创建"
+                "（不会读取或改动 bot_* 列表）"
+            )
+            return {
+                "success": False,
+                "created": False,
+                "title": title,
+                "proxies": [],
+                "hint": hint,
+                "message": hint,
+            }
+
+        if not recognized:
+            hint = "住宅列表接口未返回可识别数据，已跳过创建以免误伤已有 bot 列表"
+            return {
+                "success": False,
+                "created": False,
+                "title": title,
+                "proxies": [],
+                "hint": hint,
+                "message": hint,
+            }
+
+        body = {
+            "title": title,
+            "whitelist": "",
+            "geo": {"country": iso2},
+            "export": {"ports": port_count, "ext": "txt"},
+            "rotation": rotation_val,
+        }
+        try:
+            created_payload = await self._request("POST", "resident/list/add", json_body=body)
+        except Exception as exc:
+            hint = f"创建 {title} 失败: {exc}"
+            logger.warning("创建 xxxtg 住宅列表失败（title=%s）: %s", title, exc)
+            return {
+                "success": False,
+                "created": False,
+                "title": title,
+                "proxies": [],
+                "hint": hint,
+                "message": hint,
+            }
+
+        created_row = self._created_list_row(
+            created_payload, title=title, iso2=iso2, ports=port_count, rotation=rotation_val
+        )
+        refreshed_rows = rows
+        if not created_row.get("login"):
+            try:
+                refreshed, _ = await self._load_resident_lists()
+                found = find_tg_resident_list(refreshed, iso2)
+                if found:
+                    created_row = found
+                refreshed_rows = refreshed
+            except Exception:
+                pass
+
+        tools_login, tools_password = tools_auth_from_lists(refreshed_rows)
+        proxies = resident_list_to_proxies(
+            created_row,
+            max_ports=port_count,
+            tools_login=tools_login,
+            tools_password=tools_password,
+        )
+        self.invalidate_cache()
+        logger.info("已创建 xxxtg 住宅列表 %s（%s 个节点）", title, len(proxies))
+        return {
+            "success": True,
+            "created": True,
+            "title": title,
+            "list_id": created_row.get("id"),
+            "proxies": proxies,
+            "hint": None,
+            "message": f"已创建 xxxtg 专用列表 {title}，导出 {len(proxies)} 个节点",
+        }
+
+    async def summarize_resident_tg_lists(self) -> Dict[str, Any]:
+        if not self.api_key:
+            return {
+                "success": False,
+                "message": "未配置 Proxy-Seller API Key",
+                "lists": [],
+                "bot_skipped": 0,
+                "package_active": None,
+            }
+        try:
+            rows, _recognized = await self._load_resident_lists()
+        except Exception as exc:
+            return {
+                "success": False,
+                "message": f"读取住宅列表失败: {exc}",
+                "lists": [],
+                "bot_skipped": 0,
+                "package_active": None,
+            }
+
+        bot_skipped = 0
+        summaries: List[Dict[str, Any]] = []
+        for row in rows:
+            title = str(row.get("title") or "")
+            if is_bot_list_title(title):
+                bot_skipped += 1
+                continue
+            if not is_xxxtg_list_title(title):
+                continue
+            geo = parse_resident_geo(row.get("geo"))
+            country = geo.get("country") or (country_code_from_tg_title(title) or "").upper() or None
+            summaries.append({
+                "id": row.get("id"),
+                "title": title,
+                "country": country,
+                "ports": parse_export_ports(row.get("export")),
+                "rotation": row.get("rotation"),
+            })
+
+        package_active: Optional[bool] = None
+        try:
+            package_active = _package_is_active(await self.fetch_resident_package())
+        except Exception:
+            package_active = None
+
+        return {
+            "success": True,
+            "message": f"xxxtg 列表 {len(summaries)} 条，已忽略 {bot_skipped} 条 bot_* 列表",
+            "lists": summaries,
+            "bot_skipped": bot_skipped,
+            "package_active": package_active,
+        }
 
     # ------------------------------------------------------------------
     # 购买 / 续费 / 租用 — 官方规范封装 (预留，注册流水线不会自动扣费)
