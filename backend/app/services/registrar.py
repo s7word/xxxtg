@@ -1400,8 +1400,6 @@ class RegistrationOrchestrator:
                 ) from retry_err
 
     @classmethod
-
-    @classmethod
     def _resolve_hunt_limits(cls, config, no_number_retries: Optional[int] = None) -> Dict[str, Any]:
         def _int(name, default):
             try:
@@ -1467,6 +1465,7 @@ class RegistrationOrchestrator:
         assert last_exc is not None
         raise last_exc
 
+    @classmethod
     async def run_registration(
         cls,
         task_id: str,
