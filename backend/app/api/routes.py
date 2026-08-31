@@ -221,12 +221,20 @@ async def smsall_trial_register(req: SmsallTrialRequest, background_tasks: Backg
     if not country:
         raise HTTPException(status_code=400, detail="请指定国家或选择一条通知")
     config = ConfigManager.get_instance().config
+    provider_ids = None
+    if event:
+        supplier_ids = event.get("supplier_ids")
+        if isinstance(supplier_ids, list) and supplier_ids:
+            provider_ids = [str(item).strip() for item in supplier_ids if str(item).strip()]
+        elif event.get("provider_ref"):
+            provider_ids = [str(event.get("provider_ref")).strip()]
     started = start_country_batch(
         country=country,
         count=req.count,
         concurrency=min(req.concurrency, req.count),
         background_tasks=background_tasks,
         config=config,
+        provider_ids=provider_ids,
     )
     remembered = attach_batch(
         event_id=req.event_id,
@@ -1083,6 +1091,7 @@ async def start_registration(req: RegisterTaskRequest, background_tasks: Backgro
         max_price=req.max_price,
         max_number_attempts=budget["max_number_attempts"],
         no_number_retries=req.no_number_retries,
+        provider_ids=req.provider_ids,
     )
 
     message = "虚拟节点引导与协议握手任务已提交后台编排流水线"
@@ -1131,6 +1140,7 @@ async def start_batch_registration(req: BatchRegisterRequest, background_tasks: 
         max_price=req.max_price,
         max_number_attempts=budget["max_number_attempts"],
         no_number_retries=req.no_number_retries,
+        provider_ids=req.provider_ids,
     )
     message = (
         f"已提交并发批量引导: {len(task_ids)} 个任务 / 并发度 {req.concurrency}"

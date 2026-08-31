@@ -77,7 +77,8 @@ const form = reactive({
   proxy_mode: 'custom_pool',
   proxy_id: '',
   sms_provider: 'fivesim',
-  max_price: null
+  max_price: null,
+  provider_ids: ''
 })
 
 const smsStock = reactive({

@@ -708,6 +708,26 @@ class RegisterTaskRequest(BaseModel):
         le=100,
         description="猎号时无库存软重试次数；为空则用全局 hunt_no_number_retries（默认 20）",
     )
+    provider_ids: Optional[List[str]] = Field(
+        default=None,
+        description=(
+            "SMS Bower / Grizzly 指定供应商 providerIds（如 3330），对应上游 providerRef / supplierIds；"
+            "可多选，逗号分隔字符串或数组"
+        ),
+    )
+
+    @field_validator("provider_ids", mode="before")
+    @classmethod
+    def _normalize_provider_ids(cls, value):
+        if value is None or value == "":
+            return None
+        if isinstance(value, str):
+            parts = [part.strip() for part in value.replace(";", ",").split(",") if part.strip()]
+            return parts or None
+        if isinstance(value, (list, tuple, set)):
+            parts = [str(item).strip() for item in value if str(item).strip()]
+            return parts or None
+        return None
 
     @field_validator("proxy_mode", mode="before")
     @classmethod

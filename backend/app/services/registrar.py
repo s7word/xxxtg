@@ -2166,6 +2166,11 @@ class RegistrationOrchestrator:
                         f"正在向带外遥测提供者申请拓扑代码 '{target_country.upper()}' 的信道句柄"
                         "（未设置最高出价，使用平台底价；热门国家可能 NO_NUMBERS）..."
                     )
+                if provider_ids:
+                    await manager.append_log(
+                        task_id,
+                        f"指定供应商 providerIds={','.join(provider_ids)}（精确取号）"
+                    )
                 act_id, phone = await cls._lease_number_with_retries(
                     sms_svc,
                     target_country,
