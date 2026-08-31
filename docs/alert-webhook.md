@@ -116,8 +116,19 @@ xxxtg 侧配置（设置页「程序推送 → 狙击」子面板）：
 | `smsall_sniper_max_number_attempts` | `20` | 每任务最多取号次数（猎号深度） |
 | `smsall_sniper_cooldown_seconds` | `60` | 同国冷却；`0` = 不冷却 |
 | `smsall_sniper_max_countries` | `3` | 单次推送最多开几个国家（按单价从低到高） |
-| `smsall_sniper_max_price_usd` | `null` | 单价硬顶；留空 = 不按单价过滤 |
+| `smsall_sniper_max_price_usd` | `null` | 全局单价硬顶；按国列表为空时生效 |
+| `smsall_sniper_price_caps` | `[]` | 按国单价上限列表，如 `[{"country":"IQ","max_price_usd":1.55}]`；**非空时仅列表内国家可开跑** |
 | `smsall_sniper_use_item_price_as_max` | `true` | 用 `priceUsd` 上浮 10% 作为本批出价，否则用全局 `sms_max_price` |
+
+狙击条目新增字段（2026-08 上游格式）：
+
+| 字段 | 含义 |
+|---|---|
+| `providerRef` | 上游供应商标识，与 `supplierIds` 互补 |
+| `supplierIds` | 供应商 ID 列表；开跑后会作为 SMS Bower `providerIds` 精确取号 |
+| `priceUsd` | 单价；须 ≤ 该国在 `smsall_sniper_price_caps` 中的上限（或全局硬顶） |
+
+请求体可以是标准 `{ schema, items: [...] }`，也可以直接 POST **items 数组**（纯狙击推送常见）。
 
 `10 × 20 = 200` 恰好等于默认猎号联合上限 `hunt_max_total_leases`。调大任一参数会触发裁剪，
 裁剪结果会原样写进后端日志（`SmsallHooks: XX 批次租号预算：…`）并回在 Webhook 响应的

@@ -123,8 +123,32 @@
             <input v-model.number="config.smsall_sniper_max_countries" type="number" min="1" max="10" class="ce-input mono" />
           </div>
           <div>
-            <label class="ce-label">狙击单价硬顶 USD（留空=不过滤）</label>
+            <label class="ce-label">狙击全局单价硬顶 USD（留空=不过滤；配置了按国列表时作备用）</label>
             <input v-model.number="config.smsall_sniper_max_price_usd" type="number" min="0" step="0.01" class="ce-input mono" placeholder="留空则任何单价都抢" />
+          </div>
+        </div>
+        <div v-if="config.smsall_sniper_enabled" class="stack" style="margin-top:8px">
+          <div class="row" style="justify-content:space-between;align-items:center">
+            <label class="ce-label" style="margin:0">按国狙击单价上限（USD）</label>
+            <button type="button" class="ce-btn-ghost ce-btn-sm" @click="addSniperPriceCap">+ 添加国家</button>
+          </div>
+          <p class="ce-tiny">
+            列表非空时：只有列表里的国家才会自动开狙击，且推送 <code>priceUsd</code> 须 ≤ 该国上限。
+            例：IQ 1.55、IR 1.0 —— 同国不同 supplier 会各开一批并带上 <code>supplierIds</code> 精确取号。
+          </p>
+          <div v-if="!(config.smsall_sniper_price_caps || []).length" class="ce-tiny ce-muted">未配置时回落「狙击全局单价硬顶」；两者都空则不过滤单价。</div>
+          <div v-for="(row, idx) in config.smsall_sniper_price_caps" :key="idx" class="grid-2" style="align-items:end">
+            <div>
+              <label class="ce-label">国家 ISO2</label>
+              <input v-model="row.country" type="text" maxlength="2" class="ce-input mono" placeholder="IQ" />
+            </div>
+            <div style="display:flex;gap:8px;align-items:end">
+              <div style="flex:1">
+                <label class="ce-label">不高于 USD</label>
+                <input v-model.number="row.max_price_usd" type="number" min="0" step="0.001" class="ce-input mono" />
+              </div>
+              <button type="button" class="ce-btn-danger ce-btn-sm" @click="removeSniperPriceCap(idx)">删</button>
+            </div>
           </div>
         </div>
         <label v-if="config.smsall_sniper_enabled" class="ce-check">
@@ -615,6 +639,22 @@ const clampTrial = (value, fallback = 1) => {
   return Math.max(1, Math.min(10, Math.trunc(n)))
 }
 
+const ensureSniperPriceCaps = () => {
+  if (!Array.isArray(config.smsall_sniper_price_caps)) {
+    config.smsall_sniper_price_caps = []
+  }
+}
+
+const addSniperPriceCap = () => {
+  ensureSniperPriceCaps()
+  config.smsall_sniper_price_caps.push({ country: '', max_price_usd: 1 })
+}
+
+const removeSniperPriceCap = (idx) => {
+  ensureSniperPriceCaps()
+  config.smsall_sniper_price_caps.splice(idx, 1)
+}
+
 const formatEventTime = (at) => {
   const ts = Number(at)
   if (!Number.isFinite(ts) || ts <= 0) return '—'
@@ -638,6 +678,7 @@ const eventStatusLabel = (ev) => {
   if (ev.reason === 'sniper_disabled') return '狙击已关'
   if (ev.action === 'received') return '待确认'
   if (ev.reason === 'price_above_cap') return '超阈值'
+  if (ev.reason === 'country_not_in_caps') return '未配该国上限'
   if (ev.reason === 'upstream_no_balance') return '上游无余额'
   if (ev.reason === 'awaiting_confirm' || ev.reason === 'auto_disabled') return '待确认'
   if (ev.action === 'ignored') return '已忽略'

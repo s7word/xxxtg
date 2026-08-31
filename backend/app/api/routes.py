@@ -185,6 +185,13 @@ async def smsall_webhook_status(limit: int = Query(default=80, ge=1, le=200)):
         "sniper_cooldown_seconds": getattr(config, "smsall_sniper_cooldown_seconds", 60),
         "sniper_max_countries": getattr(config, "smsall_sniper_max_countries", 3),
         "sniper_max_price_usd": getattr(config, "smsall_sniper_max_price_usd", None),
+        "sniper_price_caps": [
+            {
+                "country": getattr(row, "country", None) if not isinstance(row, dict) else row.get("country"),
+                "max_price_usd": getattr(row, "max_price_usd", None) if not isinstance(row, dict) else row.get("max_price_usd"),
+            }
+            for row in (getattr(config, "smsall_sniper_price_caps", None) or [])
+        ],
         "event_count": event_count(),
         "events": recent_events(limit),
     }

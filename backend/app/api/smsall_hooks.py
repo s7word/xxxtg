@@ -26,6 +26,7 @@ def start_country_batch(
     sms_provider: Optional[str] = None,
     no_number_retries: Optional[int] = None,
     sniper: bool = False,
+    provider_ids: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """用当前全局接码源 / 代理策略给某国开一批注册；max_number_attempts>1 即走猎号。"""
     manager = RegistrationTaskManager.get_instance()
@@ -71,6 +72,7 @@ def start_country_batch(
         max_price=max_price,
         max_number_attempts=attempts,
         no_number_retries=no_number_retries,
+        provider_ids=provider_ids,
     )
     return {
         "batch_id": batch_id,
@@ -84,6 +86,7 @@ def start_country_batch(
         "max_number_attempts": attempts,
         "max_price": max_price,
         "sniper": bool(sniper),
+        "provider_ids": list(provider_ids or []),
         "planned_leases": budget["planned_leases"],
         "budget_message": budget["message"],
         "budget_clamped": bool(budget.get("clamped") or budget.get("rejected")),
@@ -103,6 +106,7 @@ def _schedule_launches(launches, background_tasks: BackgroundTasks, config) -> N
             max_number_attempts=item.get("max_number_attempts"),
             max_price=item.get("max_price"),
             sniper=sniper,
+            provider_ids=item.get("supplier_ids") or None,
         )
         item["batch_id"] = started["batch_id"]
         item["task_ids"] = list(started["task_ids"])
@@ -166,6 +170,8 @@ async def receive_smsall_alert(
                 "price_usd": item.get("price_usd"),
                 "event_type": item.get("event_type"),
                 "provider": item.get("provider"),
+                "provider_ref": item.get("provider_ref"),
+                "supplier_ids": item.get("supplier_ids") or [],
                 "sniper": bool(item.get("sniper")),
                 "max_number_attempts": item.get("max_number_attempts"),
                 "planned_leases": item.get("planned_leases"),

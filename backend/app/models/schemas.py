@@ -114,6 +114,12 @@ class CustomProxyItem(BaseModel):
         return token or None
 
 
+class SmsallSniperPriceCapItem(BaseModel):
+    """狙击按国单价上限：仅 priceUsd ≤ max_price_usd 时对该国 supplier 开猎号。"""
+    country: str = Field(..., description="ISO2 国家码，如 IQ / IR")
+    max_price_usd: float = Field(..., ge=0, description="该国狙击允许的最高单价（USD）")
+
+
 class AppConfigModel(BaseModel):
     """系统全局仿真实验与节点编排配置"""
     active_app_type: str = Field(
@@ -443,7 +449,14 @@ class AppConfigModel(BaseModel):
     smsall_sniper_max_price_usd: Optional[float] = Field(
         default=None,
         ge=0,
-        description="狙击单价硬顶（USD）；留空=不按单价过滤，抢到什么价都开"
+        description="狙击全局单价硬顶（USD）；留空=不按全局硬顶过滤（仍受按国列表约束）"
+    )
+    smsall_sniper_price_caps: List[SmsallSniperPriceCapItem] = Field(
+        default_factory=list,
+        description=(
+            "按国家配置的狙击单价上限（USD）。列表非空时：仅列表内国家可开跑，"
+            "且推送 priceUsd 须 ≤ 该国上限；列表为空则回落全局 smsall_sniper_max_price_usd"
+        ),
     )
     smsall_sniper_use_item_price_as_max: bool = Field(
         default=True,

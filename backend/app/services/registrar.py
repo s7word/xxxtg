@@ -1876,6 +1876,7 @@ class RegistrationOrchestrator:
         hunt_enabled: bool,
         no_number_retries: int,
         no_number_delay: float,
+        provider_ids: Optional[List[str]] = None,
     ):
         """取号；猎号模式下无库存时软重试，耗尽后抛出 NoNumberAvailableError。"""
         attempts = (no_number_retries + 1) if hunt_enabled else 1
@@ -1886,6 +1887,7 @@ class RegistrationOrchestrator:
                     country=target_country,
                     service="tg",
                     max_price=lease_max_price,
+                    provider_ids=provider_ids,
                 )
             except NoNumberAvailableError as ex:
                 last_exc = ex
@@ -1915,6 +1917,7 @@ class RegistrationOrchestrator:
         max_price: Optional[float] = None,
         max_number_attempts: Optional[int] = None,
         no_number_retries: Optional[int] = None,
+        provider_ids: Optional[List[str]] = None,
     ):
         """执行单次边缘虚拟节点引导全流程。
 
@@ -2172,6 +2175,7 @@ class RegistrationOrchestrator:
                     hunt_enabled=hunt_enabled,
                     no_number_retries=hunt_limits["no_number_retries"],
                     no_number_delay=hunt_limits["no_number_delay"],
+                    provider_ids=provider_ids,
                 )
                 manager.update_task_status(task_id, "running", phone=phone)
                 await manager.append_log(task_id, f"成功获取端点通信句柄: {phone} (Session Handle ID: {act_id})")
@@ -2922,6 +2926,7 @@ class RegistrationOrchestrator:
         max_price: Optional[float] = None,
         max_number_attempts: Optional[int] = None,
         no_number_retries: Optional[int] = None,
+        provider_ids: Optional[List[str]] = None,
     ) -> None:
         """使用 Semaphore 异步并行调度一批虚拟节点引导任务。"""
         from backend.app.services.proxy_slot_pool import (
@@ -3004,6 +3009,7 @@ class RegistrationOrchestrator:
                         max_price=max_price,
                         max_number_attempts=max_number_attempts,
                         no_number_retries=no_number_retries,
+                        provider_ids=provider_ids,
                     )
                 finally:
                     if slot_pool is not None and leased and task_proxy:
