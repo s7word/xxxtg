@@ -134,7 +134,9 @@ xxxtg 侧配置（设置页「程序推送 → 狙击」子面板）：
 裁剪结果会原样写进后端日志（`SmsallHooks: XX 批次租号预算：…`）并回在 Webhook 响应的
 `launches[].max_number_attempts` / `planned_leases` 里。
 
-接码源**不跟随**上游平台切换，始终用全局 `sms_provider`；上游 `provider` 只打日志供人工核对。
+接码源：狙击批次会按上游平台 / `supplierIds` **自动选择**——
+有 `supplierIds` 或上游是 SMS Bower → 本批用 `smsbower`；上游 Grizzly → `grizzlysms`；
+否则才回落全局 `sms_provider`。普通自动开跑仍始终用全局接码源。
 
 ## 前端可配过滤（简化推送）
 
