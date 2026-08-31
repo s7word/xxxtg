@@ -1879,16 +1879,28 @@ class RegistrationOrchestrator:
         provider_ids: Optional[List[str]] = None,
     ):
         """取号；猎号模式下无库存时软重试，耗尽后抛出 NoNumberAvailableError。"""
+        import inspect
+
         attempts = (no_number_retries + 1) if hunt_enabled else 1
         last_exc: Optional[BaseException] = None
+        lease_kwargs: Dict[str, Any] = {
+            "country": target_country,
+            "service": "tg",
+            "max_price": lease_max_price,
+        }
+        # FiveSim / Vak-SMS 等平台无 providerIds；仅在 get_number 签名支持时传入，避免 TypeError
+        try:
+            params = inspect.signature(sms_svc.get_number).parameters
+            if provider_ids and ("provider_ids" in params or any(
+                p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
+            )):
+                lease_kwargs["provider_ids"] = provider_ids
+        except (TypeError, ValueError):
+            if provider_ids:
+                lease_kwargs["provider_ids"] = provider_ids
         for nr in range(1, attempts + 1):
             try:
-                return await sms_svc.get_number(
-                    country=target_country,
-                    service="tg",
-                    max_price=lease_max_price,
-                    provider_ids=provider_ids,
-                )
+                return await sms_svc.get_number(**lease_kwargs)
             except NoNumberAvailableError as ex:
                 last_exc = ex
                 if nr >= attempts:
