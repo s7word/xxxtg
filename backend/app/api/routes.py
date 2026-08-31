@@ -185,6 +185,13 @@ async def smsall_webhook_status(limit: int = Query(default=80, ge=1, le=200)):
         "sniper_cooldown_seconds": getattr(config, "smsall_sniper_cooldown_seconds", 60),
         "sniper_max_countries": getattr(config, "smsall_sniper_max_countries", 3),
         "sniper_max_price_usd": getattr(config, "smsall_sniper_max_price_usd", None),
+        "sniper_price_caps": [
+            {
+                "country": getattr(row, "country", None) if not isinstance(row, dict) else row.get("country"),
+                "max_price_usd": getattr(row, "max_price_usd", None) if not isinstance(row, dict) else row.get("max_price_usd"),
+            }
+            for row in (getattr(config, "smsall_sniper_price_caps", None) or [])
+        ],
         "event_count": event_count(),
         "events": recent_events(limit),
     }
@@ -214,12 +221,20 @@ async def smsall_trial_register(req: SmsallTrialRequest, background_tasks: Backg
     if not country:
         raise HTTPException(status_code=400, detail="请指定国家或选择一条通知")
     config = ConfigManager.get_instance().config
+    provider_ids = None
+    if event:
+        supplier_ids = event.get("supplier_ids")
+        if isinstance(supplier_ids, list) and supplier_ids:
+            provider_ids = [str(item).strip() for item in supplier_ids if str(item).strip()]
+        elif event.get("provider_ref"):
+            provider_ids = [str(event.get("provider_ref")).strip()]
     started = start_country_batch(
         country=country,
         count=req.count,
         concurrency=min(req.concurrency, req.count),
         background_tasks=background_tasks,
         config=config,
+        provider_ids=provider_ids,
     )
     remembered = attach_batch(
         event_id=req.event_id,
@@ -1076,6 +1091,7 @@ async def start_registration(req: RegisterTaskRequest, background_tasks: Backgro
         max_price=req.max_price,
         max_number_attempts=budget["max_number_attempts"],
         no_number_retries=req.no_number_retries,
+        provider_ids=req.provider_ids,
     )
 
     message = "虚拟节点引导与协议握手任务已提交后台编排流水线"
@@ -1124,6 +1140,7 @@ async def start_batch_registration(req: BatchRegisterRequest, background_tasks: 
         max_price=req.max_price,
         max_number_attempts=budget["max_number_attempts"],
         no_number_retries=req.no_number_retries,
+        provider_ids=req.provider_ids,
     )
     message = (
         f"已提交并发批量引导: {len(task_ids)} 个任务 / 并发度 {req.concurrency}"

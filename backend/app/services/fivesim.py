@@ -875,7 +875,11 @@ class FiveSimService:
         service: str = DEFAULT_SERVICE,
         operator: Optional[str] = DEFAULT_OPERATOR,
         max_price: Optional[float] = None,
+        provider_ids: Optional[Union[str, List[str]]] = None,
     ) -> Tuple[str, str]:
+        # 5SIM 无 providerIds 概念；参数仅与 Grizzly/SMS Bower 调用签名对齐，避免编排层 TypeError
+        if provider_ids:
+            logger.info("5SIM 忽略 providerIds=%s（该平台不支持按供应商精确取号）", provider_ids)
         country_slug = resolve_fivesim_country(country)
         product = resolve_product(service)
         bid = normalize_sms_max_price(max_price)

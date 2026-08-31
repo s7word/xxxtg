@@ -86,6 +86,22 @@
           </div>
         </div>
 
+        <div
+          v-if="launchMode === 'auto' && (form.sms_provider === 'smsbower' || form.sms_provider === 'grizzlysms')"
+          class="stack"
+        >
+          <label class="ce-label">供应商 ID（providerIds，可选）</label>
+          <input
+            v-model="form.provider_ids"
+            class="ce-input mono"
+            placeholder="如 3330 或 2579,3451"
+          />
+          <p class="ce-tiny">
+            SMS Bower / Grizzly 专用：指定上游 <code>providerRef</code> / <code>supplierIds</code>，
+            不填则从平台任意供应商池取号（热门国可能 NO_NUMBERS）。
+          </p>
+        </div>
+
         <div>
           <label class="ce-label">代理配对策略（使用者决定）</label>
           <select v-model="form.proxy_mode" class="ce-select">

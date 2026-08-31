@@ -114,6 +114,12 @@ class CustomProxyItem(BaseModel):
         return token or None
 
 
+class SmsallSniperPriceCapItem(BaseModel):
+    """狙击按国单价上限：仅 priceUsd ≤ max_price_usd 时对该国 supplier 开猎号。"""
+    country: str = Field(..., description="ISO2 国家码，如 IQ / IR")
+    max_price_usd: float = Field(..., ge=0, description="该国狙击允许的最高单价（USD）")
+
+
 class AppConfigModel(BaseModel):
     """系统全局仿真实验与节点编排配置"""
     active_app_type: str = Field(
@@ -443,7 +449,14 @@ class AppConfigModel(BaseModel):
     smsall_sniper_max_price_usd: Optional[float] = Field(
         default=None,
         ge=0,
-        description="狙击单价硬顶（USD）；留空=不按单价过滤，抢到什么价都开"
+        description="狙击全局单价硬顶（USD）；留空=不按全局硬顶过滤（仍受按国列表约束）"
+    )
+    smsall_sniper_price_caps: List[SmsallSniperPriceCapItem] = Field(
+        default_factory=list,
+        description=(
+            "按国家配置的狙击单价上限（USD）。列表非空时：仅列表内国家可开跑，"
+            "且推送 priceUsd 须 ≤ 该国上限；列表为空则回落全局 smsall_sniper_max_price_usd"
+        ),
     )
     smsall_sniper_use_item_price_as_max: bool = Field(
         default=True,
@@ -695,6 +708,26 @@ class RegisterTaskRequest(BaseModel):
         le=100,
         description="猎号时无库存软重试次数；为空则用全局 hunt_no_number_retries（默认 20）",
     )
+    provider_ids: Optional[List[str]] = Field(
+        default=None,
+        description=(
+            "SMS Bower / Grizzly 指定供应商 providerIds（如 3330），对应上游 providerRef / supplierIds；"
+            "可多选，逗号分隔字符串或数组"
+        ),
+    )
+
+    @field_validator("provider_ids", mode="before")
+    @classmethod
+    def _normalize_provider_ids(cls, value):
+        if value is None or value == "":
+            return None
+        if isinstance(value, str):
+            parts = [part.strip() for part in value.replace(";", ",").split(",") if part.strip()]
+            return parts or None
+        if isinstance(value, (list, tuple, set)):
+            parts = [str(item).strip() for item in value if str(item).strip()]
+            return parts or None
+        return None
 
     @field_validator("proxy_mode", mode="before")
     @classmethod

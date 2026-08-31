@@ -182,6 +182,13 @@ class TestGrizzlySmsClient(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(params["maxPrice"], "1")
         self.assertEqual(params["max_price"], "1")
 
+    async def test_get_number_with_provider_ids(self):
+        self.svc.client.get.return_value = DummyResponse("ACCESS_NUMBER:88:9647800000000")
+        await self.svc.get_number(country="iq", service="tg", max_price=1.0, provider_ids=["3330"])
+        params = self.svc.client.get.await_args.kwargs["params"]
+        self.assertEqual(params["providerIds"], "3330")
+        self.assertEqual(params["country"], 47)
+
     async def test_get_number_ignores_non_positive_max_price(self):
         self.svc.client.get.return_value = DummyResponse("ACCESS_NUMBER:1:919000000000")
         await self.svc.get_number(country="in", max_price=0)

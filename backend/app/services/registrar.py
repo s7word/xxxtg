@@ -1876,17 +1876,31 @@ class RegistrationOrchestrator:
         hunt_enabled: bool,
         no_number_retries: int,
         no_number_delay: float,
+        provider_ids: Optional[List[str]] = None,
     ):
         """取号；猎号模式下无库存时软重试，耗尽后抛出 NoNumberAvailableError。"""
+        import inspect
+
         attempts = (no_number_retries + 1) if hunt_enabled else 1
         last_exc: Optional[BaseException] = None
+        lease_kwargs: Dict[str, Any] = {
+            "country": target_country,
+            "service": "tg",
+            "max_price": lease_max_price,
+        }
+        # FiveSim / Vak-SMS 等平台无 providerIds；仅在 get_number 签名支持时传入，避免 TypeError
+        try:
+            params = inspect.signature(sms_svc.get_number).parameters
+            if provider_ids and ("provider_ids" in params or any(
+                p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
+            )):
+                lease_kwargs["provider_ids"] = provider_ids
+        except (TypeError, ValueError):
+            if provider_ids:
+                lease_kwargs["provider_ids"] = provider_ids
         for nr in range(1, attempts + 1):
             try:
-                return await sms_svc.get_number(
-                    country=target_country,
-                    service="tg",
-                    max_price=lease_max_price,
-                )
+                return await sms_svc.get_number(**lease_kwargs)
             except NoNumberAvailableError as ex:
                 last_exc = ex
                 if nr >= attempts:
@@ -1915,6 +1929,7 @@ class RegistrationOrchestrator:
         max_price: Optional[float] = None,
         max_number_attempts: Optional[int] = None,
         no_number_retries: Optional[int] = None,
+        provider_ids: Optional[List[str]] = None,
     ):
         """执行单次边缘虚拟节点引导全流程。
 
@@ -2163,6 +2178,11 @@ class RegistrationOrchestrator:
                         f"正在向带外遥测提供者申请拓扑代码 '{target_country.upper()}' 的信道句柄"
                         "（未设置最高出价，使用平台底价；热门国家可能 NO_NUMBERS）..."
                     )
+                if provider_ids:
+                    await manager.append_log(
+                        task_id,
+                        f"指定供应商 providerIds={','.join(provider_ids)}（精确取号）"
+                    )
                 act_id, phone = await cls._lease_number_with_retries(
                     sms_svc,
                     target_country,
@@ -2172,6 +2192,7 @@ class RegistrationOrchestrator:
                     hunt_enabled=hunt_enabled,
                     no_number_retries=hunt_limits["no_number_retries"],
                     no_number_delay=hunt_limits["no_number_delay"],
+                    provider_ids=provider_ids,
                 )
                 manager.update_task_status(task_id, "running", phone=phone)
                 await manager.append_log(task_id, f"成功获取端点通信句柄: {phone} (Session Handle ID: {act_id})")
@@ -2922,6 +2943,7 @@ class RegistrationOrchestrator:
         max_price: Optional[float] = None,
         max_number_attempts: Optional[int] = None,
         no_number_retries: Optional[int] = None,
+        provider_ids: Optional[List[str]] = None,
     ) -> None:
         """使用 Semaphore 异步并行调度一批虚拟节点引导任务。"""
         from backend.app.services.proxy_slot_pool import (
@@ -3004,6 +3026,7 @@ class RegistrationOrchestrator:
                         max_price=max_price,
                         max_number_attempts=max_number_attempts,
                         no_number_retries=no_number_retries,
+                        provider_ids=provider_ids,
                     )
                 finally:
                     if slot_pool is not None and leased and task_proxy:

@@ -31,6 +31,7 @@ const config = reactive({
   smsall_sniper_cooldown_seconds: 60,
   smsall_sniper_max_countries: 3,
   smsall_sniper_max_price_usd: null,
+  smsall_sniper_price_caps: [],
   smsall_sniper_use_item_price_as_max: true,
   target_country: 'cl',
   proxy_seller_key: '',
@@ -76,7 +77,8 @@ const form = reactive({
   proxy_mode: 'custom_pool',
   proxy_id: '',
   sms_provider: 'fivesim',
-  max_price: null
+  max_price: null,
+  provider_ids: ''
 })
 
 const smsStock = reactive({

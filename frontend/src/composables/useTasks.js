@@ -259,6 +259,13 @@ export const startRegistrationTask = async () => {
     if (Number.isFinite(taskMaxPrice) && taskMaxPrice > 0) {
       payload.max_price = taskMaxPrice
     }
+    const providerIds = String(form.provider_ids || '')
+      .split(/[,;]+/)
+      .map((item) => item.trim())
+      .filter(Boolean)
+    if (providerIds.length) {
+      payload.provider_ids = providerIds
+    }
     if (form.proxy_mode === 'explicit' && form.proxy_id) {
       payload.proxy_id = form.proxy_id
     }

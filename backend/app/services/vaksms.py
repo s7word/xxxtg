@@ -107,8 +107,12 @@ class VakSmsService:
         service: str = "tg",
         operator: Optional[str] = None,
         max_price: Optional[float] = None,
+        provider_ids: Optional[Any] = None,
     ) -> Tuple[str, str]:
         """动态申请租借一个临时带外通信通道句柄"""
+        # Vak-SMS 无 providerIds；与 Grizzly/SMS Bower 签名对齐，避免编排层 TypeError
+        if provider_ids:
+            logger.info("Vak-SMS 忽略 providerIds=%s（该平台不支持按供应商精确取号）", provider_ids)
         params = {"apiKey": self.api_key, "service": service, "country": country}
         if operator:
             params["operator"] = operator

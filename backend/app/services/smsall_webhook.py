@@ -237,13 +237,70 @@ def item_indicates_sniper(raw: Any) -> bool:
     return _tags_contain_sniper(raw.get("tags"))
 
 
+def _parse_supplier_ids(raw: Any) -> List[str]:
+    """解析上游 supplierIds / providerRef 为去重后的供应商 ID 列表。"""
+    ids: List[str] = []
+    seen = set()
+    if isinstance(raw, (list, tuple, set)):
+        for item in raw:
+            token = str(item or "").strip()
+            if token and token not in seen:
+                seen.add(token)
+                ids.append(token)
+    elif raw is not None:
+        token = str(raw).strip()
+        if token and token not in seen:
+            ids.append(token)
+    return ids
+
+
+def normalize_webhook_payload(payload: Any) -> Dict[str, Any]:
+    """兼容上游直接 POST items 数组或标准 smsall.alert.v1 对象。"""
+    if isinstance(payload, list):
+        return {"schema": SCHEMA, "serviceKey": "telegram", "items": payload}
+    if isinstance(payload, dict):
+        return payload
+    return {}
+
+
+def _sniper_launch_key(item: Dict[str, Any]) -> str:
+    country = str(item.get("country") or "").lower()
+    supplier_ids = item.get("supplier_ids") or []
+    provider_ref = str(item.get("provider_ref") or "").strip()
+    if provider_ref:
+        return f"{country}:{provider_ref}"
+    if supplier_ids:
+        return f"{country}:{'-'.join(supplier_ids)}"
+    return country
+
+
+def _resolve_sniper_price_cap(country: str, config: Any) -> Tuple[Optional[float], str]:
+    """返回 (上限, 来源)：country_caps / global / none。"""
+    iso = str(country or "").strip().lower()
+    caps = getattr(config, "smsall_sniper_price_caps", None) or []
+    if caps:
+        for row in caps:
+            cap_country = normalize_iso2(getattr(row, "country", None) if not isinstance(row, dict) else row.get("country"))
+            if cap_country != iso:
+                continue
+            cap_val = _as_float(getattr(row, "max_price_usd", None) if not isinstance(row, dict) else row.get("max_price_usd"))
+            if cap_val is not None:
+                return cap_val, "country_caps"
+        return None, "country_not_configured"
+    global_cap = _as_float(getattr(config, "smsall_sniper_max_price_usd", None))
+    if global_cap is not None:
+        return global_cap, "global"
+    return None, "none"
+
+
 def parse_items(payload: Any, headers: Any = None, force_sniper: bool = False) -> List[Dict[str, Any]]:
-    if not isinstance(payload, dict):
+    body = normalize_webhook_payload(payload)
+    if not isinstance(body, dict):
         return []
-    raw_items = payload.get("items") or []
+    raw_items = body.get("items") or []
     if not isinstance(raw_items, list):
         return []
-    sniper_all = bool(force_sniper) or payload_indicates_sniper(payload) or headers_indicate_sniper(headers)
+    sniper_all = bool(force_sniper) or payload_indicates_sniper(body) or headers_indicate_sniper(headers)
     parsed: List[Dict[str, Any]] = []
     for raw in raw_items:
         if not isinstance(raw, dict):
@@ -258,6 +315,10 @@ def parse_items(payload: Any, headers: Any = None, force_sniper: bool = False) -
             if not sniper:
                 continue
             event_type = event_type or SNIPER_TOKEN
+        supplier_ids = _parse_supplier_ids(raw.get("supplierIds"))
+        provider_ref = str(raw.get("providerRef") or raw.get("provider_ref") or "").strip()
+        if not supplier_ids and provider_ref:
+            supplier_ids = [provider_ref]
         parsed.append({
             "type": event_type,
             "sniper": sniper,
@@ -269,6 +330,8 @@ def parse_items(payload: Any, headers: Any = None, force_sniper: bool = False) -
             "stock_to": _as_int(raw.get("stockTo"), 0),
             "provider": str(raw.get("provider") or ""),
             "provider_code": str(raw.get("providerCode") or ""),
+            "provider_ref": provider_ref,
+            "supplier_ids": supplier_ids,
             "balance": _as_float(raw.get("balance")),
             "balance_currency": str(raw.get("balanceCurrency") or ""),
             "portal_url": str(raw.get("portalUrl") or ""),
@@ -284,20 +347,23 @@ def _service_is_telegram(payload: Dict[str, Any]) -> bool:
     return key in TELEGRAM_SERVICE_KEYS
 
 
-def _cooldown_key(country: str, sniper: bool = False) -> str:
-    """狙击与普通补货各自独立冷却，避免一条普通告警把狙击挡死（反之亦然）。"""
-    return f"{SNIPER_COOLDOWN_PREFIX}{country}" if sniper else str(country)
+def _cooldown_key(country: str, sniper: bool = False, launch_key: Optional[str] = None) -> str:
+    """狙击与普通补货各自独立冷却；狙击按 country+supplier 维度，避免同国多供应商互相挡死。"""
+    if sniper:
+        token = str(launch_key or country).strip().lower()
+        return f"{SNIPER_COOLDOWN_PREFIX}{token}"
+    return str(country)
 
 
-def _on_cooldown(country: str, now: float, cooldown: float, sniper: bool = False) -> bool:
-    until = _COOLDOWN_UNTIL.get(_cooldown_key(country, sniper)) or 0.0
+def _on_cooldown(country: str, now: float, cooldown: float, sniper: bool = False, launch_key: Optional[str] = None) -> bool:
+    until = _COOLDOWN_UNTIL.get(_cooldown_key(country, sniper, launch_key)) or 0.0
     return until > now and cooldown > 0
 
 
-def _mark_cooldown(country: str, now: float, cooldown: float, sniper: bool = False) -> None:
+def _mark_cooldown(country: str, now: float, cooldown: float, sniper: bool = False, launch_key: Optional[str] = None) -> None:
     if cooldown <= 0:
         return
-    _COOLDOWN_UNTIL[_cooldown_key(country, sniper)] = now + cooldown
+    _COOLDOWN_UNTIL[_cooldown_key(country, sniper, launch_key)] = now + cooldown
 
 
 def _busy_task_count() -> int:
@@ -309,6 +375,32 @@ def _busy_task_count() -> int:
         if (task.get("status") or "") in {"pending", "running", "waiting_code", "logging_in"}:
             busy += 1
     return busy
+
+
+def resolve_sniper_sms_provider(item: Dict[str, Any], config: Any = None) -> str:
+    """狙击批次选接码源：有 supplierIds 或上游是 SMS Bower/Grizzly 时，不再死用全局 FiveSim。
+
+    上游告警来自 SMSBazaar 对各接码平台的监控；本地取号必须落到真正有货的那家，
+    否则 providerIds 会被 FiveSim 忽略，表现为「平台手动能取、狙击全 NO_NUMBERS」。
+    """
+    from backend.app.services.registrar import RegistrationOrchestrator
+
+    supplier_ids = item.get("supplier_ids") or []
+    upstream = str(item.get("provider") or "").strip().lower()
+    compact = upstream.replace(" ", "").replace("-", "").replace("_", "")
+
+    preferred: Optional[str] = None
+    if "smsbower" in compact or compact in {"bower", "smsbowerapp"}:
+        preferred = "smsbower"
+    elif "grizzly" in compact:
+        preferred = "grizzlysms"
+    elif supplier_ids:
+        # providerIds 是 SMS-Activate 系参数；有供应商 ID 时优先走 SMS Bower
+        preferred = "smsbower"
+
+    if preferred:
+        return RegistrationOrchestrator.normalize_sms_provider(preferred)
+    return RegistrationOrchestrator.resolve_sms_provider(config)
 
 
 def decide_sniper_launches(
@@ -325,26 +417,33 @@ def decide_sniper_launches(
     attempts = max(1, min(500, _as_int(getattr(config, "smsall_sniper_max_number_attempts", 20), 20)))
     cooldown = max(0, _as_int(getattr(config, "smsall_sniper_cooldown_seconds", 60), 60))
     max_countries = max(1, min(10, _as_int(getattr(config, "smsall_sniper_max_countries", 3), 3)))
-    price_cap = _as_float(getattr(config, "smsall_sniper_max_price_usd", None))
     use_item_price = getattr(config, "smsall_sniper_use_item_price_as_max", True)
     use_item_price = True if use_item_price is None else bool(use_item_price)
+    country_caps = getattr(config, "smsall_sniper_price_caps", None) or []
+    has_country_caps = bool(country_caps)
 
     launches: List[Dict[str, Any]] = []
-    seen_countries = set()
+    seen_launch_keys = set()
     for item in items:
         country = item["country"]
         price = item["price_usd"]
+        launch_key = _sniper_launch_key(item)
+        price_cap, cap_source = _resolve_sniper_price_cap(country, config)
         reason = None
         action = "logged"
         if not enabled:
             action = "received"
             reason = "sniper_disabled"
-        elif country in seen_countries:
-            reason = "duplicate_country"
-        elif _on_cooldown(country, now, cooldown, sniper=True):
+        elif launch_key in seen_launch_keys:
+            reason = "duplicate_entry"
+        elif _on_cooldown(country, now, cooldown, sniper=True, launch_key=launch_key):
             reason = "cooldown"
         elif len(launches) >= max_countries:
             reason = "country_cap"
+        elif cap_source == "country_not_configured":
+            reason = "country_not_in_caps"
+        elif price is None and price_cap is not None:
+            reason = "missing_price"
         elif price_cap is not None and price is not None and price > price_cap:
             reason = "price_above_cap"
         elif item.get("balance") is not None and (item.get("balance") or 0.0) <= 0:
@@ -353,13 +452,16 @@ def decide_sniper_launches(
         else:
             # ASSUMPTION：狙击要抢货，故意跳过普通通道的 busy 上限检查
             action = "launch"
-            seen_countries.add(country)
+            seen_launch_keys.add(launch_key)
 
         stamped = _stamp_record({
             "at": now,
             "action": action,
             "reason": reason,
             "source": SNIPER_TOKEN,
+            "launch_key": launch_key,
+            "price_cap_usd": price_cap,
+            "price_cap_source": cap_source if has_country_caps or price_cap is not None else None,
             **item,
             "sniper": True,
         }, now)
@@ -371,7 +473,7 @@ def decide_sniper_launches(
             continue
 
         # ASSUMPTION：本批出价用 item.priceUsd 上浮 10%（抢货时上游价常有抖动），
-        # 若配了 smsall_sniper_max_price_usd 则不得越过该硬顶；两者都没有时回落全局 sms_max_price。
+        # 不得越过按国/全局单价上限；两者都没有时回落全局 sms_max_price。
         batch_max_price: Optional[float] = None
         if use_item_price and price is not None:
             batch_max_price = round(price * 1.1, 4)
@@ -386,9 +488,13 @@ def decide_sniper_launches(
             "concurrency": min(concurrency, count),
             "price_usd": price,
             "provider": item["provider"],
+            "provider_ref": item.get("provider_ref") or "",
+            "supplier_ids": list(item.get("supplier_ids") or []),
+            "sms_provider": resolve_sniper_sms_provider(item, config),
             "event_type": item["type"],
             "stock_to": item["stock_to"],
             "event_id": stamped["id"],
+            "launch_key": launch_key,
             "sniper": True,
             "max_number_attempts": attempts,
             "max_price": batch_max_price,
@@ -403,6 +509,7 @@ def decide_launches(
     headers: Any = None,
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     """返回 (launches, event_records)。launches 供真正开跑。"""
+    body = normalize_webhook_payload(payload)
     now = time.time()
     auto = bool(getattr(config, "smsall_auto_register", False))
     max_price = _as_float(getattr(config, "smsall_auto_max_price_usd", None)) or 0.5
@@ -414,17 +521,17 @@ def decide_launches(
 
     records: List[Dict[str, Any]] = []
     launches: List[Dict[str, Any]] = []
-    telegram = _service_is_telegram(payload)
+    telegram = _service_is_telegram(body)
     if not telegram:
         records.append(_stamp_record({
             "at": now,
             "action": "ignored",
             "reason": "not_telegram",
-            "service_key": payload.get("serviceKey"),
+            "service_key": body.get("serviceKey"),
         }, now))
         return [], records
 
-    items = parse_items(payload, headers=headers)
+    items = parse_items(body, headers=headers)
     sniper_items = [item for item in items if item.get("sniper")]
     normal_items = [item for item in items if not item.get("sniper")]
     # 同一 POST 混装时分别决策：狙击不看 smsall_auto_register，普通条目仍走原规则
@@ -596,11 +703,18 @@ def mark_launched(launches: List[Dict[str, Any]], cooldown: float) -> None:
                 continue
             sniper = bool(item.get("sniper"))
             own = _as_int(item.get("cooldown_seconds"), -1)
-            _mark_cooldown(str(country), now, own if own >= 0 else cooldown, sniper=sniper)
+            launch_key = item.get("launch_key") if sniper else None
+            _mark_cooldown(
+                str(country),
+                now,
+                own if own >= 0 else cooldown,
+                sniper=sniper,
+                launch_key=str(launch_key) if launch_key else None,
+            )
 
 
 def ingest(payload: Any, config: Any, headers: Any = None) -> Dict[str, Any]:
-    body = payload if isinstance(payload, dict) else {}
+    body = normalize_webhook_payload(payload)
     launches, records = decide_launches(body, config, headers=headers)
     remember_events(records)
     cooldown = max(0, _as_int(getattr(config, "smsall_auto_cooldown_seconds", 600), 600))
@@ -618,13 +732,16 @@ def ingest(payload: Any, config: Any, headers: Any = None) -> Dict[str, Any]:
         # 上游 provider 只打日志供人工核对映射。
         logger.warning(
             "SMSBazaar 狙击命中 %s：%s 路 × 每任务最多取号 %s 次，本批出价 %s，"
-            "上游平台=%s(%s)，本地接码源=%s",
+            "supplierIds=%s providerRef=%s，上游平台=%s(%s)，本批接码源=%s（全局=%s）",
             str(item.get("country") or "").upper(),
             item.get("count"),
             item.get("max_number_attempts"),
             item.get("max_price"),
+            item.get("supplier_ids") or "-",
+            item.get("provider_ref") or "-",
             item.get("provider") or "-",
             item.get("price_usd"),
+            item.get("sms_provider") or getattr(config, "sms_provider", None),
             getattr(config, "sms_provider", None),
         )
     return {

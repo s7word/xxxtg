@@ -65,6 +65,7 @@ def _cfg(**overrides):
         smsall_sniper_cooldown_seconds=60,
         smsall_sniper_max_countries=3,
         smsall_sniper_max_price_usd=None,
+        smsall_sniper_price_caps=[],
         smsall_sniper_use_item_price_as_max=True,
         hunt_max_total_leases=200,
         smsall_webhook_secret="unit-hook-secret",
@@ -281,6 +282,72 @@ class TestSmsallSniper(unittest.TestCase):
             launches, _ = self.mod.decide_launches(_payload([_sniper_item(sniper=True)]), _cfg())
         self.assertEqual(len(launches), 1)
 
+    def test_sniper_array_payload_and_supplier_ids(self):
+        raw = [
+            {
+                "country": "IQ",
+                "providerRef": "2579",
+                "supplierIds": ["2579"],
+                "priceUsd": 1,
+                "sniper": True,
+            },
+            {
+                "country": "IQ",
+                "providerRef": "3451",
+                "supplierIds": ["3451"],
+                "priceUsd": 0.794,
+                "sniper": True,
+            },
+        ]
+        launches, records = self._decide(raw, _cfg())
+        self.assertEqual(len(launches), 2)
+        supplier_sets = {tuple(row["supplier_ids"]) for row in launches}
+        self.assertEqual(supplier_sets, {("2579",), ("3451",)})
+        cheaper = next(row for row in launches if row["supplier_ids"] == ["3451"])
+        self.assertAlmostEqual(cheaper["max_price"], 0.8734, places=4)
+
+    def test_sniper_country_price_caps_allow_and_block(self):
+        cfg = _cfg(
+            smsall_sniper_price_caps=[
+                SimpleNamespace(country="IQ", max_price_usd=1.55),
+                SimpleNamespace(country="IR", max_price_usd=1.0),
+            ],
+        )
+        launches, records = self._decide(_payload([
+            _sniper_item(sniper=True, country="IQ", priceUsd=1.0, supplierIds=["2579"]),
+            _sniper_item(sniper=True, country="IQ", priceUsd=1.8, supplierIds=["9999"]),
+            _sniper_item(sniper=True, country="CO", priceUsd=0.2),
+        ]), cfg)
+        self.assertEqual(len(launches), 1)
+        self.assertEqual(launches[0]["country"], "iq")
+        self.assertEqual(launches[0]["supplier_ids"], ["2579"])
+        launch_rows = [rec for rec in records if rec.get("action") == "launch"]
+        self.assertEqual(len(launch_rows), 1)
+        self.assertEqual([rec.get("reason") for rec in records if rec.get("country") == "co"], ["country_not_in_caps"])
+        self.assertEqual(len([rec for rec in records if rec.get("reason") == "price_above_cap"]), 1)
+
+    def test_sniper_country_caps_empty_falls_back_to_global(self):
+        cfg = _cfg(smsall_sniper_max_price_usd=0.25, smsall_sniper_price_caps=[])
+        launches, records = self._decide(_payload([_sniper_item(sniper=True, priceUsd=0.9)]), cfg)
+        self.assertEqual(launches, [])
+        self.assertEqual(records[0]["reason"], "price_above_cap")
+
+    def test_sniper_routes_to_smsbower_when_supplier_ids_present(self):
+        cfg = _cfg(sms_provider="fivesim")
+        launches, _ = self._decide(_payload([
+            _sniper_item(sniper=True, country="IQ", priceUsd=0.867, supplierIds=["3328", "3371"], provider="SMSBower"),
+        ]), cfg)
+        self.assertEqual(len(launches), 1)
+        self.assertEqual(launches[0]["sms_provider"], "smsbower")
+        self.assertEqual(launches[0]["supplier_ids"], ["3328", "3371"])
+
+    def test_sniper_routes_grizzly_upstream_to_grizzlysms(self):
+        cfg = _cfg(sms_provider="fivesim")
+        launches, _ = self._decide(_payload([
+            _sniper_item(sniper=True, country="IQ", priceUsd=0.53, provider="Grizzly SMS"),
+        ]), cfg)
+        self.assertEqual(launches[0]["sms_provider"], "grizzlysms")
+
     def test_non_telegram_sniper_still_ignored(self):
         launches, records = self._decide(
             _payload([_sniper_item(sniper=True)], service="whatsapp"),
@@ -309,6 +376,7 @@ class TestSniperConfigSurface(unittest.TestCase):
         self.assertEqual(cfg.smsall_sniper_cooldown_seconds, 60)
         self.assertEqual(cfg.smsall_sniper_max_countries, 3)
         self.assertIsNone(cfg.smsall_sniper_max_price_usd)
+        self.assertEqual(cfg.smsall_sniper_price_caps, [])
         self.assertTrue(cfg.smsall_sniper_use_item_price_as_max)
 
     def test_overrides_survive_serialization_roundtrip(self):
@@ -449,6 +517,59 @@ class TestSmsallHttp(unittest.TestCase):
         self.assertEqual(kwargs["country"], "co")
         self.assertEqual(kwargs["sms_provider"], "smsbower")
         self.assertAlmostEqual(kwargs["max_price"], 0.33, places=4)
+
+    def test_sniper_overrides_global_fivesim_when_smsbower_upstream(self):
+        cfg = _cfg(smsall_auto_register=False, sms_provider="fivesim")
+        body = _payload([_sniper_item(
+            sniper=True,
+            country="IQ",
+            priceUsd=0.867,
+            supplierIds=["3328"],
+            providerRef="3328",
+            provider="SMSBower",
+        )])
+        raw = json.dumps(body, separators=(",", ":")).encode("utf-8")
+        digest = hmac.new(b"unit-hook-secret", raw, hashlib.sha256).hexdigest()
+        with patch("backend.app.api.smsall_hooks.ConfigManager") as mgr, \
+             patch("backend.app.api.smsall_hooks.resolve_secret", return_value="unit-hook-secret"), \
+             patch("backend.app.api.smsall_hooks.RegistrationOrchestrator.run_batch", new_callable=AsyncMock) as run_batch, \
+             patch.object(self.mod, "_busy_task_count", return_value=0):
+            mgr.get_instance.return_value.config = cfg
+            res = self.client.post(
+                "/hooks/smsall",
+                content=raw,
+                headers={
+                    "Content-Type": "application/json",
+                    "X-Smsall-Signature": f"sha256={digest}",
+                    "X-Smsall-Sniper": "1",
+                },
+            )
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(run_batch.call_args.kwargs["sms_provider"], "smsbower")
+        self.assertEqual(run_batch.call_args.kwargs["provider_ids"], ["3328"])
+        self.assertEqual(res.json()["launches"][0]["sms_provider"], "smsbower")
+
+    def test_sniper_supplier_ids_passed_to_run_batch(self):
+        cfg = _cfg(smsall_auto_register=False)
+        body = _payload([_sniper_item(supplierIds=["2579"], providerRef="2579", sniper=True)])
+        raw = json.dumps(body, separators=(",", ":")).encode("utf-8")
+        digest = hmac.new(b"unit-hook-secret", raw, hashlib.sha256).hexdigest()
+        with patch("backend.app.api.smsall_hooks.ConfigManager") as mgr, \
+             patch("backend.app.api.smsall_hooks.resolve_secret", return_value="unit-hook-secret"), \
+             patch("backend.app.api.smsall_hooks.RegistrationOrchestrator.run_batch", new_callable=AsyncMock) as run_batch, \
+             patch.object(self.mod, "_busy_task_count", return_value=0):
+            mgr.get_instance.return_value.config = cfg
+            res = self.client.post(
+                "/hooks/smsall",
+                content=raw,
+                headers={
+                    "Content-Type": "application/json",
+                    "X-Smsall-Signature": f"sha256={digest}",
+                    "X-Smsall-Sniper": "1",
+                },
+            )
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(run_batch.call_args.kwargs.get("provider_ids"), ["2579"])
 
         events = self.mod.recent_events(10)
         self.assertTrue(events[0]["sniper"])

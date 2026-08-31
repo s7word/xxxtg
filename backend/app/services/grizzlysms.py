@@ -497,20 +497,20 @@ class GrizzlySmsService:
             if not client.is_closed:
                 await client.aclose()
         except Exception as exc:
-            logger.warning("释放 Grizzly SMS httpx 客户端失败: %s", exc)
+            logger.warning("释放 %s httpx 客户端失败: %s", self.PROVIDER_LABEL, exc)
 
     async def _get(self, action: str, extra: Optional[Dict[str, Any]] = None) -> str:
         if not self.api_key:
-            raise GrizzlySmsError("未配置 Grizzly SMS API Key")
+            raise GrizzlySmsError(f"未配置 {self.PROVIDER_LABEL} API Key")
         params: Dict[str, Any] = {"api_key": self.api_key, "action": action}
         if extra:
             params.update({k: v for k, v in extra.items() if v is not None})
         resp = await self.client.get(self.BASE_URL, params=params)
         text = (resp.text or "").strip()
         if resp.status_code >= 400:
-            raise GrizzlySmsError(f"Grizzly SMS HTTP {resp.status_code}: {text[:300]}")
+            raise GrizzlySmsError(f"{self.PROVIDER_LABEL} HTTP {resp.status_code}: {text[:300]}")
         if _is_bad_key(text):
-            raise GrizzlySmsError(f"Grizzly SMS API Key 无效 (BAD_KEY): {text}")
+            raise GrizzlySmsError(f"{self.PROVIDER_LABEL} API Key 无效 (BAD_KEY): {text}")
         return text
 
     async def get_balance(self) -> float:
@@ -585,12 +585,20 @@ class GrizzlySmsService:
         country: Union[str, int] = "in",
         service: str = DEFAULT_SERVICE,
         operator: Optional[str] = None,
+        provider_ids: Optional[Union[str, List[str]]] = None,
         max_price: Optional[float] = None,
     ) -> Tuple[str, str]:
         country_id = resolve_grizzly_country_id(country)
         extra: Dict[str, Any] = {"service": service or DEFAULT_SERVICE, "country": country_id}
         if operator:
             extra["operator"] = operator
+        if provider_ids:
+            if isinstance(provider_ids, (list, tuple, set)):
+                joined = ",".join(str(x).strip() for x in provider_ids if str(x).strip())
+            else:
+                joined = str(provider_ids).strip()
+            if joined:
+                extra["providerIds"] = joined
         bid = normalize_sms_max_price(max_price)
         bid_str = format_sms_max_price(bid)
         iso = (resolve_country_iso2(country) or str(country) or "").upper()
@@ -606,10 +614,11 @@ class GrizzlySmsService:
                     bid_str,
                 )
         logger.info(
-            "向 Grizzly SMS 申请租号 (country=%s/%s, maxPrice=%s)...",
+            "向 Grizzly SMS 申请租号 (country=%s/%s, maxPrice=%s, providerIds=%s)...",
             country_id,
             iso or "?",
             bid_str if bid_str is not None else "未设置",
+            extra.get("providerIds") or "未指定",
         )
         raw = await self._get("getNumber", extra)
         if _is_no_numbers(raw):
