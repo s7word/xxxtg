@@ -377,6 +377,32 @@ def _busy_task_count() -> int:
     return busy
 
 
+def resolve_sniper_sms_provider(item: Dict[str, Any], config: Any = None) -> str:
+    """狙击批次选接码源：有 supplierIds 或上游是 SMS Bower/Grizzly 时，不再死用全局 FiveSim。
+
+    上游告警来自 SMSBazaar 对各接码平台的监控；本地取号必须落到真正有货的那家，
+    否则 providerIds 会被 FiveSim 忽略，表现为「平台手动能取、狙击全 NO_NUMBERS」。
+    """
+    from backend.app.services.registrar import RegistrationOrchestrator
+
+    supplier_ids = item.get("supplier_ids") or []
+    upstream = str(item.get("provider") or "").strip().lower()
+    compact = upstream.replace(" ", "").replace("-", "").replace("_", "")
+
+    preferred: Optional[str] = None
+    if "smsbower" in compact or compact in {"bower", "smsbowerapp"}:
+        preferred = "smsbower"
+    elif "grizzly" in compact:
+        preferred = "grizzlysms"
+    elif supplier_ids:
+        # providerIds 是 SMS-Activate 系参数；有供应商 ID 时优先走 SMS Bower
+        preferred = "smsbower"
+
+    if preferred:
+        return RegistrationOrchestrator.normalize_sms_provider(preferred)
+    return RegistrationOrchestrator.resolve_sms_provider(config)
+
+
 def decide_sniper_launches(
     items: List[Dict[str, Any]],
     config: Any,
@@ -464,6 +490,7 @@ def decide_sniper_launches(
             "provider": item["provider"],
             "provider_ref": item.get("provider_ref") or "",
             "supplier_ids": list(item.get("supplier_ids") or []),
+            "sms_provider": resolve_sniper_sms_provider(item, config),
             "event_type": item["type"],
             "stock_to": item["stock_to"],
             "event_id": stamped["id"],
@@ -705,7 +732,7 @@ def ingest(payload: Any, config: Any, headers: Any = None) -> Dict[str, Any]:
         # 上游 provider 只打日志供人工核对映射。
         logger.warning(
             "SMSBazaar 狙击命中 %s：%s 路 × 每任务最多取号 %s 次，本批出价 %s，"
-            "supplierIds=%s providerRef=%s，上游平台=%s(%s)，本地接码源=%s",
+            "supplierIds=%s providerRef=%s，上游平台=%s(%s)，本批接码源=%s（全局=%s）",
             str(item.get("country") or "").upper(),
             item.get("count"),
             item.get("max_number_attempts"),
@@ -714,6 +741,7 @@ def ingest(payload: Any, config: Any, headers: Any = None) -> Dict[str, Any]:
             item.get("provider_ref") or "-",
             item.get("provider") or "-",
             item.get("price_usd"),
+            item.get("sms_provider") or getattr(config, "sms_provider", None),
             getattr(config, "sms_provider", None),
         )
     return {

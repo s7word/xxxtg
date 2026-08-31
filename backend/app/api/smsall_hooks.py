@@ -105,6 +105,7 @@ def _schedule_launches(launches, background_tasks: BackgroundTasks, config) -> N
             config=config,
             max_number_attempts=item.get("max_number_attempts"),
             max_price=item.get("max_price"),
+            sms_provider=item.get("sms_provider"),
             sniper=sniper,
             provider_ids=item.get("supplier_ids") or None,
         )
@@ -172,6 +173,7 @@ async def receive_smsall_alert(
                 "provider": item.get("provider"),
                 "provider_ref": item.get("provider_ref"),
                 "supplier_ids": item.get("supplier_ids") or [],
+                "sms_provider": item.get("sms_provider"),
                 "sniper": bool(item.get("sniper")),
                 "max_number_attempts": item.get("max_number_attempts"),
                 "planned_leases": item.get("planned_leases"),

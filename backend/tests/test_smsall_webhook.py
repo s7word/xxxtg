@@ -332,6 +332,22 @@ class TestSmsallSniper(unittest.TestCase):
         self.assertEqual(launches, [])
         self.assertEqual(records[0]["reason"], "price_above_cap")
 
+    def test_sniper_routes_to_smsbower_when_supplier_ids_present(self):
+        cfg = _cfg(sms_provider="fivesim")
+        launches, _ = self._decide(_payload([
+            _sniper_item(sniper=True, country="IQ", priceUsd=0.867, supplierIds=["3328", "3371"], provider="SMSBower"),
+        ]), cfg)
+        self.assertEqual(len(launches), 1)
+        self.assertEqual(launches[0]["sms_provider"], "smsbower")
+        self.assertEqual(launches[0]["supplier_ids"], ["3328", "3371"])
+
+    def test_sniper_routes_grizzly_upstream_to_grizzlysms(self):
+        cfg = _cfg(sms_provider="fivesim")
+        launches, _ = self._decide(_payload([
+            _sniper_item(sniper=True, country="IQ", priceUsd=0.53, provider="Grizzly SMS"),
+        ]), cfg)
+        self.assertEqual(launches[0]["sms_provider"], "grizzlysms")
+
     def test_non_telegram_sniper_still_ignored(self):
         launches, records = self._decide(
             _payload([_sniper_item(sniper=True)], service="whatsapp"),
@@ -501,6 +517,37 @@ class TestSmsallHttp(unittest.TestCase):
         self.assertEqual(kwargs["country"], "co")
         self.assertEqual(kwargs["sms_provider"], "smsbower")
         self.assertAlmostEqual(kwargs["max_price"], 0.33, places=4)
+
+    def test_sniper_overrides_global_fivesim_when_smsbower_upstream(self):
+        cfg = _cfg(smsall_auto_register=False, sms_provider="fivesim")
+        body = _payload([_sniper_item(
+            sniper=True,
+            country="IQ",
+            priceUsd=0.867,
+            supplierIds=["3328"],
+            providerRef="3328",
+            provider="SMSBower",
+        )])
+        raw = json.dumps(body, separators=(",", ":")).encode("utf-8")
+        digest = hmac.new(b"unit-hook-secret", raw, hashlib.sha256).hexdigest()
+        with patch("backend.app.api.smsall_hooks.ConfigManager") as mgr, \
+             patch("backend.app.api.smsall_hooks.resolve_secret", return_value="unit-hook-secret"), \
+             patch("backend.app.api.smsall_hooks.RegistrationOrchestrator.run_batch", new_callable=AsyncMock) as run_batch, \
+             patch.object(self.mod, "_busy_task_count", return_value=0):
+            mgr.get_instance.return_value.config = cfg
+            res = self.client.post(
+                "/hooks/smsall",
+                content=raw,
+                headers={
+                    "Content-Type": "application/json",
+                    "X-Smsall-Signature": f"sha256={digest}",
+                    "X-Smsall-Sniper": "1",
+                },
+            )
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(run_batch.call_args.kwargs["sms_provider"], "smsbower")
+        self.assertEqual(run_batch.call_args.kwargs["provider_ids"], ["3328"])
+        self.assertEqual(res.json()["launches"][0]["sms_provider"], "smsbower")
 
     def test_sniper_supplier_ids_passed_to_run_batch(self):
         cfg = _cfg(smsall_auto_register=False)
