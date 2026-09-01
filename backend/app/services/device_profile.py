@@ -276,7 +276,7 @@ class DeviceProfileManager:
     def _apply_locale(cls, profile: Dict[str, Any], country: str, sampled: Optional[Dict[str, Any]], match: str) -> None:
         fallback = cls.infer_locale(country)
         sampled = sampled or {}
-        keep_sampled_locale = match == "country" and sampled.get("lang_code") and sampled.get("system_lang_code")
+        keep_sampled_locale = match in {"country", "auto"} and sampled.get("lang_code") and sampled.get("system_lang_code")
         if keep_sampled_locale:
             profile["lang_code"] = str(sampled["lang_code"]).lower()
             profile["system_lang_code"] = str(sampled["system_lang_code"]).lower()
@@ -302,6 +302,7 @@ class DeviceProfileManager:
         profile["device_pack_alias"] = None
         profile["device_pack_country"] = None
         profile["device_pack_match"] = "none"
+        profile["device_pack_auto"] = False
 
         selection = cls._manager().select_sample(country)
         sampled_dev = None
@@ -318,6 +319,7 @@ class DeviceProfileManager:
             profile["device_pack_alias"] = pack.get("alias")
             profile["device_pack_country"] = pack.get("country")
             profile["device_pack_match"] = match
+            profile["device_pack_auto"] = bool(selection.get("created")) or match == "auto"
             if app_type == "telegram_android":
                 profile["app_version"] = sampled_dev["app_version"]
                 profile["app_version_pure"] = sampled_dev["app_version_pure"]
@@ -327,6 +329,16 @@ class DeviceProfileManager:
 
         cls._apply_locale(profile, country, sampled_dev, match)
         return profile
+
+    @classmethod
+    def describe_pack_match(cls, match: str, auto_created: bool = False) -> str:
+        if auto_created or match == "auto":
+            return "国家自动适配（即时合成）"
+        if match == "country":
+            return "国家精确匹配"
+        if match == "fallback":
+            return "跨库回退采样"
+        return "目录为空，回退端点模板默认机型"
 
 # 学术规范别名
 NodeTelemetryProfileManager = DeviceProfileManager

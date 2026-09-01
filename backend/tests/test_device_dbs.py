@@ -179,6 +179,81 @@ class TestParameterizedGenerator(unittest.TestCase):
             tmp.cleanup()
 
 
+class TestAutoCountryAdapt(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        DeviceDbManager.invalidate_cache()
+
+    def tearDown(self):
+        DeviceDbManager.invalidate_cache()
+        self.tmp.cleanup()
+
+    def test_ensure_synthesizes_missing_country_once(self):
+        pack, match, created = DeviceDbManager.ensure_country_pack(
+            "co", root=self.root, count=16
+        )
+        self.assertTrue(created)
+        self.assertEqual(match, "auto")
+        self.assertEqual(pack["country"], "co")
+        self.assertTrue(pack["enabled"])
+        self.assertGreaterEqual(int(pack["sample_count"] or 0), 16)
+        self.assertIn("自动适配", pack["alias"] or "")
+
+        again, match2, created2 = DeviceDbManager.ensure_country_pack(
+            "co", root=self.root, count=16
+        )
+        self.assertFalse(created2)
+        self.assertEqual(match2, "country")
+        self.assertEqual(again["id"], pack["id"])
+        self.assertEqual(len(DeviceDbManager.enabled_packs("co", root=self.root)), 1)
+
+    def test_does_not_reuse_other_country_pack(self):
+        chile = DeviceDbManager.import_bytes(
+            "Base.db",
+            write_registrator_db(_build_rows(), self.root / "c.db").read_bytes(),
+            root=self.root,
+        )
+        self.assertEqual(chile["country"], "cl")
+        pack, match, created = DeviceDbManager.ensure_country_pack(
+            "co", root=self.root, count=16
+        )
+        self.assertTrue(created)
+        self.assertEqual(match, "auto")
+        self.assertEqual(pack["country"], "co")
+        self.assertNotEqual(pack["id"], chile["id"])
+
+    def test_inferred_country_also_auto_adapts(self):
+        pack, match, created = DeviceDbManager.ensure_country_pack(
+            "lv", root=self.root, count=12
+        )
+        self.assertTrue(created)
+        self.assertEqual(match, "auto")
+        self.assertEqual(pack["country"], "lv")
+        rows = DeviceDbManager.load_rows(pack["id"], root=self.root)
+        self.assertTrue(rows)
+        self.assertTrue(locale_matches_country(rows[0]["lang_code"], rows[0]["system_lang_code"], "lv"))
+
+    def test_resolved_profile_auto_adapts_empty_catalog(self):
+        stub = type("CatalogStub", (), {
+            "select_sample": staticmethod(
+                lambda country: DeviceDbManager.select_sample(country, root=self.root)
+            ),
+        })()
+        with patch.object(DeviceProfileManager, "_manager", return_value=stub):
+            profile = DeviceProfileManager.get_resolved_profile("telegram_android", "co")
+        self.assertEqual(profile["device_pack_country"], "co")
+        self.assertEqual(profile["device_pack_match"], "auto")
+        self.assertTrue(profile["device_pack_auto"])
+        self.assertEqual(profile["lang_code"], "es")
+        self.assertEqual(profile["system_lang_code"], "es-co")
+        self.assertEqual(profile["tz_offset"], -18000)
+        self.assertEqual(
+            DeviceProfileManager.describe_pack_match("auto", True),
+            "国家自动适配（即时合成）",
+        )
+
+
 class TestResolvedProfileCountryMatch(unittest.TestCase):
     def test_uses_matching_enabled_pack_and_keeps_locale(self):
         tmp = tempfile.TemporaryDirectory()

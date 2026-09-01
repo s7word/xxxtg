@@ -1,7 +1,8 @@
 """硬件指纹 & 拓扑库目录管理。
 
 将多国家 REGISTRATOR SQLite 包持久化到 ``data/device_dbs/``，
-负责上传校验、自动解析统计、别名/启停、以及按目标国家挑选已激活样本池。
+负责上传校验、自动解析统计、别名/启停、按目标国家挑选已激活样本池，
+以及注册时对缺失国家即时合成（自动适配）。
 """
 from __future__ import annotations
 
@@ -38,6 +39,8 @@ REGISTRATOR_COLUMNS = (
 SQLITE_MAGIC = b"SQLite format 3\x00"
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 CATALOG_VERSION = 1
+# 注册自动适配合成条数：够用、比手动「一键合成 300」更快。
+AUTO_ADAPT_SAMPLE_COUNT = 80
 
 COUNTRY_NAME_MAP = {
     "ae": "United Arab Emirates",
@@ -275,6 +278,17 @@ BRAND_PREFIXES = (
 )
 
 _LOCK = threading.RLock()
+_ENSURE_LOCKS_GUARD = threading.Lock()
+_ENSURE_LOCKS: Dict[str, threading.Lock] = {}
+
+
+def _country_ensure_lock(code: str) -> threading.Lock:
+    with _ENSURE_LOCKS_GUARD:
+        lock = _ENSURE_LOCKS.get(code)
+        if lock is None:
+            lock = threading.Lock()
+            _ENSURE_LOCKS[code] = lock
+        return lock
 _ROW_CACHE: Dict[str, List[Dict[str, Any]]] = {}
 
 
@@ -929,7 +943,7 @@ class DeviceDbManager:
 
     @classmethod
     def select_pack(cls, country: Optional[str], root: Optional[Path] = None) -> Tuple[Optional[Dict[str, Any]], str]:
-        """按目标国家挑选已激活指纹包。
+        """按目标国家挑选已激活指纹包（不合成）。
 
         返回 (pack, match_mode)：
         - country: 精确匹配该国家已激活包
@@ -949,17 +963,75 @@ class DeviceDbManager:
         return None, "none"
 
     @classmethod
-    def select_sample(cls, country: Optional[str], root: Optional[Path] = None) -> Optional[Dict[str, Any]]:
+    def ensure_country_pack(
+        cls,
+        country: Optional[str],
+        root: Optional[Path] = None,
+        count: int = AUTO_ADAPT_SAMPLE_COUNT,
+    ) -> Tuple[Optional[Dict[str, Any]], str, bool]:
+        """确保目标国有已激活指纹包；没有则按该国规则即时合成。
+
+        任意 ISO-2 都走同一条路径（哥伦比亚、拉脱维亚、目录外国家均适用），
+        不再依赖「先手动点合成」或「拿别国包硬套」。
+
+        返回 (pack, match_mode, created)：
+        - country: 已有精确匹配
+        - auto: 本次即时合成
+        - fallback / none: 合成失败后的旧行为
+        """
         import random
 
-        pack, match = cls.select_pack(country, root)
+        code = normalize_country(country)
+        if not code:
+            pack, match = cls.select_pack(country, root)
+            return pack, match, False
+
+        with _country_ensure_lock(code):
+            matched = cls.enabled_packs(code, root)
+            if matched:
+                weights = [max(1, int(item.get("sample_count") or 1)) for item in matched]
+                return random.choices(matched, weights=weights, k=1)[0], "country", False
+
+            try:
+                from backend.app.services.device_generator import generate_country_db
+
+                zh = country_display_name_zh(code) or country_display_name(code) or code.upper()
+                alias = f"自动适配 {zh} {code.upper()} · {int(count)}.db"
+                pack = generate_country_db(
+                    country=code,
+                    count=max(10, int(count or AUTO_ADAPT_SAMPLE_COUNT)),
+                    alias=alias,
+                    enabled=True,
+                    root=root,
+                )
+                logger.info("已自动适配合成硬件指纹包 %s (%s, %s 条)", alias, code, pack.get("sample_count"))
+                return pack, "auto", True
+            except Exception as exc:
+                logger.warning("自动适配合成 %s 失败，回退已有目录: %s", code, exc)
+                pack, match = cls.select_pack(country, root)
+                return pack, match, False
+
+    @classmethod
+    def select_sample(
+        cls,
+        country: Optional[str],
+        root: Optional[Path] = None,
+        auto_adapt: bool = True,
+    ) -> Optional[Dict[str, Any]]:
+        import random
+
+        created = False
+        if auto_adapt:
+            pack, match, created = cls.ensure_country_pack(country, root=root)
+        else:
+            pack, match = cls.select_pack(country, root)
         if not pack:
             return None
         rows = cls.load_rows(str(pack["id"]), root)
         if not rows:
             return None
         row = dict(random.choice(rows))
-        return {"pack": pack, "row": row, "match": match}
+        return {"pack": pack, "row": row, "match": match, "created": created}
 
     @classmethod
     def aggregate_stats(cls, root: Optional[Path] = None) -> Dict[str, Any]:
