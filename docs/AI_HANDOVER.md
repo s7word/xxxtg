@@ -186,6 +186,75 @@ REGHelp Push Token 官方按一次性计费。平台侧正确优化仍是 `setSt
 另支持**可选**本地库存：新签发可入库；失败且未退款的可按开关复用（优先未使用，其次用过 1 次）。
 默认 `push_token_reuse_enabled=false`。详见「Push 令牌库」页。
 
+### app_id / app_hash 轮换策略
+
+**结论先说：不需要定期更换。** Telegram 的 `api_id` / `api_hash` 是**开发者应用身份**，
+不是会过期的会话密钥：没有 TTL、没有轮换周期，Telegram 也不提供「换一批」的接口。
+按日历轮换只有坏处 —— 新 ID 没有任何历史积累，而 my.telegram.org 每个账号能创建的
+应用数量很有限，换掉就拿不回来。
+
+更关键的是：**换 api_id 不会提高 SMS 命中率。** 见下一节 A/B 实测：自建非泄露
+`api_id=35337905` 在 IQ 与 CO 两国 35 个 sendCode 样本里仍然 100% `SentCodeTypeApp`。
+把 SentCodeTypeApp 归因到「凭证该换了」是错的归因。
+
+**必须更换的情况**（只有这几种）：
+
+| 触发条件 | 判据 | 为什么必须换 |
+|----------|------|--------------|
+| ID 已公开泄露 | 落在 `PUBLISHED_API_ID_BLOCKLIST`（`4/6/8/10/2040/2100/17349/21724`），或带合法 Push Token 仍反复 `API_ID_PUBLISHED_FLOOD` | 服务端对这些 ID 无差别风控，无 Push 时 `auth.sendCode` 几乎必失败，与账号/IP/地区无关 |
+| `api_hash` 外泄 | 进过公开仓库、截图、日志、工单 | `api_hash` 是凭证不是标识，等价于密码；泄露后别人可以冒用你的应用身份 |
+| 该 ID 被平台限制 | my.telegram.org 显示受限，或该 ID 上所有号、所有出口都恒定 FLOOD | 已经是 ID 维度的处置，换号换代理都无效 |
+| 多项目/多客户隔离 | 不同业务线共用一个 ID | 一条业务被风控会连带其它业务，需要故障隔离就必须分 ID |
+
+**不要因为这些换**（都是号码/出口维度的问题，换 ID 纯属浪费）：
+`SentCodeTypeApp`、`PHONE_NUMBER_BANNED`、单号 `FLOOD_WAIT`、预检判定已注册。
+
+**与 Push Token / `code_delivery_mode` 的关系**（这才是 api_id 真正的价值）：
+
+- 泄露 ID 需要 Push Token 给请求「背书」才能发出 `sendCode`；**自建非泄露 ID 不需要**。
+- `resolve_code_delivery_plan()` 就是按这一条分轨：`balanced` 下预测到的 effective
+  `api_id` 非泄露 → 走 `sms_first`，**完全不申请 Push Token**；泄露 / official 路径 →
+  才升到 `push_required` 去买 Token。
+- 所以「有一个自建 api_id」= **可以不买 Push Token**，省的是 REGHelp 的钱，
+  不是换来更高的 SMS 率。
+- `sms_first` 万一真撞上 `API_ID_PUBLISHED_FLOOD`，`escalation_plan_after_published_flood()`
+  会一次性 escalate 到 `push_required` 重试，不需要人工介入。
+- 换 ID 必须 **同时** 换 `api_hash`（严格配对），并且已入库账号的 `app_id` 字段记录的是
+  它当初注册时用的 ID —— 凭证库按账号存 `app_id`/`app_hash` 就是这个原因，别用一个
+  全局 ID 去覆盖历史账号的归属。
+
+**更换步骤**：my.telegram.org 申请 → 控制台「全局参数拓扑」填 `custom_api_id` /
+`custom_api_hash` → `api_credential_mode` 设 `custom`（想保留官方优先则设 `auto`）→
+保存后观察任务日志里 `API 凭证策略:` 那一行确认真的生效。
+
+### code_delivery_mode A/B 实测：SMS 率的瓶颈是号池，不是投递模式
+
+2026-09-01 在自有服务器实测（`backend/scripts/run_code_delivery_ab.py`，报告在
+`data/ab_reports/`），接码源 Grizzly SMS，出口用 proxy-seller 同国住宅（IQ_tg / CO_tg，1:1 绑定）：
+
+| 国家 | 模式 | 租号 | 发码样本 | SMS | App | next_type=None | SMS 率 |
+|------|------|-----:|---------:|----:|----:|---------------:|-------:|
+| IQ | `balanced`（实际走 `sms_first`，不带 Push） | 14 | 13 | 0 | 13 | 13 | 0% |
+| IQ | `push_required`（申请并 attach Push Token） | 20 | 6 | 0 | 6 | 6 | 0% |
+| CO | `balanced` | 20 | 16 | 0 | 16 | 16 | 0% |
+| CO | `push_required` | 20 | 17 | 0 | 17 | 17 | 0% |
+
+IQ 的 `push_required` 只拿到 6 个样本，是因为前一轮刚把 13 个号写进本地黑名单，
+第二轮 20 次取号里 14 次直接命中黑名单跳过。**这只压缩了样本量、不改变入选口径**
+（两轮都只对「不在黑名单里的号」发码）。CO 那一对没有这个干扰：两轮各 20 次取号、
+黑名单跳过均为 0，是干净的对照。
+
+**结论**：4 轮共 52 个 sendCode 样本，SMS 命中 **0 个**，`SentCodeTypeApp` 52 个，
+且 `next_type` 全为 `None` —— Telegram 连 SMS 降级窗口都不给，说明这些号在服务端仍挂着
+已授权会话，OTP 被投进旧客户端。两种模式统计上完全不可区分。买 Push Token、换 api_id、
+换设备指纹都救不了，**只能换号源 / 换国 / 换供应商**。IQ 与 CO 同时 0% 说明这是接码平台
+号池的性质，不是某一国的特例。
+
+因此 `code_delivery_mode` 保持默认 **`balanced`**：SMS 率与 `push_required` 相同（都是 0），
+但非泄露 api_id 下完全不申请 Push Token，省掉 REGHelp 每号的开销，也少一个变量。
+`push_required` 只在 effective api_id 确实是泄露 ID 时才有存在意义，而那种情况 `balanced`
+自己就会自动升级过去，不需要手工切成 legacy 模式。
+
 ### 「直接登录探测」不能替代预检
 
 Telegram 登录/注册共用 `auth.sendCode`。预检用 `ResolvePhone`（静默）；`SentCodeTypeApp` 仅作漏网快退。
