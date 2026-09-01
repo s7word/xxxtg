@@ -72,6 +72,29 @@ class TestConnectTimeoutAndRefund(unittest.IsolatedAsyncioTestCase):
         logs = "\n".join(task["logs"])
         self.assertIn("连接超时", logs)
 
+    async def test_connect_timeout_mark_failed_false_keeps_task_running(self):
+        manager = RegistrationTaskManager()
+        manager.tasks = {}
+        task_id = manager.create_task()
+        manager.update_task_status(task_id, "running")
+        sms = AsyncMock()
+        sms.cancel = AsyncMock(return_value={"success": True})
+
+        ok = await RegistrationOrchestrator._connect_mtproto(
+            SlowConnectClient(),
+            task_id,
+            manager,
+            sms,
+            "act-connect-hunt",
+            timeout=0.05,
+            mark_failed=False,
+        )
+        self.assertFalse(ok)
+        sms.cancel.assert_awaited_once_with("act-connect-hunt")
+        task = manager.get_task(task_id)
+        self.assertEqual(task["status"], "running")
+        self.assertNotIn("CONNECT_TIMEOUT", str(task.get("error") or ""))
+
     async def test_telethon_apps_connect_timeout_raises_typed_error(self):
         with self.assertRaises(TelethonConnectTimeout):
             await connect_telethon_with_timeout(SlowConnectClient(), timeout=0.05)

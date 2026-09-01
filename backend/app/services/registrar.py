@@ -193,7 +193,7 @@ SYNTHETIC_IDENTITY_POOLS = {
 }
 GEO_NAME_POOLS = SYNTHETIC_IDENTITY_POOLS
 
-CONNECT_TIMEOUT_SECONDS = 25.0
+CONNECT_TIMEOUT_SECONDS = 45.0
 MAX_RETAINED_TASKS = 200
 TERMINAL_TASK_STATUSES = frozenset({"success", "failed", "filtered", "canceled"})
 MAX_RESEND_WAIT_SECONDS = 90.0
@@ -1321,8 +1321,12 @@ class RegistrationOrchestrator:
         sms_svc,
         act_id: Optional[str],
         timeout: float = CONNECT_TIMEOUT_SECONDS,
+        mark_failed: bool = True,
     ) -> bool:
-        """带超时的 Telethon connect；超时则标记失败并自动退款，避免任务挂起。"""
+        """带超时的 Telethon connect；超时则退号，避免任务挂起。
+
+        单次任务默认把任务标 failed。猎号应传 mark_failed=False，由调用方换出口继续。
+        """
         try:
             await asyncio.wait_for(client.connect(), timeout=timeout)
             return True
@@ -1335,7 +1339,8 @@ class RegistrationOrchestrator:
             await cls._refund_and_revoke_channel(
                 sms_svc, act_id, task_id, manager, "CONNECT_TIMEOUT"
             )
-            manager.update_task_status(task_id, "failed", error=err)
+            if mark_failed:
+                manager.update_task_status(task_id, "failed", error=err)
             return False
 
     @classmethod
@@ -2529,8 +2534,47 @@ class RegistrationOrchestrator:
                     system_lang_code=profile["system_lang_code"]
                 )
 
-                if not await cls._connect_mtproto(client, task_id, manager, sms_svc, act_id):
-                    return
+                if not await cls._connect_mtproto(
+                    client, task_id, manager, sms_svc, act_id,
+                    mark_failed=not hunt_enabled,
+                ):
+                    last_failure_reason = "CONNECT_TIMEOUT"
+                    await cls._refund_push_token(
+                        bypass_svc, push_task_id, push_provider, push_token_obtained_at,
+                        phone, task_id, manager, "CONNECT_TIMEOUT",
+                    )
+                    push_token = None
+                    push_task_id = None
+                    push_provider = None
+                    push_token_obtained_at = None
+                    await cls._disconnect_client_quiet(client)
+                    client = None
+                    cls._discard_incomplete_session(session_path, meta_path)
+                    session_path = None
+                    meta_path = None
+                    act_id = None
+                    if not hunt_enabled:
+                        return
+                    active_proxy, rotated = await cls._rotate_hunt_proxy(
+                        config=config,
+                        target_country=target_country,
+                        task_id=task_id,
+                        manager=manager,
+                        current_proxy=active_proxy,
+                        proxy_mode=proxy_mode,
+                        reason="CONNECT_TIMEOUT 换出口重试",
+                        proxy_override=proxy_override,
+                        proxy_id=proxy_id,
+                    )
+                    bypass_svc = AttestationGatewayService(config, proxy=active_proxy)
+                    await manager.append_log(
+                        task_id,
+                        f"[猎号] CONNECT_TIMEOUT 号码 {phone} 已退订"
+                        + ("，出口已轮换" if rotated else "（出口未轮换）")
+                        + f"，换号继续 ({attempt_idx}/{max_attempts})"
+                    )
+                    manager.update_task_status(task_id, "running")
+                    continue
                 await manager.append_log(task_id, "已完成 MTProto 传输层 Diffie-Hellman 密钥交换与加密连接建立")
 
                 # 5. 执行协议端点握手序列
