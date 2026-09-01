@@ -21,6 +21,14 @@ PUSH_STATUS_VALUES = frozenset({"NOSMS", "FLOOD", "BANNED", "2FA"})
 PUSH_REFUND_MIN_SECONDS = 60.0
 PUSH_REFUND_WINDOW_SECONDS = 180.0
 PUSH_REF_MAX_LENGTH = 50
+PUSH_REFUND_REJECT_DETAILS = frozenset({
+    "NOT_FOUND",
+    "TASK_NOT_FOUND",
+    "INVALID_PARAM",
+    "MISSING_PARAM",
+    "SERVICE_DISABLED",
+    "RATE_LIMIT",
+})
 
 # 内部失败原因 -> REGHelp setStatus 枚举映射表 (与 registrar.py 中 _refund_and_revoke_channel /
 # 各异常分支使用的同一套内部原因标识保持一致，避免退款审计与接码平台自动退订语义割裂)：
@@ -33,10 +41,12 @@ PUSH_REF_MAX_LENGTH = 50
 #   FLOOD_WAIT (PhoneNumberFloodError/FloodWaitError) FLOOD
 #   NO_CODE (等待带外验证码超时)                       NOSMS
 #   SENT_CODE_TYPE_APP (验证码下发到已登录客户端)      NOSMS
+#   API_ID_PUBLISHED_FLOOD (sendCode 因 Token 无效失败) NOSMS
+#   RECAPTCHA_CHECK (人机挑战未突破，未收到短信)         NOSMS
+#   EXCEPTION (引导异常且未完成短信验证)                 NOSMS
 #   existing_2fa (旧号已启用 2FA，SignIn 即完成)       2FA
 #
-# 未出现在此表中的原因 (如 WRONG_CODE / API_ID_PUBLISHED_FLOOD / RECAPTCHA_CHECK / 通用异常)
-# 均不代表 Push Token 本身无效，不会触发 setStatus。
+# WRONG_CODE 表示带外短信已到达，Push Token 本身有效，不触发 setStatus。
 PUSH_REFUND_REASON_MAP: Dict[str, str] = {
     "PHONE_NUMBER_BANNED": "BANNED",
     "PHONE_PREAUDIT_BANNED": "BANNED",
@@ -44,6 +54,9 @@ PUSH_REFUND_REASON_MAP: Dict[str, str] = {
     "FLOOD_WAIT": "FLOOD",
     "NO_CODE": "NOSMS",
     "SENT_CODE_TYPE_APP": "NOSMS",
+    "API_ID_PUBLISHED_FLOOD": "NOSMS",
+    "RECAPTCHA_CHECK": "NOSMS",
+    "EXCEPTION": "NOSMS",
     "existing_2fa": "2FA",
 }
 
@@ -141,8 +154,8 @@ class RegHelpService:
         path: str,
         params: Dict[str, Any],
         headers: Optional[Dict[str, str]] = None
-    ) -> Tuple[str, Any]:
-        """按序尝试候选网关地址，任一成功即返回，全部失败则汇总错误抛出"""
+    ) -> Tuple[str, Any, int]:
+        """按序尝试候选网关地址，任一成功即返回 (base, payload, http_status)，全部失败则汇总错误抛出"""
         clean_params = {k: v for k, v in params.items() if v is not None and v != ""}
         errors = []
         ordered = self.api_bases
@@ -153,12 +166,13 @@ class RegHelpService:
             try:
                 resp = await self.client.get(f"{base}{path}", params=clean_params, headers=headers)
                 data = resp.json()
-                if is_auth_error_payload(data, getattr(resp, "status_code", None)):
+                http_status = int(getattr(resp, "status_code", 0) or 0)
+                if is_auth_error_payload(data, http_status or None):
                     errors.append(f"{base} -> {describe_auth_error('reghelp', data)}")
                     logger.warning("REGHelp 候选网关 %s%s 鉴权失败，尝试下一候选: %s", base, path, data)
                     continue
                 self._last_good_api_base = base
-                return base, data
+                return base, data, http_status
             except Exception as e:
                 errors.append(f"{base} -> {e}")
                 logger.warning(f"REGHelp 候选网关 {base}{path} 请求失败，尝试下一候选: {e}")
@@ -167,7 +181,7 @@ class RegHelpService:
 
     async def get_balance(self) -> Dict[str, Any]:
         """查询 REGHelp 账户当前计费余额，同时用作鉴权与连通性诊断探针"""
-        _, data = await self._get_with_fallback("/balance", {"apiKey": self.api_key})
+        _, data, _ = await self._get_with_fallback("/balance", {"apiKey": self.api_key})
         return data
 
     query_account_balance = get_balance
@@ -216,7 +230,7 @@ class RegHelpService:
             )
 
         try:
-            used_base, data = await self._get_with_fallback("/push/getToken", params, headers=headers)
+            used_base, data, _ = await self._get_with_fallback("/push/getToken", params, headers=headers)
         except Exception as req_err:
             raise RuntimeError(f"连接 REGHelp 网关失败 (已尝试 {', '.join(self.api_bases)}): {req_err}")
 
@@ -261,16 +275,17 @@ class RegHelpService:
 
     request_push_token = get_push_token
 
-    async def set_push_status(self, task_id: str, number: str, status: str) -> bool:
+    async def set_push_status(self, task_id: str, number: str, status: str) -> Tuple[bool, Any]:
         """标记一次已获取的 Push Token 为无效 (NOSMS/FLOOD/BANNED/2FA)，触发平台自动退款审计
 
         仅在对应 getToken 请求携带了有效且已启用的 ref 时可用，否则平台会静默忽略。
-        本方法保持幂等：网络/平台侧任何异常都只记录 warning，绝不向上抛出，
-        因此调用方（退款闭环）永远不会因为 setStatus 失败而影响主注册流程。
+        返回 (accepted, payload)：accepted 仅在平台明确受理时为 True；
+        `{'detail': 'NOT_FOUND'}` 等拒绝回包不再被当成成功。
+        网络/平台异常只记录 warning，绝不向上抛出。
         """
         if not task_id:
             logger.warning("REGHelp Push 状态回写跳过：缺少 task_id")
-            return False
+            return False, None
         normalized_status = str(status or "").strip().upper()
         if normalized_status not in PUSH_STATUS_VALUES:
             logger.warning(
@@ -278,16 +293,55 @@ class RegHelpService:
                 status, ", ".join(sorted(PUSH_STATUS_VALUES)),
             )
         try:
-            await self._get_with_fallback("/push/setStatus", {
+            _, data, http_status = await self._get_with_fallback("/push/setStatus", {
                 "apiKey": self.api_key,
                 "id": task_id,
                 "number": number,
                 "status": status
             })
-            return True
+            accepted, verdict = self.interpret_set_status_response(data, http_status)
+            if accepted:
+                logger.info(
+                    "REGHelp setStatus 提交成功 id=%s status=%s http=%s payload=%s",
+                    task_id, status, http_status, data,
+                )
+            else:
+                logger.warning(
+                    "REGHelp setStatus 平台拒绝 id=%s status=%s http=%s verdict=%s payload=%s",
+                    task_id, status, http_status, verdict, data,
+                )
+            return accepted, data
         except Exception as e:
             logger.warning(f"REGHelp Push 状态回写异常 (id={task_id}, status={status}): {e}")
-            return False
+            return False, None
+
+    @staticmethod
+    def interpret_set_status_response(data: Any, http_status: Optional[int] = None) -> Tuple[bool, str]:
+        """区分 setStatus 提交成功与平台拒绝。官方成功回包为 status=success；
+        带 balance 的 status=error 视为已退过（官方客户端同样当作成功）。
+        """
+        payload = data if isinstance(data, dict) else {}
+        raw_detail = payload.get("detail") or payload.get("id") or payload.get("message") or ""
+        detail = str(raw_detail).strip()
+        code = detail.upper().replace(" ", "_")
+        status = str(payload.get("status") or "").strip().lower()
+        http_status = int(http_status or 0)
+
+        if http_status in {401, 403}:
+            return False, f"鉴权失败 http={http_status}"
+        if code in PUSH_REFUND_REJECT_DETAILS or http_status == 404:
+            return False, f"平台拒绝: {detail or code or f'http={http_status}'}"
+        if status == "success":
+            return True, "平台已受理"
+        if status == "error" and "balance" in payload:
+            return True, f"平台已受理(error+balance id={payload.get('id') or '-'})"
+        if status == "error":
+            return False, f"平台拒绝: {detail or payload}"
+        if http_status >= 400:
+            return False, f"平台拒绝: http={http_status} {payload or detail}"
+        if payload:
+            return False, f"平台拒绝: 无法确认回包 {payload}"
+        return False, "平台拒绝: 空回包"
 
     @staticmethod
     def resolve_refund_status(reason: str) -> Optional[str]:
@@ -303,19 +357,34 @@ class RegHelpService:
     ) -> Optional[str]:
         """按内部失败原因自动映射并回写 setStatus，返回实际提交的状态；未匹配/无 task_id 则跳过并返回 None。
 
-        本方法自身不做退款窗口 (60~180s) 判断——调用方 (通常是 AttestationGatewayService /
-        registrar.py) 若已记录 Push Token 签发时间，应在调用前自行判断是否已超窗，避免向已经
-        失效的任务发起大概率被忽略的请求。
+        本方法自身不做退款窗口 (60~180s) 判断。调用方会等到满 60s 再提交；若已超窗仍会尝试
+        setStatus，由平台决定是否受理。任务日志区分「提交成功」与「平台拒绝」。
         """
         if not task_id:
             return None
         status = self.resolve_refund_status(reason)
         if not status:
+            if log_callback:
+                await log_callback(
+                    f"⚠️ [REGHelp 退款] 原因 {reason or '-'} 未映射到 NOSMS/FLOOD/BANNED/2FA，"
+                    f"跳过 setStatus id={task_id}"
+                )
             return None
-        ok = await self.set_push_status(task_id, phone or "", status)
-        if ok and log_callback:
-            await log_callback(f"[REGHelp 退款] setStatus id={task_id} status={status} act_id={phone or '-'}")
-        return status if ok else None
+        accepted, payload = await self.set_push_status(task_id, phone or "", status)
+        extra = f" resp={payload}" if payload is not None else ""
+        if log_callback:
+            if accepted:
+                await log_callback(
+                    f"[REGHelp 退款] 提交成功 setStatus id={task_id} status={status} "
+                    f"act_id={phone or '-'}{extra}"
+                )
+            else:
+                _, verdict = self.interpret_set_status_response(payload)
+                await log_callback(
+                    f"⚠️ [REGHelp 退款] 平台拒绝 setStatus id={task_id} status={status} "
+                    f"act_id={phone or '-'} {verdict}{extra}"
+                )
+        return status if accepted else None
 
     async def get_integrity_token(
         self,
@@ -345,7 +414,7 @@ class RegHelpService:
         if log_callback:
             await log_callback(f"向 REGHelp 网关发起 Play Integrity 凭证生成任务 (App: {params['appName']}/{app_device})...")
 
-        used_base, data = await self._get_with_fallback("/integrity/getToken", params, headers=headers)
+        used_base, data, _ = await self._get_with_fallback("/integrity/getToken", params, headers=headers)
         if data.get("status") == "error":
             raise RuntimeError(f"REGHelp Integrity 任务创建失败: {data.get('detail') or data.get('message') or data}")
 
@@ -426,7 +495,7 @@ class RegHelpService:
             )
 
         try:
-            used_base, data = await self._get_with_fallback(
+            used_base, data, _ = await self._get_with_fallback(
                 "/RecaptchaMobile/getToken", params, headers=headers
             )
         except Exception as req_err:

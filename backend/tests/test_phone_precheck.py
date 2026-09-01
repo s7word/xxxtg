@@ -397,6 +397,8 @@ class TestRunRegistrationPrecheckTiming(unittest.IsolatedAsyncioTestCase):
              patch("backend.app.services.registrar.AttestationGatewayService", return_value=gw), \
              patch("backend.app.services.registrar.DeviceProfileManager.get_resolved_profile", return_value=self._profile()), \
              patch("backend.app.services.registrar.PhonePrecheckService.check_phone", new=AsyncMock(return_value=registered)), \
+             patch("backend.app.services.registrar.BannedPhonesCache.lookup", return_value=None), \
+             patch("backend.app.services.registrar.BannedPhonesCache.remember") as remember, \
              patch.object(RegistrationOrchestrator, "_resolve_custom_proxy", new=AsyncMock(return_value=None)), \
              patch.object(RegistrationOrchestrator, "_send_code_with_recaptcha", new=AsyncMock()) as send_code, \
              patch("backend.app.services.registrar.TelegramClient") as tg_cls:
@@ -406,6 +408,7 @@ class TestRunRegistrationPrecheckTiming(unittest.IsolatedAsyncioTestCase):
         gw.check_phone_history.assert_not_awaited()
         send_code.assert_not_awaited()
         tg_cls.assert_not_called()
+        remember.assert_called()
         self.assertEqual(sms.cancel_calls, ["act-reg"])
         task = self.manager.get_task(self.task_id)
         self.assertTrue(task["precheck_intercepted"])

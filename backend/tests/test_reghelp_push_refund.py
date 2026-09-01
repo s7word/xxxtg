@@ -9,9 +9,9 @@
 - `AttestationGatewayService.get_push_token` 透传 `ref` 并向上返回 `(token, task_id,
   provider)`；AntiSafety 路径没有 `setStatus` 能力，`task_id` 恒为 None。
 - `AttestationGatewayService.refund_push_token` 仅在持有 REGHelp 客户端时生效。
-- `RegistrationOrchestrator._refund_push_token`：provider 非 reghelp / 无 task_id /
-  已超出 180s 退款窗口时均跳过；命中窗口内已知失败原因时正确回写并记录
-  `[REGHelp 退款] setStatus id=... status=... act_id=...` 日志。
+- `RegistrationOrchestrator._refund_push_token`：provider 非 reghelp / 无 task_id 时跳过；
+  超出 180s 窗口仍尝试 setStatus；命中已知失败原因时回写并记录任务日志。
+- `RegistrationOrchestrator._sms_poll_attempts_for_push_window`：REGHelp 路径截断短信轮询。
 - 端到端：`run_registration` 在 PHONE_NUMBER_BANNED 失败分支下，REGHelp 路径触发
   setStatus(BANNED)，AntiSafety 路径（无 task_id）不触发。
 """
@@ -35,6 +35,7 @@ os.chdir(REPO_ROOT)
 
 from backend.app.services.attestation_gateway import AttestationGatewayService  # noqa: E402
 from backend.app.services.reghelp import (  # noqa: E402
+    PUSH_REFUND_MIN_SECONDS,
     PUSH_REFUND_REASON_MAP,
     PUSH_REFUND_WINDOW_SECONDS,
     PUSH_STATUS_VALUES,
@@ -42,6 +43,9 @@ from backend.app.services.reghelp import (  # noqa: E402
     RegHelpService,
 )
 from backend.app.services.registrar import (  # noqa: E402
+    DEFAULT_SMS_POLL_ATTEMPTS,
+    PUSH_REFUND_SETSTATUS_RESERVE_SECONDS,
+    SMS_POLL_INTERVAL_SECONDS,
     RegistrationOrchestrator,
     RegistrationTaskManager,
 )
@@ -171,8 +175,9 @@ class TestRegHelpSetPushStatus(unittest.TestCase):
         svc = RegHelpService("w9vcrhw7pOK0WKBtQLhdjH62eYtRSFbR")
         svc.client.get = AsyncMock(return_value=DummyResponse({"status": "success"}))
         try:
-            ok = asyncio.run(svc.set_push_status("push-123", "+56911112222", "BANNED"))
+            ok, payload = asyncio.run(svc.set_push_status("push-123", "+56911112222", "BANNED"))
             self.assertTrue(ok)
+            self.assertEqual(payload, {"status": "success"})
             args, kwargs = svc.client.get.await_args
             self.assertTrue(str(args[0]).endswith("/push/setStatus"))
             self.assertEqual(kwargs["params"]["id"], "push-123")
@@ -186,8 +191,9 @@ class TestRegHelpSetPushStatus(unittest.TestCase):
         svc.client.get = AsyncMock(side_effect=RuntimeError("boom"))
         try:
             with self.assertLogs("RegHelpService", level="WARNING"):
-                ok = asyncio.run(svc.set_push_status("push-123", "+56911112222", "FLOOD"))
+                ok, payload = asyncio.run(svc.set_push_status("push-123", "+56911112222", "FLOOD"))
             self.assertFalse(ok)
+            self.assertIsNone(payload)
         finally:
             asyncio.run(svc.close())
 
@@ -195,10 +201,47 @@ class TestRegHelpSetPushStatus(unittest.TestCase):
         svc = RegHelpService("w9vcrhw7pOK0WKBtQLhdjH62eYtRSFbR")
         svc.client.get = AsyncMock(side_effect=AssertionError("should not be called"))
         try:
-            ok = asyncio.run(svc.set_push_status("", "+56911112222", "NOSMS"))
+            ok, payload = asyncio.run(svc.set_push_status("", "+56911112222", "NOSMS"))
             self.assertFalse(ok)
+            self.assertIsNone(payload)
         finally:
             asyncio.run(svc.close())
+
+    def test_set_push_status_rejects_not_found(self):
+        svc = RegHelpService("w9vcrhw7pOK0WKBtQLhdjH62eYtRSFbR")
+        svc.client.get = AsyncMock(return_value=DummyResponse({"detail": "NOT_FOUND"}, status_code=404))
+        try:
+            with self.assertLogs("RegHelpService", level="WARNING"):
+                ok, payload = asyncio.run(svc.set_push_status("push-123", "+17788269045", "NOSMS"))
+            self.assertFalse(ok)
+            self.assertEqual(payload, {"detail": "NOT_FOUND"})
+        finally:
+            asyncio.run(svc.close())
+
+
+class TestInterpretSetStatusResponse(unittest.TestCase):
+    def test_success_payload_is_accepted(self):
+        ok, verdict = RegHelpService.interpret_set_status_response({"status": "success"}, 200)
+        self.assertTrue(ok)
+        self.assertIn("受理", verdict)
+
+    def test_not_found_detail_is_rejected(self):
+        ok, verdict = RegHelpService.interpret_set_status_response({"detail": "NOT_FOUND"}, 200)
+        self.assertFalse(ok)
+        self.assertIn("平台拒绝", verdict)
+        self.assertIn("NOT_FOUND", verdict)
+
+    def test_http_404_is_rejected(self):
+        ok, verdict = RegHelpService.interpret_set_status_response({}, 404)
+        self.assertFalse(ok)
+        self.assertIn("平台拒绝", verdict)
+
+    def test_error_with_balance_is_accepted(self):
+        ok, verdict = RegHelpService.interpret_set_status_response(
+            {"status": "error", "id": "ALREADY_REFUNDED", "balance": 7.5}, 200
+        )
+        self.assertTrue(ok)
+        self.assertIn("受理", verdict)
 
 
 class TestRegHelpRefundReasonMap(unittest.TestCase):
@@ -209,10 +252,13 @@ class TestRegHelpRefundReasonMap(unittest.TestCase):
         self.assertEqual(RegHelpService.resolve_refund_status("FLOOD_WAIT"), "FLOOD")
         self.assertEqual(RegHelpService.resolve_refund_status("NO_CODE"), "NOSMS")
         self.assertEqual(RegHelpService.resolve_refund_status("SENT_CODE_TYPE_APP"), "NOSMS")
+        self.assertEqual(RegHelpService.resolve_refund_status("API_ID_PUBLISHED_FLOOD"), "NOSMS")
+        self.assertEqual(RegHelpService.resolve_refund_status("RECAPTCHA_CHECK"), "NOSMS")
+        self.assertEqual(RegHelpService.resolve_refund_status("EXCEPTION"), "NOSMS")
         self.assertEqual(RegHelpService.resolve_refund_status("existing_2fa"), "2FA")
 
     def test_unknown_reason_resolves_to_none(self):
-        for reason in ("WRONG_CODE", "API_ID_PUBLISHED_FLOOD", "RECAPTCHA_CHECK", "EXCEPTION", ""):
+        for reason in ("WRONG_CODE", ""):
             self.assertIsNone(RegHelpService.resolve_refund_status(reason))
 
     def test_all_mapped_statuses_are_valid_enum_values(self):
@@ -220,7 +266,7 @@ class TestRegHelpRefundReasonMap(unittest.TestCase):
 
     def test_refund_push_token_calls_set_push_status_with_mapped_status(self):
         svc = RegHelpService("w9vcrhw7pOK0WKBtQLhdjH62eYtRSFbR")
-        svc.set_push_status = AsyncMock(return_value=True)
+        svc.set_push_status = AsyncMock(return_value=(True, {"status": "success"}))
         logs = []
 
         async def _log(msg):
@@ -236,7 +282,7 @@ class TestRegHelpRefundReasonMap(unittest.TestCase):
             self.assertEqual(status, "BANNED")
             svc.set_push_status.assert_awaited_once_with("push-123", "+56911112222", "BANNED")
             self.assertTrue(logs)
-            self.assertIn("[REGHelp 退款]", logs[0])
+            self.assertIn("提交成功", logs[0])
             self.assertIn("id=push-123", logs[0])
             self.assertIn("status=BANNED", logs[0])
             self.assertIn("act_id=+56911112222", logs[0])
@@ -246,9 +292,37 @@ class TestRegHelpRefundReasonMap(unittest.TestCase):
     def test_refund_push_token_skips_unmapped_reason(self):
         svc = RegHelpService("w9vcrhw7pOK0WKBtQLhdjH62eYtRSFbR")
         svc.set_push_status = AsyncMock(side_effect=AssertionError("must not be called"))
+        logs = []
+
+        async def _log(msg):
+            logs.append(msg)
+
         try:
-            status = asyncio.run(svc.refund_push_token("push-123", "+56911112222", "WRONG_CODE"))
+            status = asyncio.run(
+                svc.refund_push_token("push-123", "+56911112222", "WRONG_CODE", log_callback=_log)
+            )
             self.assertIsNone(status)
+            self.assertTrue(logs)
+            self.assertIn("未映射", logs[0])
+        finally:
+            asyncio.run(svc.close())
+
+    def test_refund_push_token_logs_platform_rejection(self):
+        svc = RegHelpService("w9vcrhw7pOK0WKBtQLhdjH62eYtRSFbR")
+        svc.set_push_status = AsyncMock(return_value=(False, {"detail": "NOT_FOUND"}))
+        logs = []
+
+        async def _log(msg):
+            logs.append(msg)
+
+        try:
+            status = asyncio.run(
+                svc.refund_push_token("push-123", "+17788269045", "SENT_CODE_TYPE_APP", log_callback=_log)
+            )
+            self.assertIsNone(status)
+            self.assertTrue(logs)
+            self.assertIn("平台拒绝", logs[0])
+            self.assertIn("NOT_FOUND", logs[0])
         finally:
             asyncio.run(svc.close())
 
@@ -374,17 +448,18 @@ class TestRefundPushTokenHelper(unittest.IsolatedAsyncioTestCase):
             "+56911112222", self.task_id, self.manager, "PHONE_NUMBER_BANNED",
         )
 
-    async def test_skips_when_beyond_refund_window(self):
+    async def test_still_tries_when_beyond_refund_window(self):
         bypass_svc = MagicMock()
-        bypass_svc.refund_push_token = AsyncMock(side_effect=AssertionError("must not be called"))
+        bypass_svc.refund_push_token = AsyncMock(return_value="BANNED")
         stale_obtained_at = __import__("time").monotonic() - (PUSH_REFUND_WINDOW_SECONDS + 5.0)
         await RegistrationOrchestrator._refund_push_token(
             bypass_svc, "push-1", "reghelp", stale_obtained_at,
             "+56911112222", self.task_id, self.manager, "PHONE_NUMBER_BANNED",
         )
+        bypass_svc.refund_push_token.assert_awaited_once()
         logs = "\n".join(self.manager.get_task(self.task_id)["logs"])
-        self.assertIn("超出", logs)
-        self.assertIn("退款窗口", logs)
+        self.assertIn("超过官方约", logs)
+        self.assertIn("仍尝试 setStatus", logs)
 
     async def test_calls_refund_within_window_and_logs(self):
         bypass_svc = MagicMock()
@@ -398,7 +473,7 @@ class TestRefundPushTokenHelper(unittest.IsolatedAsyncioTestCase):
         import time as time_mod
 
         await RegistrationOrchestrator._refund_push_token(
-            bypass_svc, "push-1", "reghelp", time_mod.monotonic(),
+            bypass_svc, "push-1", "reghelp", time_mod.monotonic() - PUSH_REFUND_MIN_SECONDS,
             "+56911112222", self.task_id, self.manager, "PHONE_NUMBER_BANNED",
         )
         bypass_svc.refund_push_token.assert_awaited_once()
@@ -418,6 +493,65 @@ class TestRefundPushTokenHelper(unittest.IsolatedAsyncioTestCase):
             "+56911112222", self.task_id, self.manager, "FLOOD_WAIT",
         )
         bypass_svc.refund_push_token.assert_awaited_once()
+
+
+    @patch("backend.app.services.registrar.asyncio.sleep", new_callable=AsyncMock)
+    async def test_waits_until_min_refund_window(self, mock_sleep):
+        bypass_svc = MagicMock()
+        bypass_svc.refund_push_token = AsyncMock(return_value="NOSMS")
+        obtained_at = __import__("time").monotonic() - 10.0
+        with patch.dict(os.environ, {"EDGENODE_SKIP_PUSH_REFUND_WAIT": ""}):
+            await RegistrationOrchestrator._refund_push_token(
+                bypass_svc, "push-1", "reghelp", obtained_at,
+                "+17788269045", self.task_id, self.manager, "SENT_CODE_TYPE_APP",
+            )
+        mock_sleep.assert_awaited()
+        wait_s = mock_sleep.await_args.args[0]
+        self.assertGreater(wait_s, 45.0)
+        self.assertLessEqual(wait_s, 51.0)
+        bypass_svc.refund_push_token.assert_awaited_once()
+        logs = "\n".join(self.manager.get_task(self.task_id)["logs"])
+        self.assertIn("等待", logs)
+        self.assertIn("60", logs)
+
+
+class TestSmsPollAttemptsForPushWindow(unittest.TestCase):
+    def test_non_reghelp_keeps_requested_attempts(self):
+        self.assertEqual(
+            RegistrationOrchestrator._sms_poll_attempts_for_push_window(
+                DEFAULT_SMS_POLL_ATTEMPTS, "antisafety", __import__("time").monotonic()
+            ),
+            DEFAULT_SMS_POLL_ATTEMPTS,
+        )
+
+    def test_missing_obtained_at_keeps_requested_attempts(self):
+        self.assertEqual(
+            RegistrationOrchestrator._sms_poll_attempts_for_push_window(
+                DEFAULT_SMS_POLL_ATTEMPTS, "reghelp", None
+            ),
+            DEFAULT_SMS_POLL_ATTEMPTS,
+        )
+
+    def test_reghelp_caps_attempts_inside_window(self):
+        import time as time_mod
+
+        obtained_at = time_mod.monotonic() - 40.0
+        capped = RegistrationOrchestrator._sms_poll_attempts_for_push_window(
+            DEFAULT_SMS_POLL_ATTEMPTS, "reghelp", obtained_at
+        )
+        remain = PUSH_REFUND_WINDOW_SECONDS - PUSH_REFUND_SETSTATUS_RESERVE_SECONDS - 40.0
+        expected = min(DEFAULT_SMS_POLL_ATTEMPTS, max(1, int(remain // SMS_POLL_INTERVAL_SECONDS)))
+        self.assertEqual(capped, expected)
+        self.assertLess(capped, DEFAULT_SMS_POLL_ATTEMPTS)
+
+    def test_reghelp_near_window_end_uses_one_attempt(self):
+        import time as time_mod
+
+        obtained_at = time_mod.monotonic() - (PUSH_REFUND_WINDOW_SECONDS - 5.0)
+        capped = RegistrationOrchestrator._sms_poll_attempts_for_push_window(
+            DEFAULT_SMS_POLL_ATTEMPTS, "reghelp", obtained_at
+        )
+        self.assertEqual(capped, 1)
 
 
 class TestRunRegistrationRefundIntegration(unittest.IsolatedAsyncioTestCase):
