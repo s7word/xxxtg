@@ -18,6 +18,7 @@ logger = logging.getLogger("RegHelpService")
 # REGHelp /push/setStatus 允许的枚举值。仅在对应 getToken 请求携带了有效 ref 时生效，
 # 平台会在窗口期内（官方文档描述约 60~180 秒）对已标记为无效的 Push Token 触发自动退款审计。
 PUSH_STATUS_VALUES = frozenset({"NOSMS", "FLOOD", "BANNED", "2FA"})
+PUSH_REFUND_MIN_SECONDS = 60.0
 PUSH_REFUND_WINDOW_SECONDS = 180.0
 PUSH_REF_MAX_LENGTH = 50
 

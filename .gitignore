@@ -30,6 +30,7 @@ data/config.json.lock
 data/push_token_vault.json
 data/push_token_vault.json.tmp
 data/edgenode_auth_secret
+data/edgenode_auth_password
 data/smsall_webhook_secret
 data/smsall_events.json
 data/smsall_events.json.tmp
