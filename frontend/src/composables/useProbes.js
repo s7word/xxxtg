@@ -9,6 +9,7 @@ const probeTesting = reactive({
   fivesim: false,
   vaksms: false,
   grizzlysms: false,
+  smsbower: false,
   antisafety: false,
   reghelp: false
 })
@@ -17,6 +18,7 @@ const testResults = reactive({
   fivesim: null,
   vaksms: null,
   grizzlysms: null,
+  smsbower: null,
   antisafety: null,
   reghelp: null,
   proxyseller: null,
@@ -61,6 +63,26 @@ export const testGrizzlySms = async () => {
     testResults.grizzlysms = { success: false, message: e.message }
   } finally {
     probeTesting.grizzlysms = false
+  }
+}
+
+export const testSmsBower = async () => {
+  probeTesting.smsbower = true
+  testResults.smsbower = null
+  try {
+    const res = await fetch('/api/test/smsbower', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        api_key: config.smsbower_api_key,
+        country: config.target_country
+      })
+    })
+    testResults.smsbower = await res.json()
+  } catch (e) {
+    testResults.smsbower = { success: false, message: e.message }
+  } finally {
+    probeTesting.smsbower = false
   }
 }
 
@@ -193,6 +215,7 @@ export const useProbes = () => ({
   testResults,
   testFiveSim,
   testGrizzlySms,
+  testSmsBower,
   testVakSms,
   testAntiSafety,
   testRegHelp,

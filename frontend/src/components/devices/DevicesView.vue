@@ -5,7 +5,8 @@
         <h2>📱 硬件指纹 & 拓扑库</h2>
         <p>
           多国家 REGISTRATOR 指纹包持久化在 <code>data/device_dbs/</code>。
-          注册调度按目标国家优先抽取已激活库；也可按品牌规则库一键合成。
+          注册调度按目标国家精确抽取；若该国还没有已激活库，会按语言/时区/品牌规则自动合成一包再配对。
+          也可手动上传或一键合成。
         </p>
       </div>
       <button class="ce-btn-ghost" :disabled="deviceLoading" @click="fetchDeviceCatalog">
@@ -26,7 +27,7 @@
             </span>
           </div>
           <p class="ce-tiny" style="margin-top:4px">
-            国家匹配优先；无匹配时回退到任一已激活包，并强制覆盖目标国家的语言 / 时区，避免智利包打进印尼任务。
+            国家精确匹配优先。缺包时按目标国规则自动合成（哥伦比亚、拉脱维亚等任意 ISO-2 同一套方法），不再拿智利包打进别国任务。
           </p>
           <div v-if="deviceCatalogMeta.active_countries.length" class="row-wrap" style="margin-top:8px">
             <span v-for="code in deviceCatalogMeta.active_countries" :key="code" class="ce-badge is-info">

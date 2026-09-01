@@ -15,6 +15,10 @@ services:
       - DEVICE_DBS_DIR=/app/data/device_dbs
       - LOD_USER_DIR=/app/lod_user
       - FRONTEND_DIST=/app/frontend/dist
+      - EDGENODE_AUTH_USER=${EDGENODE_AUTH_USER:-}
+      - EDGENODE_AUTH_PASSWORD=${EDGENODE_AUTH_PASSWORD:-}
+      - EDGENODE_AUTH_SECRET=${EDGENODE_AUTH_SECRET:-}
+      - EDGENODE_AUTH_DISABLED=${EDGENODE_AUTH_DISABLED:-}
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/api/health"]
       interval: 15s
@@ -31,7 +35,7 @@ services:
     container_name: edgenode-frontend
     restart: unless-stopped
     ports:
-      - "3000:80"
+      - "3100:80"
     depends_on:
       backend:
         condition: service_healthy
