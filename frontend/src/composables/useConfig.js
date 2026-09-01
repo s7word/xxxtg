@@ -62,6 +62,8 @@ const config = reactive({
   push_token_reuse_enabled: false,
   push_token_reuse_max_uses: 2,
   push_token_save_issued: true,
+  code_delivery_mode: 'balanced',
+  hunt_sms_first_after_app_streak: 2,
   hunt_no_number_retries: 20,
   hunt_no_number_retry_delay_sec: 2.0,
   hunt_proxy_max_uses: 5,

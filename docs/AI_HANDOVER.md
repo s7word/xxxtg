@@ -148,6 +148,14 @@ backend/app/
 
 失败时：SMS `cancel` +（若 REGHelp）`setStatus` 退款（#26 已实现，需 `ref=task_id`）。预检已注册 / `SENT_CODE_TYPE_APP` / `PHONE_NUMBER_BANNED` 会写入本地黑名单，防止平台二次下发。
 
+**验证码通道策略**（`code_delivery_mode`，默认 `balanced`）：
+- `balanced`：非泄露 effective api_id（如已配置 custom）→ 不申请/不 attach Push、`allow_app_hash=False`，提高 SMS 概率
+- `sms_first`：同上但更激进；遇 `API_ID_PUBLISHED_FLOOD` 可一次性 escalate 到 Push
+- `push_required`：legacy，始终 attach Push Token
+- `hunt_sms_first_after_app_streak`：猎号连续 App 后强制 SMS 优先
+
+规律：复用号池导致的 App（`next_type=None`）代码无法消除，只能换号源；Push Token attach 导致的 App 可通过上述策略缓解。
+
 ---
 
 ## 7. 关键集成与配置

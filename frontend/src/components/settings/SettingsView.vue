@@ -514,6 +514,25 @@
           <p class="ce-tiny ce-muted" style="margin-top:6px">达到上限后不再被选取。库存详情见「Push 令牌库」页。</p>
         </div>
         <div>
+          <label class="ce-label">验证码投递通道策略</label>
+          <select v-model="config.code_delivery_mode" class="ce-select">
+            <option value="balanced">balanced（默认：自建 api_id 优先 SMS，泄露 ID 需 Push）</option>
+            <option value="sms_first">sms_first（始终优先 SMS，FLOOD 时再 escalate Push）</option>
+            <option value="push_required">push_required（legacy：始终 attach Push Token）</option>
+          </select>
+          <p class="ce-tiny ce-muted" style="margin-top:6px">
+            控制 auth.sendCode 是否申请/attach REGHelp Push Token 与 allow_app_hash。
+            自建 api_id 下 balanced 会跳过 Push，提高 SentCodeTypeSms 概率。
+          </p>
+        </div>
+        <div>
+          <label class="ce-label">猎号连续 App 后强制 SMS（次数）</label>
+          <input v-model.number="config.hunt_sms_first_after_app_streak" type="number" min="0" max="20" class="ce-input mono w-sm" />
+          <p class="ce-tiny ce-muted" style="margin-top:6px">
+            <code>hunt_sms_first_after_app_streak</code>：连续 SentCodeTypeApp 达到该值后后续轮次不 attach Push。0=关闭。
+          </p>
+        </div>
+        <div>
           <label class="ce-label">Attestation / Push 高可用调度策略</label>
           <select v-model="config.attestation_provider_mode" class="ce-select">
             <option value="reghelp_primary">reghelp_primary（REGHelp 优先，AntiSafety 备选）</option>

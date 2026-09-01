@@ -25,6 +25,10 @@ from telethon.errors import (
 )
 
 from backend.app.config import ConfigManager, SESSIONS_DIR
+from backend.app.services.code_delivery import (
+    escalation_plan_after_published_flood,
+    resolve_code_delivery_plan,
+)
 from backend.app.services.device_profile import DeviceProfileManager
 from backend.app.services.vaksms import NoNumberAvailableError, VakSmsService, format_no_number_message
 from backend.app.services.grizzlysms import GrizzlySmsService, PROVIDER_LABEL as GRIZZLY_PROVIDER_LABEL
@@ -1404,22 +1408,49 @@ class RegistrationOrchestrator:
         return kwargs
 
     @staticmethod
-    def _build_code_settings(push_token: Optional[str] = None) -> types.CodeSettings:
+    def _build_code_settings(
+        push_token: Optional[str] = None,
+        *,
+        allow_app_hash: bool = True,
+        attach_push_token: bool = True,
+    ) -> types.CodeSettings:
         """构造 auth.sendCode 的 CodeSettings。
 
         Telethon CodeSettings._bytes 要求 token 与 app_sandbox 同真或同假：
         有 Push Token 时必须显式传入 app_sandbox（非沙盒为 False）；
         无 Token 时两者都必须保持 False-y（None）。
         token 传 str 即可，Telethon 会走 serialize_bytes。
+
+        SMS 优先策略应设 allow_app_hash=False 且 attach_push_token=False，
+        避免 Telegram 将 OTP 投进 REGHelp 侧 App 实例而非运营商短信。
         """
+        token = push_token if (attach_push_token and push_token) else None
         return types.CodeSettings(
             allow_flashcall=False,
             current_number=False,
-            allow_app_hash=True,
+            allow_app_hash=allow_app_hash,
             allow_missed_call=False,
-            token=push_token if push_token else None,
-            app_sandbox=False if push_token else None,
+            token=token,
+            app_sandbox=False if token else None,
         )
+
+    @classmethod
+    def _build_code_settings_from_plan(
+        cls,
+        push_token: Optional[str],
+        plan,
+    ) -> types.CodeSettings:
+        return cls._build_code_settings(
+            push_token,
+            allow_app_hash=plan.allow_app_hash,
+            attach_push_token=plan.attach_push_token,
+        )
+
+    @staticmethod
+    async def _log_code_delivery_plan(task_id: str, manager: RegistrationTaskManager, plan) -> None:
+        await manager.append_log(task_id, f"[验证码通道] {plan.summary_for_log()}")
+        for note in plan.notes:
+            await manager.append_log(task_id, f"[验证码通道] {note}")
 
     @staticmethod
     def _tl_type_name(obj: Any) -> str:
@@ -1689,6 +1720,145 @@ class RegistrationOrchestrator:
                     action=action,
                     site_key=site_key,
                 ) from retry_err
+
+    @classmethod
+    async def _fetch_push_token_if_needed(
+        cls,
+        *,
+        bypass_svc: AttestationGatewayService,
+        profile: Dict[str, Any],
+        aid: str,
+        task_id: str,
+        manager: RegistrationTaskManager,
+        plan,
+        push_token: Optional[str],
+        push_task_id: Optional[str],
+        push_provider: Optional[str],
+        push_token_obtained_at: Optional[float],
+        hunt_enabled: bool,
+    ) -> Tuple[Optional[str], Optional[str], Optional[str], Optional[float]]:
+        if push_token is not None:
+            if hunt_enabled:
+                attach_hint = "attach" if plan.attach_push_token else "不 attach（SMS 优先）"
+                await manager.append_log(
+                    task_id,
+                    f"[猎号] 复用已持有 Push Token "
+                    f"(提供源: {push_provider or '-'}, task_id={push_task_id or '-'}, {attach_hint})"
+                )
+            return push_token, push_task_id, push_provider, push_token_obtained_at
+
+        if not plan.should_request_push_token:
+            return None, None, None, None
+
+        try:
+            await manager.append_log(
+                task_id, "向 Attestation 高可用网关请求平台推送握手凭证 (Signed Push Token)..."
+            )
+            push_token, push_task_id, push_provider = await bypass_svc.get_push_token(
+                profile,
+                aid=aid,
+                log_callback=lambda msg: manager.append_log(task_id, msg),
+                ref=task_id,
+            )
+            if push_token:
+                push_token_obtained_at = time.monotonic()
+                manager.update_task_status(
+                    task_id,
+                    "running",
+                    push_task_id=push_task_id,
+                    push_provider=push_provider,
+                )
+                await manager.append_log(
+                    task_id,
+                    f"成功获取平台合规签署的 Attestation Push Token "
+                    f"(提供源: {push_provider}, task_id={push_task_id or '-'})"
+                )
+            else:
+                await manager.append_log(task_id, "⚠️ Attestation Push Token 未返回，回退至标准信道...")
+        except Exception as e:
+            await manager.append_log(
+                task_id, f"⚠️ Attestation Push 凭证请求跳过/降级 ({e})，自动切换至标准信道模式"
+            )
+        return push_token, push_task_id, push_provider, push_token_obtained_at
+
+    @classmethod
+    async def _send_code_respecting_delivery_plan(
+        cls,
+        *,
+        client,
+        phone: str,
+        profile: Dict[str, Any],
+        push_token: Optional[str],
+        delivery_plan,
+        bypass_svc: AttestationGatewayService,
+        active_proxy: Optional[Dict[str, Any]],
+        task_id: str,
+        manager: RegistrationTaskManager,
+        aid: str,
+        hunt_enabled: bool,
+    ) -> Tuple[Any, Any, Optional[str], Optional[str], Optional[str], Optional[float], Any]:
+        """sendCode + 通道解析；遇 API_ID_PUBLISHED_FLOOD 时按策略 escalate Push。
+
+        返回 (sent_code, sms_poll_attempts, push_token, push_task_id, push_provider,
+        push_token_obtained_at, delivery_plan_for_refund)。
+        """
+        plan = delivery_plan
+        code_settings = cls._build_code_settings_from_plan(push_token, plan)
+        await manager.append_log(task_id, "调用 auth.sendCode 触发服务端瞬时握手挑战分发...")
+        try:
+            sent_code = await cls._send_code_with_recaptcha(
+                client=client,
+                phone=phone,
+                profile=profile,
+                code_settings=code_settings,
+                bypass_svc=bypass_svc,
+                active_proxy=active_proxy,
+                task_id=task_id,
+                manager=manager,
+            )
+        except ApiIdPublishedFloodError:
+            if not plan.can_escalate_on_published_flood:
+                raise
+            escalated = escalation_plan_after_published_flood(plan)
+            await manager.append_log(
+                task_id,
+                "⚠️ sendCode 触发 API_ID_PUBLISHED_FLOOD；按通道策略 escalate："
+                "申请 Push Token 并以 push_required 重试一次..."
+            )
+            await cls._log_code_delivery_plan(task_id, manager, escalated)
+            push_token, push_task_id, push_provider, push_token_obtained_at = await cls._fetch_push_token_if_needed(
+                bypass_svc=bypass_svc,
+                profile=profile,
+                aid=aid,
+                task_id=task_id,
+                manager=manager,
+                plan=escalated,
+                push_token=push_token,
+                push_task_id=None,
+                push_provider=None,
+                push_token_obtained_at=None,
+                hunt_enabled=hunt_enabled,
+            )
+            plan = escalated
+            code_settings = cls._build_code_settings_from_plan(push_token, plan)
+            sent_code = await cls._send_code_with_recaptcha(
+                client=client,
+                phone=phone,
+                profile=profile,
+                code_settings=code_settings,
+                bypass_svc=bypass_svc,
+                active_proxy=active_proxy,
+                task_id=task_id,
+                manager=manager,
+            )
+        sent_code, sms_poll_attempts = await cls.resolve_sent_code_channel(
+            client=client,
+            phone=phone,
+            sent_code=sent_code,
+            task_id=task_id,
+            manager=manager,
+        )
+        return sent_code, sms_poll_attempts, push_token, push_task_id, push_provider, push_token_obtained_at, plan
 
     @classmethod
     def _resolve_hunt_limits(cls, config, no_number_retries: Optional[int] = None) -> Dict[str, Any]:
@@ -2002,6 +2172,7 @@ class RegistrationOrchestrator:
         hunt_blacklisted = 0
         # 连续 APP 投递计数：任何一轮走到非 APP 结局都清零，只有真的「一直只投 App」才熔断
         hunt_app_streak = 0
+        force_sms_after_app = False
         last_failure_reason: Optional[str] = None
         hunt_stop_reason: Optional[str] = None
         entered_otp_stage = False
@@ -2276,39 +2447,28 @@ class RegistrationOrchestrator:
                         manager.update_task_status(task_id, "failed", error="Endpoint handle pre-audit rejected")
                         return
 
-                # 3. 申请 Attestation Push 握手凭证（循环试号时仅首次获取，后续复用）
-                if push_token is None:
-                    try:
-                        await manager.append_log(task_id, "向 Attestation 高可用网关请求平台推送握手凭证 (Signed Push Token)...")
-                        push_token, push_task_id, push_provider = await bypass_svc.get_push_token(
-                            profile,
-                            aid=aid,
-                            log_callback=lambda msg: manager.append_log(task_id, msg),
-                            ref=task_id,
-                        )
-                        if push_token:
-                            push_token_obtained_at = time.monotonic()
-                            manager.update_task_status(
-                                task_id,
-                                "running",
-                                push_task_id=push_task_id,
-                                push_provider=push_provider,
-                            )
-                            await manager.append_log(
-                                task_id,
-                                f"成功获取平台合规签署的 Attestation Push Token "
-                                f"(提供源: {push_provider}, task_id={push_task_id or '-'})"
-                            )
-                        else:
-                            await manager.append_log(task_id, "⚠️ Attestation Push Token 未返回，回退至标准信道...")
-                    except Exception as e:
-                        await manager.append_log(task_id, f"⚠️ Attestation Push 凭证请求跳过/降级 ({e})，自动切换至标准信道模式")
-                else:
-                    await manager.append_log(
-                        task_id,
-                        f"[猎号] 复用已持有 Push Token "
-                        f"(提供源: {push_provider or '-'}, task_id={push_task_id or '-'})，不重新申请"
-                    )
+                # 3. 验证码投递通道策略 + Attestation Push（按 plan 决定是否申请）
+                delivery_plan = resolve_code_delivery_plan(
+                    config,
+                    profile,
+                    hunt_app_streak=hunt_app_streak if hunt_enabled else 0,
+                    force_sms_after_app=force_sms_after_app,
+                )
+                await cls._log_code_delivery_plan(task_id, manager, delivery_plan)
+
+                push_token, push_task_id, push_provider, push_token_obtained_at = await cls._fetch_push_token_if_needed(
+                    bypass_svc=bypass_svc,
+                    profile=profile,
+                    aid=aid,
+                    task_id=task_id,
+                    manager=manager,
+                    plan=delivery_plan,
+                    push_token=push_token,
+                    push_task_id=push_task_id,
+                    push_provider=push_provider,
+                    push_token_obtained_at=push_token_obtained_at,
+                    hunt_enabled=hunt_enabled,
+                )
 
                 # 3.1 API 凭证策略裁决（仅在首次拿到/判定 Push 后执行一次）
                 if not credentials_resolved:
@@ -2375,26 +2535,27 @@ class RegistrationOrchestrator:
                 await cls.perform_handshake(client, profile, task_id, manager)
 
                 # 6. 发起挑战分发请求 (SendCode)
-                code_settings = cls._build_code_settings(push_token)
-
-                await manager.append_log(task_id, "调用 auth.sendCode 触发服务端瞬时握手挑战分发...")
                 try:
-                    sent_code = await cls._send_code_with_recaptcha(
+                    (
+                        sent_code,
+                        sms_poll_attempts,
+                        push_token,
+                        push_task_id,
+                        push_provider,
+                        push_token_obtained_at,
+                        _delivery_plan,
+                    ) = await cls._send_code_respecting_delivery_plan(
                         client=client,
                         phone=phone,
                         profile=profile,
-                        code_settings=code_settings,
+                        push_token=push_token,
+                        delivery_plan=delivery_plan,
                         bypass_svc=bypass_svc,
                         active_proxy=active_proxy,
                         task_id=task_id,
                         manager=manager,
-                    )
-                    sent_code, sms_poll_attempts = await cls.resolve_sent_code_channel(
-                        client=client,
-                        phone=phone,
-                        sent_code=sent_code,
-                        task_id=task_id,
-                        manager=manager,
+                        aid=aid,
+                        hunt_enabled=hunt_enabled,
                     )
                 except SentCodeAppDeliveryError as ex:
                     reason = getattr(ex, "reason", None) or "SENT_CODE_TYPE_APP"
@@ -2427,6 +2588,7 @@ class RegistrationOrchestrator:
                     meta_path = None
                     hunt_blacklisted += 1
                     hunt_app_streak += 1
+                    force_sms_after_app = True
                     last_failure_reason = reason
                     await manager.append_log(
                         task_id,
@@ -2587,6 +2749,9 @@ class RegistrationOrchestrator:
                         manager.update_task_status(task_id, "running")
                         continue
                     raise
+
+                hunt_app_streak = 0
+                force_sms_after_app = False
 
                 # 猎号收码保底：宁可放弃这枚 Token 的退款，也不能把真 SMS 号的
                 # OTP 窗口截到收不到码（上面已在进轮前轮换过老 Token，这里只兜底）

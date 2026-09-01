@@ -37,6 +37,10 @@ from backend.app.config import ConfigManager, SESSIONS_DIR
 from backend.app.services.account_vault import normalize_phone
 from backend.app.services.attestation_gateway import AttestationGatewayService
 from backend.app.services.banned_phones import BannedPhonesCache, SOURCE_TELEGRAM_RPC
+from backend.app.services.code_delivery import (
+    escalation_plan_after_published_flood,
+    resolve_code_delivery_plan,
+)
 from backend.app.services.device_profile import DeviceProfileManager
 from backend.app.services.phone_precheck import PhonePrecheckService
 from backend.app.services.proxyseller import infer_country_from_phone
@@ -602,30 +606,24 @@ class ManualRegistrationOrchestrator:
             push_task_id = None
             push_provider = None
             push_token_obtained_at = None
-            try:
-                await manager.append_log(
-                    task_id, "向 Attestation 高可用网关请求平台推送握手凭证 (Signed Push Token)..."
-                )
-                # ref=task_id：REGHelp 侧必须携带有效 ref，才能事后 setStatus 触发自动退款
-                push_token, push_task_id, push_provider = await bypass_svc.get_push_token(
-                    profile,
+
+            delivery_plan = resolve_code_delivery_plan(config, profile)
+            await RegistrationOrchestrator._log_code_delivery_plan(task_id, manager, delivery_plan)
+            push_token, push_task_id, push_provider, push_token_obtained_at = (
+                await RegistrationOrchestrator._fetch_push_token_if_needed(
+                    bypass_svc=bypass_svc,
+                    profile=profile,
                     aid=aid,
-                    log_callback=lambda msg: manager.append_log(task_id, msg),
-                    ref=task_id,
+                    task_id=task_id,
+                    manager=manager,
+                    plan=delivery_plan,
+                    push_token=push_token,
+                    push_task_id=push_task_id,
+                    push_provider=push_provider,
+                    push_token_obtained_at=push_token_obtained_at,
+                    hunt_enabled=False,
                 )
-                if push_token:
-                    push_token_obtained_at = time.monotonic()
-                    await manager.append_log(
-                        task_id,
-                        f"成功获取平台合规签署的 Attestation Push Token "
-                        f"(提供源: {push_provider}, task_id={push_task_id or '-'})",
-                    )
-                else:
-                    await manager.append_log(task_id, "⚠️ Attestation Push Token 未返回，回退至标准信道...")
-            except Exception as exc:
-                await manager.append_log(
-                    task_id, f"⚠️ Attestation Push 凭证请求跳过/降级 ({exc})，自动切换至标准信道模式"
-                )
+            )
 
             original_api_id = profile.get("api_id")
             profile = DeviceProfileManager.resolve_effective_credentials(
@@ -682,18 +680,52 @@ class ManualRegistrationOrchestrator:
             await manager.append_log(task_id, "已完成 MTProto 传输层 Diffie-Hellman 密钥交换与加密连接建立")
             await RegistrationOrchestrator.perform_handshake(client, profile, task_id, manager)
 
-            code_settings = RegistrationOrchestrator._build_code_settings(push_token)
+            plan = delivery_plan
+            code_settings = RegistrationOrchestrator._build_code_settings_from_plan(push_token, plan)
             await manager.append_log(task_id, "调用 auth.sendCode 触发服务端瞬时握手挑战分发...")
-            sent_code = await RegistrationOrchestrator._send_code_with_recaptcha(
-                client=client,
-                phone=normalized,
-                profile=profile,
-                code_settings=code_settings,
-                bypass_svc=bypass_svc,
-                active_proxy=active_proxy,
-                task_id=task_id,
-                manager=manager,
-            )
+            try:
+                sent_code = await RegistrationOrchestrator._send_code_with_recaptcha(
+                    client=client,
+                    phone=normalized,
+                    profile=profile,
+                    code_settings=code_settings,
+                    bypass_svc=bypass_svc,
+                    active_proxy=active_proxy,
+                    task_id=task_id,
+                    manager=manager,
+                )
+            except ApiIdPublishedFloodError:
+                if not plan.can_escalate_on_published_flood:
+                    raise
+                escalated = escalation_plan_after_published_flood(plan)
+                await RegistrationOrchestrator._log_code_delivery_plan(task_id, manager, escalated)
+                push_token, push_task_id, push_provider, push_token_obtained_at = (
+                    await RegistrationOrchestrator._fetch_push_token_if_needed(
+                        bypass_svc=bypass_svc,
+                        profile=profile,
+                        aid=aid,
+                        task_id=task_id,
+                        manager=manager,
+                        plan=escalated,
+                        push_token=push_token,
+                        push_task_id=push_task_id,
+                        push_provider=push_provider,
+                        push_token_obtained_at=push_token_obtained_at,
+                        hunt_enabled=False,
+                    )
+                )
+                plan = escalated
+                code_settings = RegistrationOrchestrator._build_code_settings_from_plan(push_token, plan)
+                sent_code = await RegistrationOrchestrator._send_code_with_recaptcha(
+                    client=client,
+                    phone=normalized,
+                    profile=profile,
+                    code_settings=code_settings,
+                    bypass_svc=bypass_svc,
+                    active_proxy=active_proxy,
+                    task_id=task_id,
+                    manager=manager,
+                )
             delivery_type = _delivery_type_name(sent_code)
             phone_code_hash = getattr(sent_code, "phone_code_hash", None)
             await manager.append_log(
