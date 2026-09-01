@@ -24,6 +24,7 @@ DEFAULT_SERVICE = "tg"
 CACHE_TTL_SECONDS = 90.0  # 60~120 秒轻量缓存
 PROVIDER_FIVESIM = "fivesim"
 PROVIDER_GRIZZLY = "grizzlysms"
+PROVIDER_SMSBOWER = "smsbower"
 PROVIDER_VAK = "vaksms"
 
 
@@ -37,6 +38,9 @@ def normalize_sms_provider(value: Optional[str]) -> str:
         "grizzly": PROVIDER_GRIZZLY,
         "grizzlysms": PROVIDER_GRIZZLY,
         "grizzlysmscom": PROVIDER_GRIZZLY,
+        "smsbower": PROVIDER_SMSBOWER,
+        "smsbowerapp": PROVIDER_SMSBOWER,
+        "bower": PROVIDER_SMSBOWER,
         "vak": PROVIDER_VAK,
         "vaksms": PROVIDER_VAK,
     }
@@ -217,7 +221,7 @@ def _resolve_stock_iso2(provider: str, provider_country_id: Any) -> str:
         iso = fivesim_country_to_iso(token)
         if iso:
             return iso
-    if provider == PROVIDER_GRIZZLY:
+    if provider in {PROVIDER_GRIZZLY, PROVIDER_SMSBOWER}:
         from backend.app.services.grizzlysms import grizzly_country_id_to_iso
 
         iso = grizzly_country_id_to_iso(token)
@@ -356,6 +360,8 @@ class SmsStockService:
                 items = await cls._fetch_vaksms(service=service, api_key=api_key, config=config)
             elif resolved == PROVIDER_FIVESIM:
                 items = await cls._fetch_fivesim(service=service, api_key=api_key, config=config)
+            elif resolved == PROVIDER_SMSBOWER:
+                items = await cls._fetch_smsbower(service=service, api_key=api_key, config=config)
             else:
                 items = await cls._fetch_grizzly(service=service, api_key=api_key, config=config)
         except Exception as exc:
@@ -402,6 +408,26 @@ class SmsStockService:
             payload = await svc.get_prices(country=None, service=service)
             rows = parse_grizzly_price_payload(payload, service=service)
             return enrich_stock_rows(rows, PROVIDER_GRIZZLY)
+        finally:
+            await svc.close()
+
+    @classmethod
+    async def _fetch_smsbower(
+        cls,
+        service: str,
+        api_key: Optional[str],
+        config: Any,
+    ) -> List[Dict[str, Any]]:
+        from backend.app.services.smsbower import SmsBowerService
+
+        key = (api_key or "").strip()
+        if not key and config is not None:
+            key = str(getattr(config, "smsbower_api_key", "") or "").strip()
+        svc = SmsBowerService(key)
+        try:
+            payload = await svc.get_prices(country=None, service=service)
+            rows = parse_grizzly_price_payload(payload, service=service)
+            return enrich_stock_rows(rows, PROVIDER_SMSBOWER)
         finally:
             await svc.close()
 
