@@ -1,27 +1,39 @@
 """auth.sendCode 验证码投递通道策略（Push Token / allow_app_hash / api_id 联动）。
 
-Telegram 在 sendCode 时根据号码历史、CodeSettings.token、allow_app_hash、api_id 信誉等
-决定返回 SentCodeTypeSms 还是 SentCodeTypeApp。REGHelp Push Token 代表一台「可收 Push 的
-官方客户端」；把它塞进 CodeSettings 会显著提高 App 通道概率，接码平台无法收到 OTP。
+CodeSettings 各字段的官方语义（core.telegram.org/constructor/codeSettings），
+决定了哪些开关真的能影响 SMS 概率：
+
+- ``token`` / ``app_sandbox``：「Used only by official iOS apps for Firebase auth：
+  device token for apple push」。带上它等于告诉服务端「有一台可收 APNS 推送的官方
+  客户端」，服务端就可能把 OTP 走推送而不是运营商短信 —— 这是唯一真正能压低 SMS
+  概率的开关，也是 REGHelp Push Token 流程赖以收码的机制。
+- ``allow_app_hash``：「required in newer versions of android, to use the android SMS
+  receiver APIs」。它描述的是**短信正文里要不要附带 app hash**，属于 SMS 内容协商，
+  不参与「App 还是 SMS」的通道选择。官方 Android 客户端在有 Google Play 服务时恒为
+  true，所以拿 Android 指纹发码却把它关掉，只会让指纹偏离官方客户端，不会提高 SMS
+  概率。因此本模块按**设备平台**而非投递模式来决定该字段。
 
 规律归纳（来自 BATCH_STRESS_REPORT 与线上任务日志）：
 
-1. **号池因素（不可代码消除）**：复用/注销卡预检仍可能白号，但 sendCode 走 App 且
-   next_type=None。换 Push/设备不能救，只能换号源或换国。
-2. **Push Token 因素（代码可控）**：custom 非泄露 api_id 下仍强制申请并传入 Push Token
-   会把 Telegram 往 App 推；skip token + allow_app_hash=False 是最直接的 SMS 提权手段。
+1. **号池因素（主因，不可代码消除）**：复用/注销卡预检仍判白号，但 sendCode 返回
+   SentCodeTypeApp 且 next_type=None —— 号码在 Telegram 侧仍挂着已授权会话，OTP 被
+   投进旧客户端。换 Push/设备救不了，只能换号源或换国。压测 116 张已租号 0% 走 SMS，
+   且当时用的是自建 api_id=35762565，佐证主因在号池而不在凭证。
+2. **Push Token 因素（次因，但代码可控）**：压测全程强制申请并 attach Push Token，
+   等于主动给服务端一条推送通道。非泄露 api_id 下没有任何理由付这个代价，跳过申请
+   既省 REGHelp 费用，也移除了「服务端可以走推送」这个变量。
 3. **api_id 因素**：公开泄露 ID（4/6/21724 等）无 Push 时几乎必然 API_ID_PUBLISHED_FLOOD；
    自建 api_id 可不带 Push 先发码，FLOOD 再一次性 escalate 到 push_required。
-4. **猎号连续 App**：同一 Push+设备组合连续多号 App 说明系统性偏 App，应在后续轮次
-   强制 sms_first（仍持有 Token 但不 attach）并考虑换设备。
+4. **猎号连续 App**：同一 Push+设备组合连续多号 App 说明是系统性失败，应在达到
+   ``hunt_sms_first_after_app_streak`` 后强制 sms_first（仍持有 Token 但不 attach）。
 
 模式说明：
 
-- ``sms_first``：优先 SMS；非泄露 api_id 时不申请 Push；allow_app_hash=False；
-  不带 token。遇 API_ID_PUBLISHED_FLOOD 可 escalate 一次（申请 Push + attach）。
+- ``sms_first``：优先 SMS；非泄露 api_id 时不申请 Push、不 attach token。
+  遇 API_ID_PUBLISHED_FLOOD 可 escalate 一次（申请 Push + attach）。
 - ``balanced``（默认）：非泄露 effective api_id → 同 sms_first；泄露/official 路径 →
   申请 Push 并 attach（与旧版 push_required 对该类凭证等价）。
-- ``push_required``：legacy；始终申请 Push、attach token、allow_app_hash=True。
+- ``push_required``：legacy；始终申请 Push 并 attach token。
 """
 from __future__ import annotations
 
@@ -104,6 +116,21 @@ def _predict_effective_api_id(profile: Dict[str, Any], config: Any) -> int:
     return template_id
 
 
+def profile_allows_app_hash(profile: Dict[str, Any]) -> bool:
+    """该设备指纹下官方客户端是否会设置 allow_app_hash。
+
+    allow_app_hash 是 Android SMS Retriever 的短信正文协商位，官方 Android 客户端恒设，
+    iOS 客户端从不设。跟着平台走才能保持指纹自洽；它不影响 App/SMS 通道选择。
+    """
+    markers = " ".join(
+        str(profile.get(key) or "")
+        for key in ("app_device", "lang_pack", "system_version", "device_model")
+    ).lower()
+    if "ios" in markers or "iphone" in markers or "ipad" in markers:
+        return False
+    return True
+
+
 def is_published_api_id(api_id: Optional[int]) -> bool:
     try:
         return int(api_id or 0) in PUBLISHED_API_ID_BLOCKLIST
@@ -157,10 +184,12 @@ def resolve_code_delivery_plan(
         else:
             notes.append(f"balanced + 泄露/official api_id={predicted_api_id} → 需要 Push")
 
+    # allow_app_hash 只跟设备平台走：它协商短信正文里的 app hash，不选择投递通道
+    allow_app_hash = profile_allows_app_hash(profile)
+
     if effective == CODE_DELIVERY_SMS_FIRST:
         should_request = published and not forced_sms
         attach = False
-        allow_app_hash = False
         can_escalate = True
         if not published:
             notes.append("跳过 Push Token 申请（非泄露 api_id）")
@@ -170,7 +199,6 @@ def resolve_code_delivery_plan(
     else:
         should_request = True
         attach = True
-        allow_app_hash = True
         can_escalate = False
         notes.append("push_required：申请 Push 并 attach token")
 
@@ -195,7 +223,7 @@ def escalation_plan_after_published_flood(plan: CodeDeliveryPlan) -> CodeDeliver
         effective_mode=CODE_DELIVERY_PUSH_REQUIRED,
         should_request_push_token=True,
         attach_push_token=True,
-        allow_app_hash=True,
+        allow_app_hash=plan.allow_app_hash,
         can_escalate_on_published_flood=False,
         use_published_api_id=plan.use_published_api_id,
         hunt_app_streak=plan.hunt_app_streak,

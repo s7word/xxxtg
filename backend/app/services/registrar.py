@@ -262,8 +262,8 @@ DEFAULT_HUNT_MAX_TOTAL_LEASES = 200
 # 先退旧 Token 再换新的，保证真 SMS 号有完整收码时间。
 HUNT_PUSH_TOKEN_MAX_AGE_SECONDS = 90.0
 HUNT_MIN_SMS_POLL_ATTEMPTS = 8
-# auth.sendCode 只投站内 App：不可用是事实，「已注册」只是推测（Push / allow_app_hash 也会
-# 把码送进 App）。所以按 TTL 临时拉黑而不是永久 already_registered。
+# auth.sendCode 只投站内 App：不可用是事实，「已注册」只是推测（attach 了 Push Token 时
+# 服务端也可能改走推送）。所以按 TTL 临时拉黑而不是永久 already_registered。
 DEFAULT_HUNT_APP_BLACKLIST_TTL_HOURS = 48.0
 # 连续 N 轮都只投 App 说明是系统性失败模式（凭证/Push/指纹），继续扫号只是把预算烧光
 DEFAULT_HUNT_APP_DELIVERY_FUSE = 5
@@ -1421,8 +1421,9 @@ class RegistrationOrchestrator:
         无 Token 时两者都必须保持 False-y（None）。
         token 传 str 即可，Telethon 会走 serialize_bytes。
 
-        SMS 优先策略应设 allow_app_hash=False 且 attach_push_token=False，
-        避免 Telegram 将 OTP 投进 REGHelp 侧 App 实例而非运营商短信。
+        SMS 优先策略靠 attach_push_token=False 生效：token/app_sandbox 是 iOS APNS
+        推送凭证，带上就等于给服务端一条推送通道。allow_app_hash 只协商短信正文里的
+        Android SMS Retriever hash，应跟随设备平台而非投递模式。
         """
         token = push_token if (attach_push_token and push_token) else None
         return types.CodeSettings(
@@ -1789,6 +1790,9 @@ class RegistrationOrchestrator:
         phone: str,
         profile: Dict[str, Any],
         push_token: Optional[str],
+        push_task_id: Optional[str],
+        push_provider: Optional[str],
+        push_token_obtained_at: Optional[float],
         delivery_plan,
         bypass_svc: AttestationGatewayService,
         active_proxy: Optional[Dict[str, Any]],
@@ -1834,9 +1838,9 @@ class RegistrationOrchestrator:
                 manager=manager,
                 plan=escalated,
                 push_token=push_token,
-                push_task_id=None,
-                push_provider=None,
-                push_token_obtained_at=None,
+                push_task_id=push_task_id,
+                push_provider=push_provider,
+                push_token_obtained_at=push_token_obtained_at,
                 hunt_enabled=hunt_enabled,
             )
             plan = escalated
@@ -2172,7 +2176,6 @@ class RegistrationOrchestrator:
         hunt_blacklisted = 0
         # 连续 APP 投递计数：任何一轮走到非 APP 结局都清零，只有真的「一直只投 App」才熔断
         hunt_app_streak = 0
-        force_sms_after_app = False
         last_failure_reason: Optional[str] = None
         hunt_stop_reason: Optional[str] = None
         entered_otp_stage = False
@@ -2452,7 +2455,6 @@ class RegistrationOrchestrator:
                     config,
                     profile,
                     hunt_app_streak=hunt_app_streak if hunt_enabled else 0,
-                    force_sms_after_app=force_sms_after_app,
                 )
                 await cls._log_code_delivery_plan(task_id, manager, delivery_plan)
 
@@ -2543,12 +2545,15 @@ class RegistrationOrchestrator:
                         push_task_id,
                         push_provider,
                         push_token_obtained_at,
-                        _delivery_plan,
+                        delivery_plan,
                     ) = await cls._send_code_respecting_delivery_plan(
                         client=client,
                         phone=phone,
                         profile=profile,
                         push_token=push_token,
+                        push_task_id=push_task_id,
+                        push_provider=push_provider,
+                        push_token_obtained_at=push_token_obtained_at,
                         delivery_plan=delivery_plan,
                         bypass_svc=bypass_svc,
                         active_proxy=active_proxy,
@@ -2562,8 +2567,8 @@ class RegistrationOrchestrator:
                     ttl_hours = hunt_limits["app_blacklist_ttl_hours"]
                     record = None
                     if phone:
-                        # 白号预检通过后仍走 App，很可能是 Push Token / allow_app_hash 把码
-                        # 送进了站内客户端，而不是号码已注册。只按 TTL 临时拉黑。
+                        # 白号预检通过后仍走 App，也可能是 attach 的 Push Token 把码送进了
+                        # 站内客户端，而不是号码已注册。只按 TTL 临时拉黑。
                         record = BannedPhonesCache.remember(
                             phone,
                             reason=reason,
@@ -2588,7 +2593,6 @@ class RegistrationOrchestrator:
                     meta_path = None
                     hunt_blacklisted += 1
                     hunt_app_streak += 1
-                    force_sms_after_app = True
                     last_failure_reason = reason
                     await manager.append_log(
                         task_id,
@@ -2751,7 +2755,6 @@ class RegistrationOrchestrator:
                     raise
 
                 hunt_app_streak = 0
-                force_sms_after_app = False
 
                 # 猎号收码保底：宁可放弃这枚 Token 的退款，也不能把真 SMS 号的
                 # OTP 窗口截到收不到码（上面已在进轮前轮换过老 Token，这里只兜底）

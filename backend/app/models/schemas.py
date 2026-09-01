@@ -292,10 +292,10 @@ class AppConfigModel(BaseModel):
         default="balanced",
         description=(
             "auth.sendCode 验证码投递通道策略: "
-            "sms_first (优先 SMS：非泄露 api_id 不申请/不 attach Push，allow_app_hash=False；"
+            "sms_first (优先 SMS：非泄露 api_id 不申请/不 attach Push Token；"
             "遇 API_ID_PUBLISHED_FLOOD 可一次性 escalate) / "
             "balanced (默认：非泄露 effective api_id 同 sms_first，泄露/official 路径需 Push) / "
-            "push_required (legacy：始终申请 Push 并 attach token + allow_app_hash=True)"
+            "push_required (legacy：始终申请 Push 并 attach token)"
         ),
     )
     hunt_sms_first_after_app_streak: int = Field(
@@ -304,7 +304,7 @@ class AppConfigModel(BaseModel):
         le=20,
         description=(
             "猎号模式下连续 SentCodeTypeApp 达到该次数后，后续轮次强制 SMS 优先"
-            "（不 attach Push Token、allow_app_hash=False）。0 表示关闭。"
+            "（不申请、不 attach Push Token）。0 表示关闭。"
         ),
     )
     hunt_no_number_retries: int = Field(

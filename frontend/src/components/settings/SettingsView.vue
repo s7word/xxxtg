@@ -521,7 +521,7 @@
             <option value="push_required">push_required（legacy：始终 attach Push Token）</option>
           </select>
           <p class="ce-tiny ce-muted" style="margin-top:6px">
-            控制 auth.sendCode 是否申请/attach REGHelp Push Token 与 allow_app_hash。
+            控制 auth.sendCode 是否申请并 attach REGHelp Push Token（CodeSettings.token）。
             自建 api_id 下 balanced 会跳过 Push，提高 SentCodeTypeSms 概率。
           </p>
         </div>

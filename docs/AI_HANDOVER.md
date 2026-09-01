@@ -149,12 +149,17 @@ backend/app/
 失败时：SMS `cancel` +（若 REGHelp）`setStatus` 退款（#26 已实现，需 `ref=task_id`）。预检已注册 / `SENT_CODE_TYPE_APP` / `PHONE_NUMBER_BANNED` 会写入本地黑名单，防止平台二次下发。
 
 **验证码通道策略**（`code_delivery_mode`，默认 `balanced`）：
-- `balanced`：非泄露 effective api_id（如已配置 custom）→ 不申请/不 attach Push、`allow_app_hash=False`，提高 SMS 概率
+- `balanced`：非泄露 effective api_id（如已配置 custom）→ 不申请/不 attach Push Token，提高 SMS 概率
 - `sms_first`：同上但更激进；遇 `API_ID_PUBLISHED_FLOOD` 可一次性 escalate 到 Push
 - `push_required`：legacy，始终 attach Push Token
-- `hunt_sms_first_after_app_streak`：猎号连续 App 后强制 SMS 优先
+- `hunt_sms_first_after_app_streak`：猎号连续 App 达到该值后强制 SMS 优先
 
-规律：复用号池导致的 App（`next_type=None`）代码无法消除，只能换号源；Push Token attach 导致的 App 可通过上述策略缓解。
+`CodeSettings` 里唯一影响 App/SMS 通道选择的是 `token`/`app_sandbox`（iOS APNS 推送凭证，
+带上就等于给服务端一条推送通道）。`allow_app_hash` 是 Android SMS Retriever 的**短信正文**
+协商位，官方 Android 客户端恒设，因此按设备平台决定，不参与通道策略。
+
+规律：复用号池导致的 App（`next_type=None`，号码在 Telegram 侧仍有已授权会话）是主因，
+代码无法消除，只能换号源；attach Push Token 带来的推送投递可通过上述策略消除。
 
 ---
 

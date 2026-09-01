@@ -370,6 +370,9 @@ class TestRunRegistrationPrecheckTiming(unittest.IsolatedAsyncioTestCase):
             custom_api_hash="hash",
             default_2fa_password="x",
             auto_set_2fa=False,
+            # 本组用例断言的是「预检是否放行到申请 Push / sendCode」，
+            # 所以固定走会真的申请 Token 的通道模式，避免被投递策略掩盖
+            code_delivery_mode="push_required",
         )
 
     async def test_registered_skips_push_token_and_sendcode(self):

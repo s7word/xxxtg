@@ -469,6 +469,8 @@ class TestRunRegistrationRefundIntegration(unittest.IsolatedAsyncioTestCase):
             custom_api_hash="hash",
             default_2fa_password="x",
             auto_set_2fa=False,
+            # 退款闭环只在真的签发了 Push Token 时存在，固定走 attach Token 的通道模式
+            code_delivery_mode="push_required",
         )
 
     async def _run_banned_scenario(self, *, provider: str, push_task_id):

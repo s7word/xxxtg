@@ -143,7 +143,9 @@ class TestHuntRetryAppPush(unittest.IsolatedAsyncioTestCase):
         return make_profile()
 
     def _config(self):
-        return make_config()
+        # Push Token 的复用/退款生命周期只在真的 attach Token 时才有意义；
+        # 默认 balanced + 自建非泄露 api_id 根本不申请 Token（见 TestCodeDeliveryModeInHunt）
+        return make_config(code_delivery_mode="push_required")
 
     async def test_app_delivery_retries_with_same_push_token(self):
         sms = FakeSms([
@@ -602,6 +604,7 @@ class TestHuntNoDoubleCancel(HuntRunMixin, unittest.IsolatedAsyncioTestCase):
         with self._run_ctx(
             sms=sms,
             gw=gw,
+            config=make_config(code_delivery_mode="push_required"),
             send_code=AsyncMock(side_effect=send_code_impl),
             extra=[
                 patch.object(RegistrationOrchestrator, "_resolve_custom_proxy", new=AsyncMock(return_value=None)),
@@ -738,6 +741,64 @@ class TestHuntAppDeliveryFuse(HuntRunMixin, unittest.IsolatedAsyncioTestCase):
         self.assertIn("HUNT_EXHAUSTED", task.get("error", ""))
 
 
+class TestCodeDeliveryModeInHunt(HuntRunMixin, unittest.IsolatedAsyncioTestCase):
+    """默认 balanced + 自建非泄露 api_id：整条猎号链路不得申请或 attach Push Token。"""
+
+    async def asyncSetUp(self):
+        self.manager = RegistrationTaskManager()
+        self.manager.tasks = {}
+        self.manager.batches = {}
+        self._prev = RegistrationTaskManager._instance
+        RegistrationTaskManager._instance = self.manager
+        self.task_id = self.manager.create_task()
+
+    async def asyncTearDown(self):
+        RegistrationTaskManager._instance = self._prev
+
+    async def test_balanced_custom_api_id_never_requests_push(self):
+        sms = TimeoutSms([("act-1", "+56911110001")])
+        gw = make_gateway()
+        sent_code = SimpleNamespace(phone_code_hash="hash-1")
+        captured = {}
+
+        async def send_code_impl(**kwargs):
+            captured["code_settings"] = kwargs["code_settings"]
+            return sent_code
+
+        with self._run_ctx(
+            sms=sms,
+            gw=gw,
+            send_code=AsyncMock(side_effect=send_code_impl),
+            extra=[
+                patch.object(RegistrationOrchestrator, "_resolve_custom_proxy", new=AsyncMock(return_value=None)),
+                patch("backend.app.services.registrar.BannedPhonesCache.remember"),
+                patch.object(
+                    RegistrationOrchestrator,
+                    "resolve_sent_code_channel",
+                    new=AsyncMock(return_value=(sent_code, DEFAULT_SMS_POLL_ATTEMPTS)),
+                ),
+            ],
+        ):
+            await RegistrationOrchestrator.run_registration(
+                task_id=self.task_id,
+                country="cl",
+                max_number_attempts=1,
+                no_number_retries=0,
+            )
+
+        gw.get_push_token.assert_not_awaited()
+        gw.refund_push_token.assert_not_awaited()
+        code_settings = captured["code_settings"]
+        self.assertIsNone(code_settings.token)
+        self.assertIsNone(code_settings.app_sandbox)
+        # Android 指纹下 allow_app_hash 必须保持官方客户端行为
+        self.assertTrue(code_settings.allow_app_hash)
+        # 不申请 Token 时收码窗口不该被 REGHelp 退款窗口截断
+        self.assertEqual(sms.poll_attempts, [DEFAULT_SMS_POLL_ATTEMPTS])
+        logs = "\n".join(self.manager.get_task(self.task_id)["logs"])
+        self.assertIn("跳过 Push Token 申请（非泄露 api_id）", logs)
+
+
 class TestHuntSwappableSendErrors(HuntRunMixin, unittest.IsolatedAsyncioTestCase):
     """可换号的 sendCode 异常必须继续扫号，而不是烧掉剩余预算。"""
 
@@ -764,6 +825,7 @@ class TestHuntSwappableSendErrors(HuntRunMixin, unittest.IsolatedAsyncioTestCase
         with self._run_ctx(
             sms=sms,
             gw=gw,
+            config=make_config(code_delivery_mode="push_required"),
             send_code=AsyncMock(side_effect=PhoneNumberInvalidError(request=None)),
             extra=[
                 patch.object(RegistrationOrchestrator, "_resolve_custom_proxy", new=AsyncMock(return_value=None)),

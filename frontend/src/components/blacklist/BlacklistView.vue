@@ -9,7 +9,7 @@
         </p>
         <p class="ce-tiny ce-muted">
           <strong>APP投递不可用</strong> 是临时分类：只说明那一次验证码进了站内 App
-          （也可能是 Push Token / allow_app_hash 造成），不等于号码已注册，
+          （也可能是 attach 的 Push Token 造成），不等于号码已注册，
           到 TTL（默认 48h，可在参数拓扑 <code>hunt_app_blacklist_ttl_hours</code> 调整）自动放回可试池。
         </p>
       </div>
