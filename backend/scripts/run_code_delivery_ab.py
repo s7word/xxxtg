@@ -232,6 +232,22 @@ def summarize(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
+def collect_round(client: ApiClient, mode: str, batch_id: str, elapsed: Optional[float] = None) -> Dict[str, Any]:
+    """从已跑完的批次重建一轮结果，用于中断后续跑而不重复烧号。"""
+    batch = client.get_batch(batch_id)
+    tasks = client.list_tasks(batch_id)
+    rows = [parse_task(client.get_task(t.get("task_id") or t.get("id"))) for t in tasks]
+    return {
+        "mode": mode,
+        "batch_id": batch_id,
+        "timed_out": False,
+        "elapsed_seconds": elapsed,
+        "batch_status": batch.get("status"),
+        "summary": summarize(rows),
+        "rows": rows,
+    }
+
+
 def run_round(client: ApiClient, mode: str, args: argparse.Namespace) -> Dict[str, Any]:
     applied = client.set_delivery_mode(mode)
     if applied != mode:
@@ -292,6 +308,13 @@ def main() -> int:
         help="每任务最多租号次数：>1 时命中本地黑名单的号可以换一个，保证这一路能产出真实 sendCode 样本",
     )
     parser.add_argument("--modes", default="balanced,push_required")
+    parser.add_argument(
+        "--reuse-round",
+        action="append",
+        default=[],
+        metavar="MODE:BATCH_ID",
+        help="复用已跑完批次的一轮结果（不再租号），可重复传入；与 --modes 的轮次合并输出",
+    )
     parser.add_argument("--poll", type=float, default=10.0)
     parser.add_argument("--batch-timeout", type=float, default=1800.0)
     parser.add_argument("--out-dir", default="data/ab_reports")
@@ -306,8 +329,15 @@ def main() -> int:
     original_mode = str(original_config.get("code_delivery_mode"))
     print(f"启动快照 code_delivery_mode={original_mode}", flush=True)
 
-    modes = [m.strip() for m in args.modes.split(",") if m.strip()]
     rounds: List[Dict[str, Any]] = []
+    for spec in args.reuse_round:
+        mode, _, batch_id = spec.partition(":")
+        if not mode or not batch_id:
+            raise SystemExit(f"--reuse-round 需要 MODE:BATCH_ID 形式，收到 {spec!r}")
+        print(f"复用已有批次 {batch_id} 作为 {mode} 轮", flush=True)
+        rounds.append(collect_round(client, mode.strip(), batch_id.strip()))
+
+    modes = [m.strip() for m in args.modes.split(",") if m.strip()] if args.modes else []
     try:
         for mode in modes:
             rounds.append(run_round(client, mode, args))
