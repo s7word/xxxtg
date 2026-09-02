@@ -167,3 +167,116 @@
 脚本：`backend/scripts/run_country_passrate_50.py`。
 
 实测数字与进步判断见 [COUNTRY_PASSRATE_50_RESULTS.md](./COUNTRY_PASSRATE_50_RESULTS.md)（租号 44，App 10 / FLOOD 22 / SMS 0）。
+
+第二轮（更深号段 / 运营商 / 节奏，约 50 号）见下文 **§5**；结果见 [COUNTRY_PASSRATE_50_ROUND2_RESULTS.md](./COUNTRY_PASSRATE_50_ROUND2_RESULTS.md)。
+
+---
+
+## 5. 第二轮：号段 / 运营商白名单 / SIM vs 虚拟号（2026-09-02 续挖）
+
+> 第一轮只把国家选对了方向，**没有**落到可下单的前缀，也没解释为什么探针 App 后 10 分钟填满就翻 FLOOD。本轮把俄语手册、接码 API、官方号段表和 R1 实测前缀对在一起。  
+> **仍然没有** Telegram 公开发布的「运营商白名单文件」。所谓白名单，是农场/接码侧的**库存过滤器**，不是 MTProto 文档。
+
+### 5.1 Telegram 到底按什么过滤号？不是公开前缀表
+
+| 机制 | 俄语/技术来源 | 对我们的含义 |
+|------|----------------|--------------|
+| **VoIP / 公共一次性号段** | [CyberYozh 2026-07](https://app.cyberyozh.com/ru/blog/virtual-number-for-telegram/)：注册前查 **已知 VoIP 范围 + 已标记公共池**；行业侧用 **HLR** 看号是否当前在网、运营商、移动/固话/VoIP | smsbower/Grizzly 若走 SIM-based 池，过的是 HLR「像手机号」；**过不了「这个号有没有被刷过 / 会不会只出 App」** |
+| **MCC vs IP（Region Gateway）** | Soft Expert [ban-guide Q5](https://ru.telegramexpert.pro/posts/telegram-banned-guide-2026-fix-account-ban)：号的 MCC 必须对齐住宅 IP 国 | 继续 1:1 号国代理。SMSCode 文说「号国不必等于所在地」——**和 Expert/CyberYozh 以及我们自己的 Region Gateway 经验相反，本轮不采信这条营销句** |
+| **号段被刷爆** | SMSCode：[买号指南](https://smscode.gg/ru/blog/kupit-virtualnyj-nomer-dlya-telegram) 写「有时 Telegram 会临时封掉某个 диапазон」 | 解释 R1：同一批 ph 097/096 探针 App、填满波无 sendCode/FLOOD——更像 **api_id=4 窗口 + 池子被打热**，不是「菲律宾这个国家废了」 |
+| **API 限流** | 同一 SMSCode 文：**自动化注册间隔至少 5 分钟，最好 15–20 分钟**；限流按 IP **和** 注册模式 | **这是 R1 最大的漏网**：探针 12 分钟内 12 个 sendCode 全 App，紧接着 10 分钟填满 14 个 FLOOD。第二轮禁止开局 50 连射 |
+| **SMS-Activate `operator`** | [API](https://sms-activate.at/api2/)：`getOperators` / `getNumber&operator=`；`phoneException` **只对俄罗斯前缀** | 接码能锁运营商，那是 **供应商库存**。Expert 手册写得很直白：运营商列表从 API 拉，**建议选 Any**，因为指定运营商经常没货。**不是** Telegram 白名单 |
+
+**结论：** 不存在可复制的「Globe 0975 一定过、DITO 0991 一定不过」官方表。能做的是：记录实际租到的前缀，对照本国编号计划猜运营商，看 App/SMS/FLOOD 有没有号段差。
+
+### 5.2 实体 SIM vs 虚拟号：俄语圈怎么分层
+
+| 档 | 谁在说 | 内容 | 可信度 |
+|----|--------|------|--------|
+| 最稳 | Soft Expert [注册 2026](https://ru.telegramexpert.pro/posts/telegram-registration-2026-guide)；[账号注册页](https://ru.telegramexpert.pro/telegram-account-registration) | **普通 SIM 最被信任**；虚拟号要 **SIM-based / 私有一次性**；免费公共池几乎废。软件同时支持 SMS 服务 **和物理 SIM 手注** | 高（和仓库方向一致） |
+| 官方 App 收码 | 4PDA Nagram / Forkgram / Telega 帖 | **新号必须先在官方客户端收码**；第三方客户端经常是 `SentCodeTypeApp` 死循环 | 高（解释我们 api_id=4 仍大量 App：身份是 Desktop/协议号，不是用户手机） |
+| HLR 像真号 | CyberYozh | 关键不是「虚拟」两个字，是 **当前在网的移动线** vs VoIP | 中高 |
+| 营销相反 | SMSCode 同文表格 | 虚拟号在速度/成本/匿名上全面优于实体 SIM；「Telegram 只检查 SMS 对不对，不管 SIM 还是虚拟」 | **低**（把「平台收到了 SMS」当成注册成功；R1 0 SMS） |
+| 印尼特例 | [BLB：南非/印尼](https://blb.team/threads/novosti-pro-juar-i-indoneziju-kasatelno-registracii-telegram.5306/) | 历史上 **id / za 被改成必须邮箱** 才能注册 | 中（旧公告；我们 api_id=6 上 id 已 100% Payment，本轮 id 只走 api_id=4） |
+
+**对选国：** 俄语农场把 kz/ph/vn/id 当「SIM 好过虚拟号」的**国家近似**——这些国家接码池更常宣称 Telkomsel / Viettel / Globe / Kcell，而不是 Google Voice。没有人给出「菲律宾某个前缀 = 实体 SIM 通行证」。
+
+### 5.3 菲律宾 +63：Expert **没点名**，前缀表来自编号计划 + R1
+
+Soft Expert Q5 难度表只有 **+1 / +44 / +84 / +62 / +7俄 / +91**，**没有 +63**。菲律宾是农场口头禅 + 本仓库 locale 已齐，不是手册白名单。
+
+PVAPins 等英文接码文会点 **Globe / Smart / DITO**，但不给具体 09xx。具体前缀用菲律宾 2026 编号表（[TechPilipinas](https://techpilipinas.com/mobile-number-prefixes-philippines-2018/)）；**携号转网后前缀 ≠ 当前运营商**。
+
+| 国内前缀（0 开头） | 原网（转网前） | R1 是否租到 |
+|--------------------|----------------|-------------|
+| 0915–0917 / 0926–0927 / 0935–0937 / 0945 / 0953–0956 / 0965–0967 / 0975–0979 / 0995–0997 | Globe / TM | **097× 探针 App**；填满还有 097 |
+| 0976 | GOMO（Globe 数字牌） | 掩码只有 097，分不清 GOMO |
+| 0908 / 0918–0921 / 0928–0929 / 0939 / 0947 / 0961 / 0998–0999 | Smart | 掩码 094 / 096 / 099 可能沾边 |
+| 0895–0898 / 0991–0994 | DITO | **099× 出现在填满波**（当时已 FLOOD，不能怪 DITO） |
+| 0907 / 0909–0910 / 0912 / 0938 / 0946 / 0948 | TNT | 未见 |
+| 0940–0943 / 0973–0974 | Sun（现并入 Smart） | 094× 可能 |
+
+R1 实际掩码：`+6397`（Globe/TM 系，**探针 2 个 App**）、`+6394`（混，**探针 2 个 App**）、`+6396` / `+6399`（**只出现在填满 FLOOD 波**）。  
+**不能**写成「097 好、096 差」——时间差比号段差大。第二轮把前缀记到 3 位国内号（09x），有完整号再猜 4 位。
+
+### 5.4 越南 +84：Expert 点名「低难度 + 当地运营商拦 TG」
+
+Q5：**+84 低难度**，但「местные операторы часто блокируют Telegram」。俄语旅游文 [VietnamSpot](https://vietnamspot.ru/blog/vietnam-communication-sim)（不是农场文）给了能用的前缀，和越南官方 11→10 位转网表一致：
+
+| 运营商 | 前缀 | R1 |
+|--------|------|----|
+| **Viettel** | 032–039、086、096–098 | **038、033 探针全 App**；填满 033、096 |
+| **Vinaphone** | 081–085、088、091、094 | 未见 |
+| **Mobifone** | 070、076–079、089、090、093 | 填满 **090、093**（已 FLOOD） |
+| **Vietnamobile** | 052、056、058、092 | 探针 **052 App** |
+
+第二轮若 vn 再出 App，优先看 03x/096 Viettel 是否比 09x Mobifone 更容易出 **SMS**（R1 全部没有 SMS，只有通道类型）。
+
+### 5.5 印尼 +62：Expert「量产国」+ BLB 邮箱史 + 08xx 表
+
+Q5：**+62 低难度、适合 массовая работа，IP 必须印尼住宅**。VirtualSMS 宣传 Telkomsel / Indosat 实体 SIM 池。编号（4 位 08xx）：
+
+| 运营商 | 08xx | R1 |
+|--------|------|----|
+| **Telkomsel** | 0811–0813、0821–0823、**0851–0854** | **085× 探针 3 App**；填满仍 085，另有 **081×** |
+| **Indosat** | 0814–0816、**0855–0858**、0894–0899 | 掩码 085 无法拆 0852 vs 0857 |
+| **XL** | 0817–0819、0859、0877–0878 | 081 也可能是 XL |
+| Axis / Smartfren | 083x / 088x | 未见 |
+
+BLB 旧闻：印尼（与南非）一度 **只能邮箱注册**。这与我们 api_id=6 上 id=Payment 同向；**api_id=4 仍可能绕过邮箱/Payment**，R1 已用 App 证明「能 sendCode」，没证明「能 SMS」。
+
+### 5.6 哈萨克 +7 7xx：仍是俄语第一推，前缀必须避开俄 9xx
+
+官方/本地表（[ehelp.kz](https://ehelp.kz/operatos/)、[gadgetbox.kz 编号计划](https://gadgetbox.kz/telefonniy-plan-numeracii-kazahstana.html)，比 SMSCode 营销表干净）：
+
+| DEF | 运营商 |
+|-----|--------|
+| 700、708 | Altel |
+| **701、702、775、778** | **Kcell / Activ** |
+| **705、771、776、777** | **Beeline KZ（Kar-Tel）** |
+| 707、747 | Tele2 |
+| 706 | izi（Beeline 网） |
+
+SMSCode 另写 766=Kcell，并把 707/708 划给 Beeline——**与本地编号计划冲突，以本地表为准**。俄语卖点仍是：+7 看起来像独联体，但是 **7xx 不是俄 9xx**。R1 两家 getNumber 全 noNumber，本轮有货再测，没货不充值硬打。
+
+### 5.7 第一轮实测前缀（给第二轮对照，不是结论）
+
+时间窗 2026-09-02 **12:32–12:38Z 探针 App**，**12:39Z 起填满 FLOOD**。供应商几乎全是 **smsbower**。
+
+| 国 | 探针掩码 | 猜运营商 | sendCode | 填满掩码 |
+|----|----------|----------|----------|----------|
+| ph | 6397、6394 | Globe/TM 系、混 | App×3 | 6396、6399、6397 |
+| vn | 8438、8452、8433 | Viettel、Vietnamobile | App×4 | 8433、8496、8493、8490 |
+| id | 6285 | Telkomsel 或 Indosat | App×3 | 6285、6281 |
+| in | （抬价后）9197、9192、9181、9177 | 印地大池 | 0 / FLOOD×4 | — |
+| kz | 无号 | — | — | — |
+
+### 5.8 第二轮实验怎么改（写进 `run_country_passrate_50_r2.py`）
+
+1. 主栈不变：`api_id=4` + hash `014b35…5103` + Push + `official_emulation=false` + vault + 号国 tz。**0 个 api_id=6。**  
+2. 预算：优选 **ph/vn/id（kz 有货则加入）≥70%**；对照 **in，无号则 iq** ≤15%。不向 pk 倒预算（R1 先代理超时后 FLOOD）。  
+3. 节奏：每国先 4 号探针；**出现 App/SMS 只加码该国**，填满块 ≤4、块间隔约 1–2 分钟；**开局全 FLOOD 则换国 / 等 30–60 分钟再探针**，禁止 50 连射。  
+4. 记录：供应商、掩码前缀、猜运营商、`sent_code` 类型、波次 UTC 时间戳。  
+5. 失败 cancel；安全线同第一轮。
+
+对照文献仍压过营销：本仓库硬事实（Payment / App / FLOOD）> Expert 方向 > SMSCode 百分比。
