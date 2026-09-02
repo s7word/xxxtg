@@ -31,6 +31,8 @@
 | **H6** | 号池：提高 `max_price` + 每号新设备，筛 SMS 友好 iq 号 | H1 配置 + max_price=1.5 | SentCodeTypeSms > 0 | 认定 iq smsbower 当前批次 App-only |
 | **H7** | 换国 **jo**，保持 H1/H3 中 iq 上「能 sendCode 且非 Payment」的配置 | 10 号 | 收到 SMS 并注册 | 转 H8 |
 | **H8** | 换国 **ma**（ae 参考价 ~$5.5，余额不够） | 10 号 | 同上 | 写穷尽结论 |
+| **H9** | jo + official api_id=6 Payment 后 resend | 本轮补 | constructor 是否为 SMS 且能收码 | — |
+| **H10** | ma + official api_id=6 Payment 后 resend | 本轮补 | 同上 | — |
 
 不测：自建 api_id、无 Push 的 4/6、REGHelp Email、真钱内购。
 
