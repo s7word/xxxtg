@@ -208,25 +208,46 @@ def pick_provider(
     country: str,
     preferred: Optional[str] = None,
 ) -> Tuple[Optional[str], Dict[str, Any]]:
+    """有库存且标价不超过出价上限的源里：优先 smsbower（失败常能 cancel 不扣），否则取最便宜。"""
     order = list(PROVIDER_ORDER)
     if preferred and preferred in order:
         order.remove(preferred)
         order.insert(0, preferred)
+    cap = PRICE_CAP.get(country, 1.6)
     scanned = []
+    viable: List[Dict[str, Any]] = []
     for provider in order:
         stock = stocks.get(provider) or {}
         n = stock_count(stock, country)
         price = stock_price(stock, country)
-        scanned.append({"provider": provider, "count": n, "price": price})
-        if n > 0:
-            return provider, {
-                "chosen": provider,
-                "count": n,
-                "price": price,
-                "bid": bid_for(country, price),
-                "all": scanned,
-            }
-    return None, {"chosen": None, "count": 0, "price": None, "all": scanned, "none_in_stock": True}
+        over_cap = bool(price is not None and price > cap + 0.01)
+        row = {
+            "provider": provider,
+            "count": n,
+            "price": price,
+            "bid": bid_for(country, price) if n > 0 and not over_cap else None,
+            "over_cap": over_cap,
+        }
+        scanned.append(row)
+        if n > 0 and not over_cap:
+            viable.append(row)
+    if not viable:
+        return None, {"chosen": None, "count": 0, "price": None, "all": scanned, "none_in_stock": True}
+    smsbower_hit = next((v for v in viable if v["provider"] == "smsbower"), None)
+    if preferred:
+        pref_hit = next((v for v in viable if v["provider"] == preferred), None)
+        chosen = pref_hit or min(viable, key=lambda v: (v.get("price") is None, v.get("price") or 99))
+    elif smsbower_hit:
+        chosen = smsbower_hit
+    else:
+        chosen = min(viable, key=lambda v: (v.get("price") is None, v.get("price") or 99, v["provider"]))
+    return chosen["provider"], {
+        "chosen": chosen["provider"],
+        "count": chosen["count"],
+        "price": chosen["price"],
+        "bid": chosen["bid"] or bid_for(country, chosen["price"]),
+        "all": scanned,
+    }
 
 
 def estimate_cost(plan: List[Dict[str, Any]], stocks: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
