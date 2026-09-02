@@ -26,6 +26,7 @@ from backend.app.services.reghelp import (  # noqa: E402
     EmailInboxResult,
     PUSH_REFUND_REASON_MAP,
     RegHelpService,
+    _format_reghelp_service_disabled,
 )
 from backend.app.services.registrar import (  # noqa: E402
     DEFAULT_SMS_POLL_ATTEMPTS,
@@ -54,13 +55,13 @@ def _android_profile(**kwargs):
 
 def make_payment_required():
     return type("SentCodePaymentRequired", (), {
-        "store_product": "org.telegram.messenger.premium",
+        "store_product": "telegram_premium.one_week.auth",
         "phone_code_hash": "hash-pay",
         "support_email_address": "sms@telegram.org",
         "support_email_subject": "Payment",
-        "premium_days": 30,
+        "premium_days": 7,
         "currency": "USD",
-        "amount": 499,
+        "amount": 100,
         "type": None,
         "next_type": None,
         "timeout": None,
@@ -137,6 +138,26 @@ class TestSentCodeTypeHelpers(unittest.TestCase):
         self.assertFalse(RegistrationOrchestrator._is_app_delivery(sent))
         self.assertFalse(RegistrationOrchestrator._is_sms_delivery(sent))
         self.assertIn("SentCodePaymentRequired", RegistrationOrchestrator._describe_sent_code(sent))
+        self.assertIn("amount_display=USD $1.00", RegistrationOrchestrator._describe_sent_code(sent))
+
+    def test_extract_payment_required_info(self):
+        sent = make_payment_required()
+        info = RegistrationOrchestrator.extract_payment_required_info(sent)
+        self.assertEqual(info["store_product"], "telegram_premium.one_week.auth")
+        self.assertEqual(info["currency"], "USD")
+        self.assertEqual(info["amount"], 100)
+        self.assertEqual(info["amount_display"], "USD $1.00")
+        self.assertEqual(info["premium_days"], 7)
+
+    def test_format_payment_amount(self):
+        self.assertEqual(
+            RegistrationOrchestrator._format_payment_amount("USD", 100),
+            "USD $1.00",
+        )
+        self.assertEqual(
+            RegistrationOrchestrator._format_payment_amount("JPY", 500),
+            "JPY 500",
+        )
 
     def test_email_setup_and_email_code(self):
         setup = make_sent_code("SentCodeTypeSetUpEmailRequired")
@@ -158,10 +179,18 @@ class TestSentCodeTypeHelpers(unittest.TestCase):
         for reason in (
             "PAYMENT_REQUIRED_OFFICIAL_ONLY",
             "EMAIL_SETUP_FAILED",
+            "EMAIL_SERVICE_DISABLED",
             "EMAIL_CODE_UNAVAILABLE",
             "FIREBASE_SMS_FAILED",
         ):
             self.assertEqual(PUSH_REFUND_REASON_MAP[reason], "NOSMS")
+
+    def test_email_setup_failure_reason_service_disabled(self):
+        exc = RuntimeError(_format_reghelp_service_disabled("Email"))
+        self.assertEqual(
+            RegistrationOrchestrator._email_setup_failure_reason(exc),
+            "EMAIL_SERVICE_DISABLED",
+        )
 
 
 class TestResolveNewSentCodeTypes(unittest.IsolatedAsyncioTestCase):
@@ -182,11 +211,17 @@ class TestResolveNewSentCodeTypes(unittest.IsolatedAsyncioTestCase):
                 self.task_id, self.manager, emulation_label="official",
             )
         self.assertEqual(ctx.exception.reason, "PAYMENT_REQUIRED_OFFICIAL_ONLY")
+        self.assertEqual(ctx.exception.payment_required["amount_display"], "USD $1.00")
+        self.assertEqual(ctx.exception.payment_required["store_product"], "telegram_premium.one_week.auth")
         self.assertEqual(client.calls, [])
         logs = self._logs()
         self.assertIn("SentCodePaymentRequired", logs)
         self.assertIn("[模式=official]", logs)
-        self.assertIn("需官方 App 内购", logs)
+        self.assertIn("PaymentRequired: USD $1.00", logs)
+        self.assertIn("product=telegram_premium.one_week.auth", logs)
+        task = self.manager.get_task(self.task_id)
+        self.assertEqual(task["payment_required"]["amount"], 100)
+        self.assertEqual(task["delivery_type"], "SentCodePaymentRequired")
 
     async def test_email_code_fails_fast(self):
         sent = make_sent_code("SentCodeTypeEmailCode")
@@ -322,6 +357,48 @@ class TestRegHelpEmailApi(unittest.IsolatedAsyncioTestCase):
             )
             self.assertEqual(inbox.email, "tmp@icloud.com")
             self.assertEqual(inbox.task_id, "em-1")
+        finally:
+            await svc.close()
+
+    async def test_get_login_email_service_disabled_http503(self):
+        svc = RegHelpService("test-key")
+        svc._last_good_api_base = "https://api.reghelp.net"
+
+        async def fake_get(url, params=None, headers=None):
+            if str(url).endswith("/email/getEmail"):
+                return DummyResponse({"detail": "SERVICE_DISABLED"}, status_code=503)
+            raise AssertionError(url)
+
+        svc.client.get = fake_get
+        try:
+            with self.assertRaises(RuntimeError) as ctx:
+                await svc.get_login_email(
+                    {"app_name": "tg", "app_device": "Android"},
+                    "+56911112222",
+                )
+            self.assertIn("SERVICE_DISABLED", str(ctx.exception))
+            self.assertIn("平台侧暂时关闭", str(ctx.exception))
+            self.assertNotIn("控制台启用", str(ctx.exception))
+        finally:
+            await svc.close()
+
+    async def test_get_login_email_service_disabled_status_error(self):
+        svc = RegHelpService("test-key")
+        svc._last_good_api_base = "https://api.reghelp.net"
+
+        async def fake_get(url, params=None, headers=None):
+            if str(url).endswith("/email/getEmail"):
+                return DummyResponse({"status": "error", "detail": "SERVICE_DISABLED"})
+            raise AssertionError(url)
+
+        svc.client.get = fake_get
+        try:
+            with self.assertRaises(RuntimeError) as ctx:
+                await svc.get_login_email(
+                    {"app_name": "tg", "app_device": "Android"},
+                    "+56911112222",
+                )
+            self.assertIn("SERVICE_DISABLED", str(ctx.exception))
         finally:
             await svc.close()
 

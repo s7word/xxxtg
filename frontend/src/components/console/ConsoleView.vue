@@ -505,6 +505,9 @@
                   </span>
                   <span v-if="t.cancel_requested && !isTerminalStatus(t.status)" class="ce-badge is-warn">停止中</span>
                   <span v-if="t.precheck_intercepted" class="ce-badge is-warn">预检拦截</span>
+                  <span v-if="t.payment_required?.amount_display" class="ce-badge is-warn mono" :title="t.payment_required.store_product">
+                    💳 {{ t.payment_required.amount_display }}
+                  </span>
                 </td>
                 <td class="mono">{{ t.phone || '-' }}</td>
                 <td class="mono">{{ t.user_id || '-' }}</td>
@@ -585,6 +588,26 @@
         </template>
         <div v-if="detailTask.cancel_requested" class="ce-alert is-warn">
           已收到停止请求：不再开新一轮取号，当前一轮结束后收尾退款。
+        </div>
+        <div v-if="detailTask.payment_required" class="ce-alert is-warn payment-required-banner">
+          <div class="payment-required-title">💳 需官方 App 内购 (SentCodePaymentRequired)</div>
+          <div v-if="detailTask.payment_required.amount_display" class="payment-required-amount">
+            {{ detailTask.payment_required.amount_display }}
+          </div>
+          <div class="ce-stat" style="margin-top:8px">
+            <span>Product ID</span>
+            <span class="mono">{{ detailTask.payment_required.store_product || '-' }}</span>
+          </div>
+          <div v-if="detailTask.payment_required.premium_days != null" class="ce-stat">
+            <span>Premium 天数</span><span class="mono">{{ detailTask.payment_required.premium_days }}</span>
+          </div>
+          <div class="ce-stat">
+            <span>原始 amount</span>
+            <span class="mono">{{ detailTask.payment_required.currency }} {{ detailTask.payment_required.amount }}</span>
+          </div>
+          <p class="ce-tiny ce-muted" style="margin-top:8px">
+            MTProto 自动化无法完成 Google Play / App Store 内购；需官方 Telegram 客户端人工支付。
+          </p>
         </div>
         <div class="ce-stat"><span>创建 / 更新</span><span>{{ formatTime(detailTask.created_at) }} · {{ formatDuration(detailTask.created_at, detailTask.updated_at) }}</span></div>
         <div v-if="detailTask.error" class="ce-alert is-danger">{{ detailTask.error }}</div>
