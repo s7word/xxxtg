@@ -71,6 +71,10 @@ class CodeDeliveryPlan:
     forced_sms: bool = False
     official_client_emulation: bool = False
     emulation_label: str = "balanced"
+    allow_firebase: bool = False
+    unknown_number: bool = False
+    allow_flashcall: bool = False
+    allow_missed_call: bool = False
     notes: tuple[str, ...] = field(default_factory=tuple)
 
     def summary_for_log(self) -> str:
@@ -87,6 +91,10 @@ class CodeDeliveryPlan:
             parts.append("猎号强制SMS")
         if self.use_published_api_id:
             parts.append("泄露/official_api_id")
+        if self.allow_firebase:
+            parts.append("allow_firebase")
+        if self.unknown_number:
+            parts.append("unknown_number")
         return "，".join(parts)
 
 
@@ -217,6 +225,10 @@ def resolve_code_delivery_plan(
 
     # allow_app_hash 只跟设备平台走：它协商短信正文里的 app hash，不选择投递通道
     allow_app_hash = profile_allows_app_hash(profile)
+    allow_firebase = bool(getattr(config, "code_settings_allow_firebase", True)) and allow_app_hash
+    unknown_number = bool(getattr(config, "code_settings_unknown_number", True))
+    allow_flashcall = bool(getattr(config, "code_settings_allow_flashcall", False))
+    allow_missed_call = bool(getattr(config, "code_settings_allow_missed_call", False))
 
     if effective == CODE_DELIVERY_SMS_FIRST:
         should_request = published and not forced_sms
@@ -245,6 +257,10 @@ def resolve_code_delivery_plan(
         forced_sms=forced_sms,
         official_client_emulation=official_emu,
         emulation_label=label,
+        allow_firebase=allow_firebase,
+        unknown_number=unknown_number,
+        allow_flashcall=allow_flashcall,
+        allow_missed_call=allow_missed_call,
         notes=tuple(notes),
     )
 
@@ -263,5 +279,9 @@ def escalation_plan_after_published_flood(plan: CodeDeliveryPlan) -> CodeDeliver
         forced_sms=plan.forced_sms,
         official_client_emulation=plan.official_client_emulation,
         emulation_label=plan.emulation_label,
+        allow_firebase=plan.allow_firebase,
+        unknown_number=plan.unknown_number,
+        allow_flashcall=plan.allow_flashcall,
+        allow_missed_call=plan.allow_missed_call,
         notes=plan.notes + ("API_ID_PUBLISHED_FLOOD → escalate 至 push_required",),
     )

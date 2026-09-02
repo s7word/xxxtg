@@ -148,6 +148,8 @@ backend/app/
 
 失败时：SMS `cancel` +（若 REGHelp）`setStatus` 退款（#26 已实现，需 `ref=task_id`）。预检已注册 / `SENT_CODE_TYPE_APP` / `PHONE_NUMBER_BANNED` 会写入本地黑名单，防止平台二次下发。
 
+**严格设备对齐**（`device_alignment_mode`，默认 `loose`；Settings 可开 `strict`）：详见 [STRICT_DEVICE_AND_PUSH.md](./STRICT_DEVICE_AND_PUSH.md)。开启后钉死 api_id=4、InitConnection 写 `lang_pack=android` + 号国 tz、vault 机型/12.7.3、缺字段拒绝发码、App-only 快丢号、FLOOD 换 Token。
+
 **验证码通道策略**（`code_delivery_mode`，默认 `balanced`）：
 - `balanced`：非泄露 effective api_id（如已配置 custom）→ 不申请/不 attach Push Token，提高 SMS 概率
 - `sms_first`：同上但更激进；遇 `API_ID_PUBLISHED_FLOOD` 可一次性 escalate 到 Push

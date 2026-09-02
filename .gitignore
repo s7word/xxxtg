@@ -29,6 +29,8 @@ lod_user/imports/
 data/config.json.lock
 data/push_token_vault.json
 data/push_token_vault.json.tmp
+data/vault_attestation.json
+data/vault_attestation.json.tmp
 data/edgenode_auth_secret
 data/edgenode_auth_password
 data/smsall_webhook_secret

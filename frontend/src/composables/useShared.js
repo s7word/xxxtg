@@ -74,6 +74,7 @@ export const COUNTRY_OPTIONS = COUNTRY_GROUPS.flatMap((group) => group.options)
 
 export const APP_TYPE_OPTIONS = [
   { value: 'telegram_android', label: '📱 MTProto Android (官方主版 SDK 33 / AID: 308a...)' },
+  { value: 'telegram_android_public', label: '📱 MTProto Android Public api_id=4（vault/严格对齐）' },
   { value: 'telegram_x', label: '⚡ MTProto TDLib (官方极速版 / AID: 47f7...)' },
   { value: 'telegram_9', label: '🕰️ MTProto Legacy (经典稳定版 SDK 32 / AID: 59e5...)' }
 ]
