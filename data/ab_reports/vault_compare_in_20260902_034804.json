@@ -1,0 +1,1115 @@
+{
+  "generated_at": "2026-09-02T03:48:04Z",
+  "mode": "vault_compare_ab",
+  "cli_country": "in",
+  "balances_before": {
+    "at": "2026-09-02T03:41:25Z",
+    "fivesim": {
+      "success": true,
+      "balance": 25.1154,
+      "currency": "RUB",
+      "message": "5SIM (5sim.net) 鉴权与通信正常，余额 25.1154（RUB），账号 s7word@gmail.com，评分 96，参考价 0.4072"
+    },
+    "grizzlysms": {
+      "success": true,
+      "balance": 29.8,
+      "currency": "USD",
+      "message": "Grizzly SMS (grizzlysms.com) 鉴权与通信正常，余额 29.8（USD），参考价 0.26"
+    },
+    "smsbower": {
+      "success": true,
+      "balance": 24.088,
+      "currency": "USD",
+      "message": "SMS Bower (smsbower.app) 鉴权与通信正常，余额 24.088（USD），参考价 0.336"
+    }
+  },
+  "balances_after": {
+    "at": "2026-09-02T03:48:04Z",
+    "fivesim": {
+      "success": true,
+      "balance": 25.1154,
+      "currency": "RUB",
+      "message": "5SIM (5sim.net) 鉴权与通信正常，余额 25.1154（RUB），账号 s7word@gmail.com，评分 96，参考价 0.4072"
+    },
+    "grizzlysms": {
+      "success": true,
+      "balance": 29.8,
+      "currency": "USD",
+      "message": "Grizzly SMS (grizzlysms.com) 鉴权与通信正常，余额 29.8（USD），参考价 0.26"
+    },
+    "smsbower": {
+      "success": true,
+      "balance": 24.097,
+      "currency": "USD",
+      "message": "SMS Bower (smsbower.app) 鉴权与通信正常，余额 24.097（USD），参考价 0.336"
+    }
+  },
+  "comparison_table": [
+    {
+      "experiment": "1",
+      "label": "V1_api4_official_in",
+      "description": "api_id=4 + 正确 hash + official + smsbower email",
+      "active_app_type": "telegram_android_public",
+      "leased": 4,
+      "sendcode_samples": 4,
+      "email_verified": 0,
+      "email_then_payment": 0,
+      "payment_rate_after_email": 0.0,
+      "sent_code_types": {
+        "SentCodeTypeApp": 4
+      },
+      "post_email_sent_code_types": {},
+      "api_ids": {
+        "4": 2
+      },
+      "failure_reasons": {
+        "SENT_CODE_TYPE_APP": 2
+      }
+    },
+    {
+      "experiment": "2",
+      "label": "V2_api4_official_iq",
+      "description": "api_id=4 + 正确 hash + official + iq 对照",
+      "active_app_type": "telegram_android_public",
+      "leased": 2,
+      "sendcode_samples": 0,
+      "email_verified": 0,
+      "email_then_payment": 0,
+      "payment_rate_after_email": 0.0,
+      "sent_code_types": {},
+      "post_email_sent_code_types": {},
+      "api_ids": {
+        "4": 2
+      },
+      "failure_reasons": {}
+    },
+    {
+      "experiment": "3",
+      "label": "V3_vault_replay_balanced",
+      "description": "vault +91 成功路径：api_id=4 custom + balanced 非 official",
+      "active_app_type": "telegram_android_public",
+      "leased": 2,
+      "sendcode_samples": 0,
+      "email_verified": 0,
+      "email_then_payment": 0,
+      "payment_rate_after_email": 0.0,
+      "sent_code_types": {},
+      "post_email_sent_code_types": {},
+      "api_ids": {
+        "4": 2
+      },
+      "failure_reasons": {}
+    },
+    {
+      "experiment": "4",
+      "label": "V4_api6_official_control",
+      "description": "api_id=6 official 同国对照",
+      "active_app_type": "telegram_android",
+      "leased": 4,
+      "sendcode_samples": 4,
+      "email_verified": 0,
+      "email_then_payment": 0,
+      "payment_rate_after_email": 0.0,
+      "sent_code_types": {
+        "SentCodeTypeApp": 4
+      },
+      "post_email_sent_code_types": {},
+      "api_ids": {
+        "6": 2
+      },
+      "failure_reasons": {
+        "SENT_CODE_TYPE_APP": 2
+      }
+    }
+  ],
+  "rounds": [
+    {
+      "experiment_id": "1",
+      "label": "V1_api4_official_in",
+      "description": "api_id=4 + 正确 hash + official + smsbower email",
+      "country": "in",
+      "sms_provider": "smsbower",
+      "threads": 2,
+      "attempts_per_thread": 2,
+      "applied": {
+        "official_client_emulation": true,
+        "api_credential_mode": "official",
+        "code_delivery_mode": "push_required",
+        "email_provider_mode": "smsbower_only",
+        "active_app_type": "telegram_android_public"
+      },
+      "proxy_mode": "auto",
+      "batch_id": "605442fe",
+      "timed_out": false,
+      "elapsed_seconds": 120.1,
+      "batch_status": "failed",
+      "summary": {
+        "tasks": 2,
+        "success": 0,
+        "leased_numbers": 4,
+        "blacklist_skips": 0,
+        "sendcode_samples": 4,
+        "sms": 0,
+        "app": 4,
+        "other_type": 0,
+        "sms_rate": 0.0,
+        "sent_code_types": {
+          "SentCodeTypeApp": 4
+        },
+        "next_type_none": 4,
+        "app_next_type_none": 4,
+        "plan_modes": {
+          "push_required": 4
+        },
+        "attached_token": {
+          "是": 4
+        },
+        "allow_app_hash": {
+          "是": 4
+        },
+        "skipped_push_tasks": 0,
+        "api_id_published_flood": 0,
+        "connect_timeout": 0,
+        "mtproto_handshake": 2,
+        "sms_code_received": 0,
+        "geo_1to1_true": 0,
+        "geo_1to1_false": 0,
+        "fallback_proxy": 0,
+        "precheck_registered": 0,
+        "api_ids": {
+          "4": 2
+        },
+        "devices": {
+          "Xiaomi23078PND5G (SDK 33), App: 12.7.3 (67509)": 1,
+          "Xiaomi2312DRA50G (SDK 35), App: 12.5.2 (65540)": 1
+        },
+        "statuses": {
+          "failed": 2
+        },
+        "no_sendcode_reasons": {},
+        "tasks_without_sendcode": 0,
+        "task_ids": [
+          "e88e23be",
+          "9de3fe88"
+        ]
+      },
+      "analysis": {
+        "tasks": 2,
+        "leased_numbers": 4,
+        "sendcode_samples": 4,
+        "sent_code_types": {
+          "SentCodeTypeApp": 4
+        },
+        "post_email_sent_code_types": {},
+        "payment_task_count": 0,
+        "payment_sample_count": 0,
+        "payment_rate_of_sendcode": 0.0,
+        "payment_rate_after_email": 0.0,
+        "email_verified_tasks": 0,
+        "email_then_payment": 0,
+        "email_then_other": 0,
+        "failure_reasons": {
+          "SENT_CODE_TYPE_APP": 2
+        },
+        "devices": {
+          "Xiaomi23078PND5G (SDK 33), App: 12.7.3 (67509)": 1,
+          "Xiaomi2312DRA50G (SDK 35), App: 12.5.2 (65540)": 1
+        },
+        "api_ids": {
+          "4": 2
+        },
+        "proxy_countries": {}
+      },
+      "rows": [
+        {
+          "task_id": "e88e23be",
+          "status": "failed",
+          "phone": "+9170****034",
+          "leased_numbers": 2,
+          "blacklist_skips": 0,
+          "samples": [
+            {
+              "sent_code_type": "SentCodeTypeApp",
+              "next_type": "None",
+              "timeout": "None",
+              "bucket": "app"
+            },
+            {
+              "sent_code_type": "SentCodeTypeApp",
+              "next_type": "None",
+              "timeout": "None",
+              "bucket": "app"
+            }
+          ],
+          "resend_types": [],
+          "plan_modes": [
+            "push_required",
+            "push_required"
+          ],
+          "plan_attached_token": [
+            "是",
+            "是"
+          ],
+          "plan_allow_app_hash": [
+            "是",
+            "是"
+          ],
+          "plan_request_push": [
+            "是",
+            "是"
+          ],
+          "skipped_push": false,
+          "api_ids": [
+            "4"
+          ],
+          "credential_custom": false,
+          "device": "Xiaomi23078PND5G (SDK 33), App: 12.7.3 (67509)",
+          "precheck_ok": true,
+          "precheck_registered": false,
+          "mtproto_connect": true,
+          "mtproto_handshake": true,
+          "connect_timeout": false,
+          "api_id_published_flood": 0,
+          "flood_wait": false,
+          "sms_code_received": false,
+          "proxy_country": null,
+          "phone_country": "IN",
+          "geo_1to1": null,
+          "used_fallback_proxy": false,
+          "provider_ids": null,
+          "egress_ip": null,
+          "no_sendcode_reason": null,
+          "error": "HUNT_EXHAUSTED: 取号 2/2 次，扫号 2 个，拉黑/拦截 2 个，最后一次失败原因 SENT_CODE_TYPE_APP",
+          "log_excerpt": [
+            "[03:41:29] 选定端点模板: MTProto Android Legacy Public (api_id=4) (AID: 308aba4e-5680-466b-81a5-477ac6befa95)",
+            "[03:41:29] 绑定硬件特征: Xiaomi23078PND5G (SDK 33), App: 12.7.3 (67509)",
+            "[03:41:33] 正在对通信句柄 +917970660120 执行 Telegram 号码注册状态预检探测...",
+            "[03:41:40] 预检通过：号码 +917970660120 在 Telegram 官方库中未注册（白号），继续申请 Push Token 并发送 auth.sendCode",
+            "[03:41:43] [验证码通道] 通道策略=push_required，申请Push=是，attach_token=是，allow_app_hash=是，模式标签=official，官方客户端模拟，泄露/official_api_id",
+            "[03:41:43] [验证码通道] official_client_emulation：强制官方 api_id=4 + push_required",
+            "[03:41:43] [验证码通道] push_required：申请 Push 并 attach token",
+            "[03:41:55] 建立 MTProto 协议传输通道 (中继节点: res.proxy-seller.com:10000)...",
+            "[03:42:00] 已完成 MTProto 传输层 Diffie-Hellman 密钥交换与加密连接建立",
+            "[03:42:22] 挑战已由服务端下发! 分发通道类型: SentCodeTypeApp (type=SentCodeTypeApp next_type=None timeout=None) [模式=official]",
+            "[03:42:22] ⚠️ 服务端将验证码下发到了已有设备客户端 (SentCodeTypeApp)，带外短信通道大概率无法接收",
+            "[03:42:25] [猎号] SentCodeTypeApp（SENT_CODE_TYPE_APP）换号继续 (1/2)；连续 APP 1（熔断关闭）；代理已用 1/5，设备已用 1/8"
+          ],
+          "log_lines": 80,
+          "payment_required": null,
+          "payment_log_count": 0,
+          "email_verified": false,
+          "sms_or_app_after_email": true,
+          "store_products": [],
+          "final_failure_reason": "SENT_CODE_TYPE_APP",
+          "post_email_sent_codes": [],
+          "post_email_sent_code_type": null
+        },
+        {
+          "task_id": "9de3fe88",
+          "status": "failed",
+          "phone": "+9187****615",
+          "leased_numbers": 2,
+          "blacklist_skips": 0,
+          "samples": [
+            {
+              "sent_code_type": "SentCodeTypeApp",
+              "next_type": "None",
+              "timeout": "None",
+              "bucket": "app"
+            },
+            {
+              "sent_code_type": "SentCodeTypeApp",
+              "next_type": "None",
+              "timeout": "None",
+              "bucket": "app"
+            }
+          ],
+          "resend_types": [],
+          "plan_modes": [
+            "push_required",
+            "push_required"
+          ],
+          "plan_attached_token": [
+            "是",
+            "是"
+          ],
+          "plan_allow_app_hash": [
+            "是",
+            "是"
+          ],
+          "plan_request_push": [
+            "是",
+            "是"
+          ],
+          "skipped_push": false,
+          "api_ids": [
+            "4"
+          ],
+          "credential_custom": false,
+          "device": "Xiaomi2312DRA50G (SDK 35), App: 12.5.2 (65540)",
+          "precheck_ok": true,
+          "precheck_registered": false,
+          "mtproto_connect": true,
+          "mtproto_handshake": true,
+          "connect_timeout": false,
+          "api_id_published_flood": 0,
+          "flood_wait": false,
+          "sms_code_received": false,
+          "proxy_country": null,
+          "phone_country": "IN",
+          "geo_1to1": null,
+          "used_fallback_proxy": false,
+          "provider_ids": null,
+          "egress_ip": null,
+          "no_sendcode_reason": null,
+          "error": "HUNT_EXHAUSTED: 取号 2/2 次，扫号 2 个，拉黑/拦截 2 个，最后一次失败原因 SENT_CODE_TYPE_APP",
+          "log_excerpt": [
+            "[03:41:29] 选定端点模板: MTProto Android Legacy Public (api_id=4) (AID: 308aba4e-5680-466b-81a5-477ac6befa95)",
+            "[03:41:29] 绑定硬件特征: Xiaomi2312DRA50G (SDK 35), App: 12.5.2 (65540)",
+            "[03:41:31] 正在对通信句柄 +917009442516 执行 Telegram 号码注册状态预检探测...",
+            "[03:41:39] 预检通过：号码 +917009442516 在 Telegram 官方库中未注册（白号），继续申请 Push Token 并发送 auth.sendCode",
+            "[03:41:42] [验证码通道] 通道策略=push_required，申请Push=是，attach_token=是，allow_app_hash=是，模式标签=official，官方客户端模拟，泄露/official_api_id",
+            "[03:41:42] [验证码通道] official_client_emulation：强制官方 api_id=4 + push_required",
+            "[03:41:42] [验证码通道] push_required：申请 Push 并 attach token",
+            "[03:41:55] 建立 MTProto 协议传输通道 (中继节点: res.proxy-seller.com:10001)...",
+            "[03:42:01] 已完成 MTProto 传输层 Diffie-Hellman 密钥交换与加密连接建立",
+            "[03:42:31] 挑战已由服务端下发! 分发通道类型: SentCodeTypeApp (type=SentCodeTypeApp next_type=None timeout=None) [模式=official]",
+            "[03:42:31] ⚠️ 服务端将验证码下发到了已有设备客户端 (SentCodeTypeApp)，带外短信通道大概率无法接收",
+            "[03:42:34] [猎号] SentCodeTypeApp（SENT_CODE_TYPE_APP）换号继续 (1/2)；连续 APP 1（熔断关闭）；代理已用 1/5，设备已用 1/8"
+          ],
+          "log_lines": 80,
+          "payment_required": null,
+          "payment_log_count": 0,
+          "email_verified": false,
+          "sms_or_app_after_email": true,
+          "store_products": [],
+          "final_failure_reason": "SENT_CODE_TYPE_APP",
+          "post_email_sent_codes": [],
+          "post_email_sent_code_type": null
+        }
+      ]
+    },
+    {
+      "experiment_id": "2",
+      "label": "V2_api4_official_iq",
+      "description": "api_id=4 + 正确 hash + official + iq 对照",
+      "country": "iq",
+      "sms_provider": "smsbower",
+      "threads": 2,
+      "attempts_per_thread": 2,
+      "applied": {
+        "official_client_emulation": true,
+        "api_credential_mode": "official",
+        "code_delivery_mode": "push_required",
+        "email_provider_mode": "smsbower_only",
+        "active_app_type": "telegram_android_public"
+      },
+      "proxy_mode": "auto",
+      "batch_id": "9ccf3ea6",
+      "timed_out": false,
+      "elapsed_seconds": 36.0,
+      "batch_status": "failed",
+      "summary": {
+        "tasks": 2,
+        "success": 0,
+        "leased_numbers": 2,
+        "blacklist_skips": 0,
+        "sendcode_samples": 0,
+        "sms": 0,
+        "app": 0,
+        "other_type": 0,
+        "sms_rate": null,
+        "sent_code_types": {},
+        "next_type_none": 0,
+        "app_next_type_none": 0,
+        "plan_modes": {
+          "push_required": 2
+        },
+        "attached_token": {
+          "是": 2
+        },
+        "allow_app_hash": {
+          "是": 2
+        },
+        "skipped_push_tasks": 0,
+        "api_id_published_flood": 4,
+        "connect_timeout": 0,
+        "mtproto_handshake": 2,
+        "sms_code_received": 0,
+        "geo_1to1_true": 0,
+        "geo_1to1_false": 0,
+        "fallback_proxy": 0,
+        "precheck_registered": 0,
+        "api_ids": {
+          "4": 2
+        },
+        "devices": {
+          "Xiaomi2201123G (SDK 32), App: 11.8.4 (54610)": 1,
+          "OnePlusCPH2449 (SDK 35), App: 12.4.1 (64811)": 1
+        },
+        "statuses": {
+          "failed": 2
+        },
+        "no_sendcode_reasons": {
+          "PROXY_UNAVAILABLE": 2
+        },
+        "tasks_without_sendcode": 2,
+        "task_ids": [
+          "8abb13df",
+          "0af35fc0"
+        ]
+      },
+      "analysis": {
+        "tasks": 2,
+        "leased_numbers": 2,
+        "sendcode_samples": 0,
+        "sent_code_types": {},
+        "post_email_sent_code_types": {},
+        "payment_task_count": 0,
+        "payment_sample_count": 0,
+        "payment_rate_of_sendcode": null,
+        "payment_rate_after_email": 0.0,
+        "email_verified_tasks": 0,
+        "email_then_payment": 0,
+        "email_then_other": 0,
+        "failure_reasons": {},
+        "devices": {
+          "Xiaomi2201123G (SDK 32), App: 11.8.4 (54610)": 1,
+          "OnePlusCPH2449 (SDK 35), App: 12.4.1 (64811)": 1
+        },
+        "api_ids": {
+          "4": 2
+        },
+        "proxy_countries": {}
+      },
+      "rows": [
+        {
+          "task_id": "8abb13df",
+          "status": "failed",
+          "phone": "+9647****156",
+          "leased_numbers": 1,
+          "blacklist_skips": 0,
+          "samples": [],
+          "resend_types": [],
+          "plan_modes": [
+            "push_required"
+          ],
+          "plan_attached_token": [
+            "是"
+          ],
+          "plan_allow_app_hash": [
+            "是"
+          ],
+          "plan_request_push": [
+            "是"
+          ],
+          "skipped_push": false,
+          "api_ids": [
+            "4"
+          ],
+          "credential_custom": false,
+          "device": "Xiaomi2201123G (SDK 32), App: 11.8.4 (54610)",
+          "precheck_ok": true,
+          "precheck_registered": false,
+          "mtproto_connect": true,
+          "mtproto_handshake": true,
+          "connect_timeout": false,
+          "api_id_published_flood": 2,
+          "flood_wait": false,
+          "sms_code_received": false,
+          "proxy_country": null,
+          "phone_country": "IQ",
+          "geo_1to1": null,
+          "used_fallback_proxy": false,
+          "provider_ids": null,
+          "egress_ip": null,
+          "no_sendcode_reason": "PROXY_UNAVAILABLE",
+          "error": "当前 api_id=4 已被 Telegram 判定为公开泄露 ID，在缺少合法 Push Token 的情况下触发 API_ID_PUBLISHED_FLOOD (SendCodeRequest)。请在「🔐 凭证库 / 开发者 API」用已有账号申请专属 api_id/api_hash，或在「全局参数拓扑」填入自建 custom_api_id / custom_api_hash 并将 api_credential_mode 设为 auto 或 custom，或修复 Attestation 网关连通性以获取合法 Push Token 后重试",
+          "log_excerpt": [
+            "[03:43:29] 选定端点模板: MTProto Android Legacy Public (api_id=4) (AID: 308aba4e-5680-466b-81a5-477ac6befa95)",
+            "[03:43:29] 绑定硬件特征: Xiaomi2201123G (SDK 32), App: 11.8.4 (54610)",
+            "[03:43:32] 正在对通信句柄 +9647904745156 执行 Telegram 号码注册状态预检探测...",
+            "[03:43:40] 预检通过：号码 +9647904745156 在 Telegram 官方库中未注册（白号），继续申请 Push Token 并发送 auth.sendCode",
+            "[03:43:41] [验证码通道] 通道策略=push_required，申请Push=是，attach_token=是，allow_app_hash=是，模式标签=official，官方客户端模拟，泄露/official_api_id",
+            "[03:43:41] [验证码通道] official_client_emulation：强制官方 api_id=4 + push_required",
+            "[03:43:41] [验证码通道] push_required：申请 Push 并 attach token",
+            "[03:43:41] 建立 MTProto 协议传输通道 (中继节点: res.proxy-seller.com:10000)...",
+            "[03:43:45] 已完成 MTProto 传输层 Diffie-Hellman 密钥交换与加密连接建立",
+            "[03:43:54] ❌ 当前 api_id=4 已被 Telegram 判定为公开泄露 ID，在缺少合法 Push Token 的情况下触发 API_ID_PUBLISHED_FLOOD (SendCodeRequest)。请在「🔐 凭证库 / 开发者 API」用已有账号申请专属 api_id/api_hash，或在「全局参数拓扑」填入自建 custom_api_id / custom_api_hash 并将 api_credential_mode 设为 auto 或 cu",
+            "[03:43:54] [自动退订/撤销信道句柄完成] act_id=605827631 (SMS Bower (smsbower.app) status=8, 原因: API_ID_PUBLISHED_FLOOD)"
+          ],
+          "log_lines": 35,
+          "payment_required": null,
+          "payment_log_count": 0,
+          "email_verified": false,
+          "sms_or_app_after_email": false,
+          "store_products": [],
+          "final_failure_reason": null,
+          "post_email_sent_codes": [],
+          "post_email_sent_code_type": null
+        },
+        {
+          "task_id": "0af35fc0",
+          "status": "failed",
+          "phone": "+9647****170",
+          "leased_numbers": 1,
+          "blacklist_skips": 0,
+          "samples": [],
+          "resend_types": [],
+          "plan_modes": [
+            "push_required"
+          ],
+          "plan_attached_token": [
+            "是"
+          ],
+          "plan_allow_app_hash": [
+            "是"
+          ],
+          "plan_request_push": [
+            "是"
+          ],
+          "skipped_push": false,
+          "api_ids": [
+            "4"
+          ],
+          "credential_custom": false,
+          "device": "OnePlusCPH2449 (SDK 35), App: 12.4.1 (64811)",
+          "precheck_ok": true,
+          "precheck_registered": false,
+          "mtproto_connect": true,
+          "mtproto_handshake": true,
+          "connect_timeout": false,
+          "api_id_published_flood": 2,
+          "flood_wait": false,
+          "sms_code_received": false,
+          "proxy_country": null,
+          "phone_country": "IQ",
+          "geo_1to1": null,
+          "used_fallback_proxy": false,
+          "provider_ids": null,
+          "egress_ip": null,
+          "no_sendcode_reason": "PROXY_UNAVAILABLE",
+          "error": "当前 api_id=4 已被 Telegram 判定为公开泄露 ID，在缺少合法 Push Token 的情况下触发 API_ID_PUBLISHED_FLOOD (SendCodeRequest)。请在「🔐 凭证库 / 开发者 API」用已有账号申请专属 api_id/api_hash，或在「全局参数拓扑」填入自建 custom_api_id / custom_api_hash 并将 api_credential_mode 设为 auto 或 custom，或修复 Attestation 网关连通性以获取合法 Push Token 后重试",
+          "log_excerpt": [
+            "[03:43:29] 选定端点模板: MTProto Android Legacy Public (api_id=4) (AID: 308aba4e-5680-466b-81a5-477ac6befa95)",
+            "[03:43:29] 绑定硬件特征: OnePlusCPH2449 (SDK 35), App: 12.4.1 (64811)",
+            "[03:43:35] 正在对通信句柄 +9647870938170 执行 Telegram 号码注册状态预检探测...",
+            "[03:43:42] 预检通过：号码 +9647870938170 在 Telegram 官方库中未注册（白号），继续申请 Push Token 并发送 auth.sendCode",
+            "[03:43:44] [验证码通道] 通道策略=push_required，申请Push=是，attach_token=是，allow_app_hash=是，模式标签=official，官方客户端模拟，泄露/official_api_id",
+            "[03:43:44] [验证码通道] official_client_emulation：强制官方 api_id=4 + push_required",
+            "[03:43:44] [验证码通道] push_required：申请 Push 并 attach token",
+            "[03:43:44] 建立 MTProto 协议传输通道 (中继节点: res.proxy-seller.com:10001)...",
+            "[03:43:46] 已完成 MTProto 传输层 Diffie-Hellman 密钥交换与加密连接建立",
+            "[03:43:54] ❌ 当前 api_id=4 已被 Telegram 判定为公开泄露 ID，在缺少合法 Push Token 的情况下触发 API_ID_PUBLISHED_FLOOD (SendCodeRequest)。请在「🔐 凭证库 / 开发者 API」用已有账号申请专属 api_id/api_hash，或在「全局参数拓扑」填入自建 custom_api_id / custom_api_hash 并将 api_credential_mode 设为 auto 或 cu",
+            "[03:43:55] [自动退订/撤销信道句柄完成] act_id=605827753 (SMS Bower (smsbower.app) status=8, 原因: API_ID_PUBLISHED_FLOOD)"
+          ],
+          "log_lines": 35,
+          "payment_required": null,
+          "payment_log_count": 0,
+          "email_verified": false,
+          "sms_or_app_after_email": false,
+          "store_products": [],
+          "final_failure_reason": null,
+          "post_email_sent_codes": [],
+          "post_email_sent_code_type": null
+        }
+      ]
+    },
+    {
+      "experiment_id": "3",
+      "label": "V3_vault_replay_balanced",
+      "description": "vault +91 成功路径：api_id=4 custom + balanced 非 official",
+      "country": "in",
+      "sms_provider": "smsbower",
+      "threads": 2,
+      "attempts_per_thread": 2,
+      "applied": {
+        "official_client_emulation": false,
+        "api_credential_mode": "custom",
+        "custom_api_id": 4,
+        "custom_api_hash": "014b35b6184100b085b0d0572f9b5103",
+        "code_delivery_mode": "balanced",
+        "email_provider_mode": "smsbower_only",
+        "active_app_type": "telegram_android_public"
+      },
+      "proxy_mode": "auto",
+      "batch_id": "85f5fae5",
+      "timed_out": false,
+      "elapsed_seconds": 96.1,
+      "batch_status": "failed",
+      "summary": {
+        "tasks": 2,
+        "success": 0,
+        "leased_numbers": 2,
+        "blacklist_skips": 0,
+        "sendcode_samples": 0,
+        "sms": 0,
+        "app": 0,
+        "other_type": 0,
+        "sms_rate": null,
+        "sent_code_types": {},
+        "next_type_none": 0,
+        "app_next_type_none": 0,
+        "plan_modes": {
+          "push_required": 2
+        },
+        "attached_token": {
+          "是": 2
+        },
+        "allow_app_hash": {
+          "是": 2
+        },
+        "skipped_push_tasks": 0,
+        "api_id_published_flood": 4,
+        "connect_timeout": 0,
+        "mtproto_handshake": 2,
+        "sms_code_received": 0,
+        "geo_1to1_true": 0,
+        "geo_1to1_false": 0,
+        "fallback_proxy": 0,
+        "precheck_registered": 0,
+        "api_ids": {
+          "4": 2
+        },
+        "devices": {
+          "HUAWEIBRA-AL00 (SDK 32), App: 12.5.2 (65540)": 1,
+          "POCO22021211RG (SDK 34), App: 12.2.11 (62841)": 1
+        },
+        "statuses": {
+          "failed": 2
+        },
+        "no_sendcode_reasons": {
+          "PROXY_UNAVAILABLE": 2
+        },
+        "tasks_without_sendcode": 2,
+        "task_ids": [
+          "b3e4a03f",
+          "3528de74"
+        ]
+      },
+      "analysis": {
+        "tasks": 2,
+        "leased_numbers": 2,
+        "sendcode_samples": 0,
+        "sent_code_types": {},
+        "post_email_sent_code_types": {},
+        "payment_task_count": 0,
+        "payment_sample_count": 0,
+        "payment_rate_of_sendcode": null,
+        "payment_rate_after_email": 0.0,
+        "email_verified_tasks": 0,
+        "email_then_payment": 0,
+        "email_then_other": 0,
+        "failure_reasons": {},
+        "devices": {
+          "HUAWEIBRA-AL00 (SDK 32), App: 12.5.2 (65540)": 1,
+          "POCO22021211RG (SDK 34), App: 12.2.11 (62841)": 1
+        },
+        "api_ids": {
+          "4": 2
+        },
+        "proxy_countries": {}
+      },
+      "rows": [
+        {
+          "task_id": "b3e4a03f",
+          "status": "failed",
+          "phone": "+9177****850",
+          "leased_numbers": 1,
+          "blacklist_skips": 0,
+          "samples": [],
+          "resend_types": [],
+          "plan_modes": [
+            "push_required"
+          ],
+          "plan_attached_token": [
+            "是"
+          ],
+          "plan_allow_app_hash": [
+            "是"
+          ],
+          "plan_request_push": [
+            "是"
+          ],
+          "skipped_push": false,
+          "api_ids": [
+            "4"
+          ],
+          "credential_custom": true,
+          "device": "HUAWEIBRA-AL00 (SDK 32), App: 12.5.2 (65540)",
+          "precheck_ok": true,
+          "precheck_registered": false,
+          "mtproto_connect": true,
+          "mtproto_handshake": true,
+          "connect_timeout": false,
+          "api_id_published_flood": 2,
+          "flood_wait": false,
+          "sms_code_received": false,
+          "proxy_country": null,
+          "phone_country": "IN",
+          "geo_1to1": null,
+          "used_fallback_proxy": false,
+          "provider_ids": null,
+          "egress_ip": null,
+          "no_sendcode_reason": "PROXY_UNAVAILABLE",
+          "error": "当前 api_id=4 已被 Telegram 判定为公开泄露 ID，在缺少合法 Push Token 的情况下触发 API_ID_PUBLISHED_FLOOD (SendCodeRequest)。请在「🔐 凭证库 / 开发者 API」用已有账号申请专属 api_id/api_hash，或在「全局参数拓扑」填入自建 custom_api_id / custom_api_hash 并将 api_credential_mode 设为 auto 或 custom，或修复 Attestation 网关连通性以获取合法 Push Token 后重试",
+          "log_excerpt": [
+            "[03:44:05] 选定端点模板: MTProto Android Legacy Public (api_id=4) (AID: 308aba4e-5680-466b-81a5-477ac6befa95)",
+            "[03:44:05] 绑定硬件特征: HUAWEIBRA-AL00 (SDK 32), App: 12.5.2 (65540)",
+            "[03:44:09] 正在对通信句柄 +917710535850 执行 Telegram 号码注册状态预检探测...",
+            "[03:44:17] 预检通过：号码 +917710535850 在 Telegram 官方库中未注册（白号），继续申请 Push Token 并发送 auth.sendCode",
+            "[03:44:20] [验证码通道] 通道策略=push_required，申请Push=是，attach_token=是，allow_app_hash=是，模式标签=balanced，泄露/official_api_id",
+            "[03:44:20] [验证码通道] balanced + 泄露/official api_id=4 → 需要 Push",
+            "[03:44:20] [验证码通道] push_required：申请 Push 并 attach token",
+            "[03:44:33] API 凭证策略: 强制使用自建开发者凭证 (api_id=4)",
+            "[03:44:33] 建立 MTProto 协议传输通道 (中继节点: res.proxy-seller.com:10001)...",
+            "[03:44:39] 已完成 MTProto 传输层 Diffie-Hellman 密钥交换与加密连接建立",
+            "[03:44:48] ❌ 当前 api_id=4 已被 Telegram 判定为公开泄露 ID，在缺少合法 Push Token 的情况下触发 API_ID_PUBLISHED_FLOOD (SendCodeRequest)。请在「🔐 凭证库 / 开发者 API」用已有账号申请专属 api_id/api_hash，或在「全局参数拓扑」填入自建 custom_api_id / custom_api_hash 并将 api_credential_mode 设为 auto 或 cu",
+            "[03:44:49] [自动退订/撤销信道句柄完成] act_id=605828777 (SMS Bower (smsbower.app) status=8, 原因: API_ID_PUBLISHED_FLOOD)"
+          ],
+          "log_lines": 42,
+          "payment_required": null,
+          "payment_log_count": 0,
+          "email_verified": false,
+          "sms_or_app_after_email": false,
+          "store_products": [],
+          "final_failure_reason": null,
+          "post_email_sent_codes": [],
+          "post_email_sent_code_type": null
+        },
+        {
+          "task_id": "3528de74",
+          "status": "failed",
+          "phone": "+9189****041",
+          "leased_numbers": 1,
+          "blacklist_skips": 0,
+          "samples": [],
+          "resend_types": [],
+          "plan_modes": [
+            "push_required"
+          ],
+          "plan_attached_token": [
+            "是"
+          ],
+          "plan_allow_app_hash": [
+            "是"
+          ],
+          "plan_request_push": [
+            "是"
+          ],
+          "skipped_push": false,
+          "api_ids": [
+            "4"
+          ],
+          "credential_custom": true,
+          "device": "POCO22021211RG (SDK 34), App: 12.2.11 (62841)",
+          "precheck_ok": true,
+          "precheck_registered": false,
+          "mtproto_connect": true,
+          "mtproto_handshake": true,
+          "connect_timeout": false,
+          "api_id_published_flood": 2,
+          "flood_wait": false,
+          "sms_code_received": false,
+          "proxy_country": null,
+          "phone_country": "IN",
+          "geo_1to1": null,
+          "used_fallback_proxy": false,
+          "provider_ids": null,
+          "egress_ip": null,
+          "no_sendcode_reason": "PROXY_UNAVAILABLE",
+          "error": "当前 api_id=4 已被 Telegram 判定为公开泄露 ID，在缺少合法 Push Token 的情况下触发 API_ID_PUBLISHED_FLOOD (SendCodeRequest)。请在「🔐 凭证库 / 开发者 API」用已有账号申请专属 api_id/api_hash，或在「全局参数拓扑」填入自建 custom_api_id / custom_api_hash 并将 api_credential_mode 设为 auto 或 custom，或修复 Attestation 网关连通性以获取合法 Push Token 后重试",
+          "log_excerpt": [
+            "[03:44:05] 选定端点模板: MTProto Android Legacy Public (api_id=4) (AID: 308aba4e-5680-466b-81a5-477ac6befa95)",
+            "[03:44:05] 绑定硬件特征: POCO22021211RG (SDK 34), App: 12.2.11 (62841)",
+            "[03:44:09] 正在对通信句柄 +918969651041 执行 Telegram 号码注册状态预检探测...",
+            "[03:44:17] 预检通过：号码 +918969651041 在 Telegram 官方库中未注册（白号），继续申请 Push Token 并发送 auth.sendCode",
+            "[03:44:20] [验证码通道] 通道策略=push_required，申请Push=是，attach_token=是，allow_app_hash=是，模式标签=balanced，泄露/official_api_id",
+            "[03:44:20] [验证码通道] balanced + 泄露/official api_id=4 → 需要 Push",
+            "[03:44:20] [验证码通道] push_required：申请 Push 并 attach token",
+            "[03:44:31] API 凭证策略: 强制使用自建开发者凭证 (api_id=4)",
+            "[03:44:31] 建立 MTProto 协议传输通道 (中继节点: res.proxy-seller.com:10002)...",
+            "[03:44:36] 已完成 MTProto 传输层 Diffie-Hellman 密钥交换与加密连接建立",
+            "[03:44:45] ❌ 当前 api_id=4 已被 Telegram 判定为公开泄露 ID，在缺少合法 Push Token 的情况下触发 API_ID_PUBLISHED_FLOOD (SendCodeRequest)。请在「🔐 凭证库 / 开发者 API」用已有账号申请专属 api_id/api_hash，或在「全局参数拓扑」填入自建 custom_api_id / custom_api_hash 并将 api_credential_mode 设为 auto 或 cu",
+            "[03:44:46] [自动退订/撤销信道句柄完成] act_id=605828783 (SMS Bower (smsbower.app) status=8, 原因: API_ID_PUBLISHED_FLOOD)"
+          ],
+          "log_lines": 42,
+          "payment_required": null,
+          "payment_log_count": 0,
+          "email_verified": false,
+          "sms_or_app_after_email": false,
+          "store_products": [],
+          "final_failure_reason": null,
+          "post_email_sent_codes": [],
+          "post_email_sent_code_type": null
+        }
+      ]
+    },
+    {
+      "experiment_id": "4",
+      "label": "V4_api6_official_control",
+      "description": "api_id=6 official 同国对照",
+      "country": "in",
+      "sms_provider": "smsbower",
+      "threads": 2,
+      "attempts_per_thread": 2,
+      "applied": {
+        "official_client_emulation": true,
+        "api_credential_mode": "official",
+        "code_delivery_mode": "push_required",
+        "email_provider_mode": "smsbower_only",
+        "active_app_type": "telegram_android"
+      },
+      "proxy_mode": "auto",
+      "batch_id": "a7232688",
+      "timed_out": false,
+      "elapsed_seconds": 144.1,
+      "batch_status": "failed",
+      "summary": {
+        "tasks": 2,
+        "success": 0,
+        "leased_numbers": 4,
+        "blacklist_skips": 0,
+        "sendcode_samples": 4,
+        "sms": 0,
+        "app": 4,
+        "other_type": 0,
+        "sms_rate": 0.0,
+        "sent_code_types": {
+          "SentCodeTypeApp": 4
+        },
+        "next_type_none": 4,
+        "app_next_type_none": 4,
+        "plan_modes": {
+          "push_required": 4
+        },
+        "attached_token": {
+          "是": 4
+        },
+        "allow_app_hash": {
+          "是": 4
+        },
+        "skipped_push_tasks": 0,
+        "api_id_published_flood": 0,
+        "connect_timeout": 0,
+        "mtproto_handshake": 2,
+        "sms_code_received": 0,
+        "geo_1to1_true": 0,
+        "geo_1to1_false": 0,
+        "fallback_proxy": 0,
+        "precheck_registered": 0,
+        "api_ids": {
+          "6": 2
+        },
+        "devices": {
+          "Xiaomi24069PC21G (SDK 35), App: 12.3.2 (63902)": 1,
+          "TECNOKJ6 (SDK 34), App: 12.7.3 (67509)": 1
+        },
+        "statuses": {
+          "failed": 2
+        },
+        "no_sendcode_reasons": {},
+        "tasks_without_sendcode": 0,
+        "task_ids": [
+          "cdc76c90",
+          "f48f0e03"
+        ]
+      },
+      "analysis": {
+        "tasks": 2,
+        "leased_numbers": 4,
+        "sendcode_samples": 4,
+        "sent_code_types": {
+          "SentCodeTypeApp": 4
+        },
+        "post_email_sent_code_types": {},
+        "payment_task_count": 0,
+        "payment_sample_count": 0,
+        "payment_rate_of_sendcode": 0.0,
+        "payment_rate_after_email": 0.0,
+        "email_verified_tasks": 0,
+        "email_then_payment": 0,
+        "email_then_other": 0,
+        "failure_reasons": {
+          "SENT_CODE_TYPE_APP": 2
+        },
+        "devices": {
+          "Xiaomi24069PC21G (SDK 35), App: 12.3.2 (63902)": 1,
+          "TECNOKJ6 (SDK 34), App: 12.7.3 (67509)": 1
+        },
+        "api_ids": {
+          "6": 2
+        },
+        "proxy_countries": {}
+      },
+      "rows": [
+        {
+          "task_id": "cdc76c90",
+          "status": "failed",
+          "phone": "+9193****351",
+          "leased_numbers": 2,
+          "blacklist_skips": 0,
+          "samples": [
+            {
+              "sent_code_type": "SentCodeTypeApp",
+              "next_type": "None",
+              "timeout": "None",
+              "bucket": "app"
+            },
+            {
+              "sent_code_type": "SentCodeTypeApp",
+              "next_type": "None",
+              "timeout": "None",
+              "bucket": "app"
+            }
+          ],
+          "resend_types": [],
+          "plan_modes": [
+            "push_required",
+            "push_required"
+          ],
+          "plan_attached_token": [
+            "是",
+            "是"
+          ],
+          "plan_allow_app_hash": [
+            "是",
+            "是"
+          ],
+          "plan_request_push": [
+            "是",
+            "是"
+          ],
+          "skipped_push": false,
+          "api_ids": [
+            "6"
+          ],
+          "credential_custom": false,
+          "device": "Xiaomi24069PC21G (SDK 35), App: 12.3.2 (63902)",
+          "precheck_ok": true,
+          "precheck_registered": false,
+          "mtproto_connect": true,
+          "mtproto_handshake": true,
+          "connect_timeout": false,
+          "api_id_published_flood": 0,
+          "flood_wait": false,
+          "sms_code_received": false,
+          "proxy_country": null,
+          "phone_country": "IN",
+          "geo_1to1": null,
+          "used_fallback_proxy": false,
+          "provider_ids": null,
+          "egress_ip": null,
+          "no_sendcode_reason": null,
+          "error": "HUNT_EXHAUSTED: 取号 2/2 次，扫号 2 个，拉黑/拦截 2 个，最后一次失败原因 SENT_CODE_TYPE_APP",
+          "log_excerpt": [
+            "[03:45:41] 选定端点模板: MTProto Android Endpoint (Mainstream SDK 33) (AID: 308aba4e-5680-466b-81a5-477ac6befa95)",
+            "[03:45:41] 绑定硬件特征: Xiaomi24069PC21G (SDK 35), App: 12.3.2 (63902)",
+            "[03:45:43] 正在对通信句柄 +919494901226 执行 Telegram 号码注册状态预检探测...",
+            "[03:45:52] 预检通过：号码 +919494901226 在 Telegram 官方库中未注册（白号），继续申请 Push Token 并发送 auth.sendCode",
+            "[03:45:54] [验证码通道] 通道策略=push_required，申请Push=是，attach_token=是，allow_app_hash=是，模式标签=official，官方客户端模拟，泄露/official_api_id",
+            "[03:45:54] [验证码通道] official_client_emulation：强制官方 api_id=6 + push_required",
+            "[03:45:54] [验证码通道] push_required：申请 Push 并 attach token",
+            "[03:45:54] 建立 MTProto 协议传输通道 (中继节点: res.proxy-seller.com:10002)...",
+            "[03:46:00] 已完成 MTProto 传输层 Diffie-Hellman 密钥交换与加密连接建立",
+            "[03:46:27] 挑战已由服务端下发! 分发通道类型: SentCodeTypeApp (type=SentCodeTypeApp next_type=None timeout=None) [模式=official]",
+            "[03:46:27] ⚠️ 服务端将验证码下发到了已有设备客户端 (SentCodeTypeApp)，带外短信通道大概率无法接收",
+            "[03:46:30] [猎号] SentCodeTypeApp（SENT_CODE_TYPE_APP）换号继续 (1/2)；连续 APP 1（熔断关闭）；代理已用 1/5，设备已用 1/8"
+          ],
+          "log_lines": 83,
+          "payment_required": null,
+          "payment_log_count": 0,
+          "email_verified": false,
+          "sms_or_app_after_email": true,
+          "store_products": [],
+          "final_failure_reason": "SENT_CODE_TYPE_APP",
+          "post_email_sent_codes": [],
+          "post_email_sent_code_type": null
+        },
+        {
+          "task_id": "f48f0e03",
+          "status": "failed",
+          "phone": "+9179****982",
+          "leased_numbers": 2,
+          "blacklist_skips": 0,
+          "samples": [
+            {
+              "sent_code_type": "SentCodeTypeApp",
+              "next_type": "None",
+              "timeout": "None",
+              "bucket": "app"
+            },
+            {
+              "sent_code_type": "SentCodeTypeApp",
+              "next_type": "None",
+              "timeout": "None",
+              "bucket": "app"
+            }
+          ],
+          "resend_types": [],
+          "plan_modes": [
+            "push_required",
+            "push_required"
+          ],
+          "plan_attached_token": [
+            "是",
+            "是"
+          ],
+          "plan_allow_app_hash": [
+            "是",
+            "是"
+          ],
+          "plan_request_push": [
+            "是",
+            "是"
+          ],
+          "skipped_push": false,
+          "api_ids": [
+            "6"
+          ],
+          "credential_custom": false,
+          "device": "TECNOKJ6 (SDK 34), App: 12.7.3 (67509)",
+          "precheck_ok": true,
+          "precheck_registered": false,
+          "mtproto_connect": true,
+          "mtproto_handshake": true,
+          "connect_timeout": false,
+          "api_id_published_flood": 0,
+          "flood_wait": false,
+          "sms_code_received": false,
+          "proxy_country": null,
+          "phone_country": "IN",
+          "geo_1to1": null,
+          "used_fallback_proxy": false,
+          "provider_ids": null,
+          "egress_ip": null,
+          "no_sendcode_reason": null,
+          "error": "HUNT_EXHAUSTED: 取号 2/2 次，扫号 2 个，拉黑/拦截 2 个，最后一次失败原因 SENT_CODE_TYPE_APP",
+          "log_excerpt": [
+            "[03:45:41] 选定端点模板: MTProto Android Endpoint (Mainstream SDK 33) (AID: 308aba4e-5680-466b-81a5-477ac6befa95)",
+            "[03:45:41] 绑定硬件特征: TECNOKJ6 (SDK 34), App: 12.7.3 (67509)",
+            "[03:45:45] 正在对通信句柄 +919202161403 执行 Telegram 号码注册状态预检探测...",
+            "[03:45:52] 预检通过：号码 +919202161403 在 Telegram 官方库中未注册（白号），继续申请 Push Token 并发送 auth.sendCode",
+            "[03:45:55] [验证码通道] 通道策略=push_required，申请Push=是，attach_token=是，allow_app_hash=是，模式标签=official，官方客户端模拟，泄露/official_api_id",
+            "[03:45:55] [验证码通道] official_client_emulation：强制官方 api_id=6 + push_required",
+            "[03:45:55] [验证码通道] push_required：申请 Push 并 attach token",
+            "[03:46:03] 建立 MTProto 协议传输通道 (中继节点: res.proxy-seller.com:10003)...",
+            "[03:46:09] 已完成 MTProto 传输层 Diffie-Hellman 密钥交换与加密连接建立",
+            "[03:46:29] 挑战已由服务端下发! 分发通道类型: SentCodeTypeApp (type=SentCodeTypeApp next_type=None timeout=None) [模式=official]",
+            "[03:46:29] ⚠️ 服务端将验证码下发到了已有设备客户端 (SentCodeTypeApp)，带外短信通道大概率无法接收",
+            "[03:46:32] [猎号] SentCodeTypeApp（SENT_CODE_TYPE_APP）换号继续 (1/2)；连续 APP 1（熔断关闭）；代理已用 1/5，设备已用 1/8"
+          ],
+          "log_lines": 78,
+          "payment_required": null,
+          "payment_log_count": 0,
+          "email_verified": false,
+          "sms_or_app_after_email": true,
+          "store_products": [],
+          "final_failure_reason": "SENT_CODE_TYPE_APP",
+          "post_email_sent_codes": [],
+          "post_email_sent_code_type": null
+        }
+      ]
+    }
+  ]
+}
