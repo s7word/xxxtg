@@ -1,0 +1,39 @@
+Vault 模式冲刺 emu=True vault_meta=9 baseline=data/ab_reports/vault_compare_in_20260902_034804.json
+
+=== vault_mode_primary === country=in count=5 threads=3 max_attempts=2 vault_replay=False
+    applied={'official_client_emulation': False, 'force_skip_push_attach': False, 'code_delivery_mode': 'push_required', 'email_provider_mode': 'smsbower_only', 'api_credential_mode': 'official', 'active_app_type': 'telegram_android_public', 'custom_api_id': 4, 'custom_api_hash': '014b35b6184100b085b0d0572f9b5103'} @ 2026-09-02T04:18:21Z
+    batch_id=be08813a 已提交并发批量引导: 5 个任务 / 并发度 3（batch_id=be08813a）；计划最多租号 10 次（5 路 × 2 次，联合上限 200）
+    [   0s] running=0 pending=5 unfinished=5/5
+    [  12s] running=3 pending=2 unfinished=5/5
+    [  24s] running=3 pending=2 unfinished=5/5
+    [  36s] running=3 pending=2 unfinished=5/5
+    [  48s] running=3 pending=2 unfinished=5/5
+    [  60s] running=3 pending=2 unfinished=5/5
+    [  72s] running=3 pending=2 unfinished=5/5
+    [  84s] running=3 pending=2 unfinished=5/5
+    [  96s] running=3 pending=2 unfinished=5/5
+    [ 108s] running=3 pending=2 unfinished=5/5
+    [ 120s] running=3 pending=1 unfinished=4/5
+    [ 132s] running=2 pending=0 unfinished=2/5
+    [ 144s] running=2 pending=0 unfinished=2/5
+    [ 156s] running=2 pending=0 unfinished=2/5
+    [ 168s] running=2 pending=0 unfinished=2/5
+    [ 180s] running=2 pending=0 unfinished=2/5
+    [ 192s] running=2 pending=0 unfinished=2/5
+    [ 204s] running=1 pending=0 unfinished=1/5
+    [ 216s] running=1 pending=0 unfinished=1/5
+    [ 228s] running=1 pending=0 unfinished=1/5
+    [ 240s] running=1 pending=0 unfinished=1/5
+    [ 252s] running=1 pending=0 unfinished=1/5
+    task=8a75dde6 status=failed flood=False sms=False attach=True ok=True
+    task=eb4c44bb status=failed flood=False sms=False attach=True ok=True
+    task=27cb39c4 status=failed flood=False sms=False attach=True ok=True
+    task=c8b77ee7 status=failed flood=False sms=False attach=True ok=True
+    task=f2db4805 status=failed flood=False sms=False attach=True ok=True
+    -> 租号=10 发码=10 types={'SentCodeTypeApp': 10} SMS收码=0 成功=0 校验=5/5 耗时=264s
+
+>>> in 无 SMS 信号，跳过对照国 cl
+
+已恢复 config emu=True delivery=push_required
+
+报告已写入 data/ab_reports/vault_mode_sprint_in_20260902_042245.json
