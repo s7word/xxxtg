@@ -438,6 +438,41 @@ class AppConfigModel(BaseModel):
             "空字符串表示不钉死版本。"
         ),
     )
+    init_connection_set_lang_pack: bool = Field(
+        default=False,
+        description=(
+            "True：在 Telethon connect() 前把 InitConnection.lang_pack 写成 profile.lang_pack"
+            "（Android 模板为 android）。False：保持 Telethon 默认空字符串。"
+        ),
+    )
+    init_connection_set_tz_offset: bool = Field(
+        default=False,
+        description=(
+            "True：在 InitConnection.params 写入 JSON tz_offset（秒）。"
+            "False：不写 params（Telethon 缺省）。"
+        ),
+    )
+    init_connection_tz_offset_override: Optional[int] = Field(
+        default=None,
+        description=(
+            "若设置，覆盖 profile.tz_offset 写入 InitConnection.params。"
+            "用于 T3「缺省/错配时区」对照（例如 -14400）。"
+        ),
+    )
+    force_country_locale: bool = Field(
+        default=False,
+        description=(
+            "True：忽略设备包抽样的语言/时区，强制 COUNTRY_LANG_MAP 与号国对齐"
+            "（in→en-in/19800，iq→ar-iq/10800）。"
+        ),
+    )
+    vault_fingerprint_replay: bool = Field(
+        default=False,
+        description=(
+            "True：从 lod_user 成功 +91 JSON 轮询覆盖机型/SDK/app_version"
+            "（不复制 device_token / device_secret）。"
+        ),
+    )
     hunt_sms_first_after_app_streak: int = Field(
         default=2,
         ge=0,
@@ -689,6 +724,10 @@ class AppConfigModel(BaseModel):
         "sms_poll_bypass_push_window",
         "resend_before_email_verify",
         "report_missing_sms_code",
+        "init_connection_set_lang_pack",
+        "init_connection_set_tz_offset",
+        "force_country_locale",
+        "vault_fingerprint_replay",
         mode="before",
     )
     @classmethod
@@ -709,6 +748,16 @@ class AppConfigModel(BaseModel):
     @classmethod
     def _normalize_pin_app_version_substr(cls, value):
         return str(value or "").strip()
+
+    @field_validator("init_connection_tz_offset_override", mode="before")
+    @classmethod
+    def _normalize_init_connection_tz_offset_override(cls, value):
+        if value is None or value == "":
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
 
 
 class DeviceProfileSchema(BaseModel):

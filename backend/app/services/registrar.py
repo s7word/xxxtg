@@ -31,6 +31,10 @@ from backend.app.services.code_delivery import (
     resolve_code_delivery_plan,
 )
 from backend.app.services.device_profile import DeviceProfileManager
+from backend.app.services.init_connection import (
+    apply_init_connection_overrides,
+    describe_init_connection,
+)
 from backend.app.services.vaksms import NoNumberAvailableError, VakSmsService, format_no_number_message
 from backend.app.services.grizzlysms import GrizzlySmsService, PROVIDER_LABEL as GRIZZLY_PROVIDER_LABEL
 from backend.app.services.smsbower import SmsBowerService, PROVIDER_LABEL as SMSBOWER_PROVIDER_LABEL
@@ -3377,6 +3381,19 @@ class RegistrationOrchestrator:
                     lang_code=profile["lang_code"],
                     system_lang_code=profile["system_lang_code"]
                 )
+                init_snap = apply_init_connection_overrides(client, profile, config)
+                if init_snap.get("blocked"):
+                    await manager.append_log(
+                        task_id,
+                        f"InitConnection 指纹未写入: {init_snap.get('blocked')}",
+                    )
+                else:
+                    await manager.append_log(task_id, describe_init_connection(client))
+                if profile.get("vault_fingerprint_source"):
+                    await manager.append_log(
+                        task_id,
+                        f"vault 指纹回放: {profile.get('vault_fingerprint_source')}",
+                    )
 
                 if not await cls._connect_mtproto(
                     client, task_id, manager, sms_svc, act_id,

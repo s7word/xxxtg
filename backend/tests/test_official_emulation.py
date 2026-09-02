@@ -113,6 +113,10 @@ class TestOfficialEmulationConfig(unittest.TestCase):
         self.assertEqual(cfg.payment_resend_wait_seconds, 0.0)
         self.assertFalse(cfg.resend_before_email_verify)
         self.assertFalse(cfg.report_missing_sms_code)
+        self.assertFalse(cfg.init_connection_set_lang_pack)
+        self.assertFalse(cfg.init_connection_set_tz_offset)
+        self.assertFalse(cfg.force_country_locale)
+        self.assertFalse(cfg.vault_fingerprint_replay)
         self.assertTrue(AppConfigModel(sms_poll_bypass_push_window="true").sms_poll_bypass_push_window)
         self.assertEqual(AppConfigModel(payment_resend_max=2).payment_resend_max, 2)
 

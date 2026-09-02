@@ -1,7 +1,9 @@
+import json
 import logging
+import re
 from pathlib import Path
 from typing import Dict, Any, List, Optional
-from backend.app.config import ConfigManager, DATA_DIR
+from backend.app.config import ConfigManager, DATA_DIR, LOD_USER_DIR
 
 logger = logging.getLogger("NodeTelemetryProfileManager")
 
@@ -175,6 +177,71 @@ DEFAULT_PROFILES = {
     }
 }
 
+_VAULT_FP_INDEX = 0
+_APP_VERSION_RE = re.compile(r"^(?P<pure>.+?)\s*\((?P<build>\d+)\)\s*$")
+
+
+def split_app_version(raw: Any) -> Dict[str, str]:
+    text = str(raw or "").strip()
+    if not text:
+        return {"app_version": "", "app_version_pure": "", "app_build": ""}
+    matched = _APP_VERSION_RE.match(text)
+    if matched:
+        return {
+            "app_version": text,
+            "app_version_pure": matched.group("pure").strip(),
+            "app_build": matched.group("build"),
+        }
+    return {"app_version": text, "app_version_pure": text.split()[0], "app_build": ""}
+
+
+def load_vault_android_fingerprints(root: Optional[Path] = None) -> List[Dict[str, Any]]:
+    """只读 lod_user 成功 JSON 的机型字段，绝不返回 token/secret。"""
+    rows: List[Dict[str, Any]] = []
+    base = Path(root) if root is not None else Path(LOD_USER_DIR)
+    if not base.exists():
+        return rows
+    for path in sorted(base.rglob("91*.json")):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        try:
+            app_id = int(data.get("app_id") or data.get("api_id") or 0)
+        except (TypeError, ValueError):
+            continue
+        if app_id != 4:
+            continue
+        version = split_app_version(data.get("app_version"))
+        try:
+            rel = str(path.relative_to(base))
+        except ValueError:
+            rel = path.name
+        rows.append({
+            "file": rel,
+            "device_model": str(data.get("device") or "").strip(),
+            "system_version": str(data.get("sdk") or "").strip(),
+            "app_version": version["app_version"],
+            "app_version_pure": version["app_version_pure"],
+            "app_build": version["app_build"],
+            "lang_pack": str(data.get("lang_pack") or "android"),
+            "system_lang_code": str(
+                data.get("system_lang_pack") or data.get("system_lang_code") or ""
+            ).lower(),
+            "tz_offset": data.get("tz_offset"),
+        })
+    return rows
+
+
+def pick_vault_fingerprint(root: Optional[Path] = None) -> Optional[Dict[str, Any]]:
+    global _VAULT_FP_INDEX
+    rows = load_vault_android_fingerprints(root)
+    if not rows:
+        return None
+    row = rows[_VAULT_FP_INDEX % len(rows)]
+    _VAULT_FP_INDEX += 1
+    return dict(row)
+
 
 class DeviceProfileManager:
     """边缘节点硬件拓扑与环境指纹管理器 (Node Telemetry Profile Manager)"""
@@ -345,7 +412,19 @@ class DeviceProfileManager:
     def _apply_locale(cls, profile: Dict[str, Any], country: str, sampled: Optional[Dict[str, Any]], match: str) -> None:
         fallback = cls.infer_locale(country)
         sampled = sampled or {}
-        keep_sampled_locale = match in {"country", "auto"} and sampled.get("lang_code") and sampled.get("system_lang_code")
+        force_country = False
+        try:
+            force_country = bool(
+                getattr(ConfigManager.get_instance().config, "force_country_locale", False)
+            )
+        except Exception:
+            force_country = False
+        keep_sampled_locale = (
+            (not force_country)
+            and match in {"country", "auto"}
+            and sampled.get("lang_code")
+            and sampled.get("system_lang_code")
+        )
         if keep_sampled_locale:
             profile["lang_code"] = str(sampled["lang_code"]).lower()
             profile["system_lang_code"] = str(sampled["system_lang_code"]).lower()
@@ -423,6 +502,35 @@ class DeviceProfileManager:
                     profile["api_hash"] = sampled_dev.get("api_hash", base["api_hash"])
 
         cls._apply_locale(profile, country, sampled_dev, match)
+        if bool(getattr(config, "vault_fingerprint_replay", False)):
+            vault_fp = pick_vault_fingerprint()
+            if vault_fp:
+                if vault_fp.get("device_model"):
+                    profile["device_model"] = vault_fp["device_model"]
+                if vault_fp.get("system_version"):
+                    profile["system_version"] = vault_fp["system_version"]
+                if vault_fp.get("app_version"):
+                    profile["app_version"] = vault_fp["app_version"]
+                    profile["app_version_pure"] = vault_fp.get("app_version_pure") or profile.get("app_version_pure")
+                    profile["app_build"] = vault_fp.get("app_build") or profile.get("app_build")
+                if vault_fp.get("lang_pack"):
+                    profile["lang_pack"] = vault_fp["lang_pack"]
+                profile["vault_fingerprint_source"] = vault_fp.get("file")
+                profile["vault_fingerprint_replay"] = True
+                # 号国语言/时区仍以 force_country_locale 为准；未强制时 in 可沿用 vault 样本
+                if not bool(getattr(config, "force_country_locale", False)):
+                    if vault_fp.get("system_lang_code") and str(country or "").lower() == "in":
+                        sys_lang = vault_fp["system_lang_code"]
+                        profile["system_lang_code"] = sys_lang
+                        profile["lang_code"] = sys_lang.split("-")[0] if sys_lang else profile.get("lang_code")
+                        profile["locale_source"] = "vault_json"
+                    if vault_fp.get("tz_offset") is not None and str(country or "").lower() == "in":
+                        profile["tz_offset"] = int(vault_fp["tz_offset"])
+                else:
+                    cls._apply_locale(profile, country, None, "none")
+            else:
+                profile["vault_fingerprint_replay"] = False
+                profile["vault_fingerprint_source"] = None
         try:
             official_id = int(profile.get("api_id") or 0)
         except (TypeError, ValueError):
