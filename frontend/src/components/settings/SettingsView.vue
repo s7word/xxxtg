@@ -562,7 +562,38 @@
           开启后运行时覆盖凭证与通道计划：强制官方模板 api_id/api_hash、push_required，
           并处理 SetUpEmailRequired（REGHelp Email）、FirebaseSms（Play Integrity）、
           PaymentRequired（标记需官方 App 内购并快退）。猎号连续 App 强制 SMS 在此模式下关闭。
+          <strong>vault 严格对齐开启时会钉死 api_id=4</strong>，不会漂到 6（Payment 路径）。
         </p>
+        <label class="ce-check">
+          <input
+            type="checkbox"
+            :checked="config.device_alignment_mode === 'strict' || config.strict_vault_device_alignment"
+            @change="onStrictAlignmentToggle($event.target.checked)"
+          />
+          严格设备对齐（vault 成功样本 + Telegram Expert）
+        </label>
+        <p class="ce-tiny ce-muted">
+          <code>device_alignment_mode=strict</code>：对照 vault 成功 JSON 与俄语农场手册，发码前强制齐套
+          <code>api_id=4</code> + 配对 hash、<code>device_model</code>、<code>system_version</code>、
+          <code>app_version</code>（钉 12.7.3）、<code>lang_code</code> / <code>system_lang_code</code>、
+          <code>lang_pack=android</code>、号国 <code>tz_offset</code>，并在
+          <code>connect()</code> 前写入 InitConnection。缺字段或模拟器机型 → <strong>拒绝发码</strong>。
+          非 emu 必须 attach Push；<code>SentCodeTypeApp</code> 且无 <code>next_type</code> 快丢号；
+          FLOOD 冷却换 Token。一号一代理（猎号 <code>hunt_proxy_max_uses=1</code>）。
+          切到 loose 则回到「大体对齐」：InitConnection 仅在显式旗标时写入，api_id 可跟模板走 6。
+        </p>
+        <label class="ce-check">
+          <input type="checkbox" v-model="config.app_delivery_fast_drop" />
+          SentCodeTypeApp 且无 next_type 时快丢号（勿空等 2 分钟）
+        </label>
+        <label class="ce-check">
+          <input type="checkbox" v-model="config.flood_rotate_push_token" />
+          FLOOD 后冷却并换发 Push Token
+        </label>
+        <label class="ce-check">
+          <input type="checkbox" v-model="config.inject_vault_device_secret" />
+          尝试把 vault device_secret 注入 FirebaseSms（默认关：nonce 不匹配，CodeSettings 无此槽位）
+        </label>
         <div>
           <label class="ce-label">猎号连续 App 后强制 SMS（次数）</label>
           <input v-model.number="config.hunt_sms_first_after_app_streak" type="number" min="0" max="20" class="ce-input mono w-sm" />
@@ -671,6 +702,16 @@ const {
   antisafetyBaseUrlsText, antisafetyReportingBaseUrlsText, form
 } = useConfig()
 const { probeTesting, testResults, testRegHelp, testAntiSafety, testFiveSim, testGrizzlySms, testSmsBower, testSmsCode, testVakSms } = useProbes()
+
+const onStrictAlignmentToggle = (checked) => {
+  config.strict_vault_device_alignment = !!checked
+  config.device_alignment_mode = checked ? 'strict' : 'loose'
+  if (checked) {
+    config.pin_app_version_substr = config.pin_app_version_substr || '12.7.3'
+    config.app_delivery_fast_drop = true
+    config.flood_rotate_push_token = true
+  }
+}
 
 const smsallLoading = ref(false)
 const smsallEvents = ref([])

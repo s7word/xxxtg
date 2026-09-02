@@ -41,7 +41,16 @@ from backend.app.services.code_delivery import (
     escalation_plan_after_published_flood,
     resolve_code_delivery_plan,
 )
+from backend.app.services.device_alignment import (
+    DeviceAlignmentError,
+    alignment_summary_for_log,
+    validate_strict_device_profile,
+)
 from backend.app.services.device_profile import DeviceProfileManager
+from backend.app.services.init_connection import (
+    apply_init_connection_overrides,
+    describe_init_connection,
+)
 from backend.app.services.phone_precheck import PhonePrecheckService
 from backend.app.services.proxyseller import infer_country_from_phone
 from backend.app.services.recaptcha_check import RecaptchaChallengeError, parse_recaptcha_check
@@ -578,6 +587,20 @@ class ManualRegistrationOrchestrator:
                 f"绑定硬件特征: {profile.get('device_model')} ({profile.get('system_version')}), "
                 f"App: {profile.get('app_version')}",
             )
+            await manager.append_log(task_id, alignment_summary_for_log(profile, config))
+            try:
+                validate_strict_device_profile(profile, config)
+            except DeviceAlignmentError as align_err:
+                await manager.append_log(task_id, f"❌ {align_err}")
+                await RegistrationOrchestrator._release_registration_resources(None, None, bypass_svc)
+                return cls._snapshot_start(
+                    task_id,
+                    "failed",
+                    normalized,
+                    str(align_err),
+                    country=target_country,
+                    error="DEVICE_ALIGNMENT_REJECTED",
+                )
 
             try:
                 await manager.append_log(
@@ -664,6 +687,13 @@ class ManualRegistrationOrchestrator:
                 lang_code=profile.get("lang_code"),
                 system_lang_code=profile.get("system_lang_code"),
             )
+            init_snap = apply_init_connection_overrides(client, profile, config)
+            if init_snap.get("blocked"):
+                await manager.append_log(
+                    task_id, f"InitConnection 指纹未写入: {init_snap.get('blocked')}"
+                )
+            else:
+                await manager.append_log(task_id, describe_init_connection(client))
             connected = await RegistrationOrchestrator._connect_mtproto(
                 client, task_id, manager, None, None, timeout=CONNECT_TIMEOUT_SECONDS
             )
@@ -682,6 +712,9 @@ class ManualRegistrationOrchestrator:
 
             plan = delivery_plan
             code_settings = RegistrationOrchestrator._build_code_settings_from_plan(push_token, plan)
+            await RegistrationOrchestrator._append_send_code_credential_log(
+                task_id, manager, profile, push_token, plan, code_settings
+            )
             await manager.append_log(task_id, "调用 auth.sendCode 触发服务端瞬时握手挑战分发...")
             try:
                 sent_code = await RegistrationOrchestrator._send_code_with_recaptcha(

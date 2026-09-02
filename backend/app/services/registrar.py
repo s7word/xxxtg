@@ -30,7 +30,20 @@ from backend.app.services.code_delivery import (
     escalation_plan_after_published_flood,
     resolve_code_delivery_plan,
 )
+from backend.app.services.device_alignment import (
+    DeviceAlignmentError,
+    alignment_summary_for_log,
+    classify_push_token,
+    describe_push_slot,
+    is_strict_alignment,
+    validate_strict_device_profile,
+)
 from backend.app.services.device_profile import DeviceProfileManager
+from backend.app.services.init_connection import (
+    apply_init_connection_overrides,
+    describe_init_connection,
+)
+from backend.app.services.vault_attestation import take_injected_device_secret
 from backend.app.services.vaksms import NoNumberAvailableError, VakSmsService, format_no_number_message
 from backend.app.services.grizzlysms import GrizzlySmsService, PROVIDER_LABEL as GRIZZLY_PROVIDER_LABEL
 from backend.app.services.smsbower import SmsBowerService, PROVIDER_LABEL as SMSBOWER_PROVIDER_LABEL
@@ -327,6 +340,15 @@ class SentCodeAppDeliveryError(Exception):
     def __init__(self, message: str, reason: str = "SENT_CODE_TYPE_APP"):
         super().__init__(message)
         self.reason = reason
+
+
+class RequiredPushTokenMissingError(Exception):
+    """通道计划要求 attach Push，但网关没返回可用 token，拒绝裸发 published api_id。"""
+
+    def __init__(self, message: str, api_id: Optional[int] = None):
+        super().__init__(message)
+        self.api_id = api_id
+        self.reason = "PUSH_TOKEN_MISSING"
 
 
 class RegistrationTaskManager:
@@ -1450,6 +1472,10 @@ class RegistrationOrchestrator:
         *,
         allow_app_hash: bool = True,
         attach_push_token: bool = True,
+        allow_firebase: bool = False,
+        unknown_number: bool = False,
+        allow_flashcall: bool = False,
+        allow_missed_call: bool = False,
     ) -> types.CodeSettings:
         """构造 auth.sendCode 的 CodeSettings。
 
@@ -1461,15 +1487,65 @@ class RegistrationOrchestrator:
         SMS 优先策略靠 attach_push_token=False 生效：token/app_sandbox 是 iOS APNS
         推送凭证，带上就等于给服务端一条推送通道。allow_app_hash 只协商短信正文里的
         Android SMS Retriever hash，应跟随设备平台而非投递模式。
+        allow_firebase / unknown_number 由配置注入，对应官方 Android 的 Firebase
+        通道协商与「号码非本机 SIM」标志。
         """
         token = push_token if (attach_push_token and push_token) else None
         return types.CodeSettings(
-            allow_flashcall=False,
+            allow_flashcall=bool(allow_flashcall) or None,
             current_number=False,
             allow_app_hash=allow_app_hash,
-            allow_missed_call=False,
+            allow_missed_call=bool(allow_missed_call) or None,
+            allow_firebase=bool(allow_firebase) or None,
+            unknown_number=bool(unknown_number) or None,
             token=token,
             app_sandbox=False if token else None,
+        )
+
+    @staticmethod
+    def _api_hash_for_log(profile: Dict[str, Any]) -> str:
+        raw = str(profile.get("api_hash") or "").strip()
+        if not raw:
+            return "-"
+        return raw
+
+    @classmethod
+    def _log_push_token_slot(
+        cls,
+        push_token: Optional[str],
+        plan,
+    ) -> str:
+        attached = bool(getattr(plan, "attach_push_token", False) and push_token)
+        info = classify_push_token(push_token)
+        slot = describe_push_slot(attached)
+        return (
+            f"push_slot={slot} token_kind={info['kind']} "
+            f"token_len={info['length']} suspicious={'是' if info['suspicious'] else '否'}"
+        )
+
+    @classmethod
+    async def _append_send_code_credential_log(
+        cls,
+        task_id: str,
+        manager: RegistrationTaskManager,
+        profile: Dict[str, Any],
+        push_token: Optional[str],
+        plan,
+        code_settings,
+    ) -> None:
+        await manager.append_log(
+            task_id,
+            "sendCode 凭证核对: "
+            f"api_id={profile.get('api_id')} "
+            f"api_hash={cls._api_hash_for_log(profile)} "
+            f"attach_token={'是' if (plan.attach_push_token and push_token) else '否'} "
+            f"push_token={'有' if push_token else '无'} "
+            f"code_settings.token={'有' if getattr(code_settings, 'token', None) else '无'} "
+            f"firebase={'是' if getattr(code_settings, 'allow_firebase', None) else '否'} "
+            f"unknown={'是' if getattr(code_settings, 'unknown_number', None) else '否'} "
+            f"flashcall={'是' if getattr(code_settings, 'allow_flashcall', None) else '否'} "
+            f"missed={'是' if getattr(code_settings, 'allow_missed_call', None) else '否'} "
+            f"{cls._log_push_token_slot(push_token, plan)}"
         )
 
     @classmethod
@@ -1482,6 +1558,10 @@ class RegistrationOrchestrator:
             push_token,
             allow_app_hash=plan.allow_app_hash,
             attach_push_token=plan.attach_push_token,
+            allow_firebase=bool(getattr(plan, "allow_firebase", False)),
+            unknown_number=bool(getattr(plan, "unknown_number", False)),
+            allow_flashcall=bool(getattr(plan, "allow_flashcall", False)),
+            allow_missed_call=bool(getattr(plan, "allow_missed_call", False)),
         )
 
     @staticmethod
@@ -1794,14 +1874,24 @@ class RegistrationOrchestrator:
             f"[{emulation_label}] 官方流程 FirebaseSms：REGHelp integrity/getToken "
             f"+ auth.requestFirebaseSms (versionCode={version_code})",
         )
-        try:
-            token = await bypass_svc.get_integrity_token(
-                profile or {},
-                nonce=nonce,
-                app_version_code=version_code,
-                log_callback=lambda msg: manager.append_log(task_id, msg),
-                ref=task_id,
+        token = None
+        injected = take_injected_device_secret(profile)
+        if injected:
+            await manager.append_log(
+                task_id,
+                f"[{emulation_label}] 尝试注入 vault device_secret 到 requestFirebaseSms "
+                f"(len={len(injected)}；nonce 很可能不匹配，此路径默认应关闭)",
             )
+            token = injected
+        try:
+            if not token:
+                token = await bypass_svc.get_integrity_token(
+                    profile or {},
+                    nonce=nonce,
+                    app_version_code=version_code,
+                    log_callback=lambda msg: manager.append_log(task_id, msg),
+                    ref=task_id,
+                )
         except Exception as exc:
             await manager.append_log(task_id, f"⚠️ Play Integrity 失败，仍尝试短信通道: {exc}")
             return
@@ -1939,6 +2029,20 @@ class RegistrationOrchestrator:
 
         next_name = cls._tl_type_name(getattr(sent_code, "next_type", None))
         has_timeout = getattr(sent_code, "timeout", None) is not None
+        config = ConfigManager.get_instance().config
+        fast_drop = bool(getattr(config, "app_delivery_fast_drop", True))
+        if not next_name and fast_drop:
+            await manager.append_log(
+                task_id,
+                "[Expert] SentCodeTypeApp 且 next_type=None：号码在 Telegram 侧仍挂着已授权会话，"
+                "OTP 进旧客户端。快丢号，不空等 120 秒。"
+            )
+            raise SentCodeAppDeliveryError(
+                "服务端仅通过站内信下发验证码且未提供 next_type/SMS 降级窗口，"
+                "带外短信网关无法接收，已快速退订换号以免空等 120 秒",
+                reason="SENT_CODE_TYPE_APP",
+            )
+
         can_probe_resend = bool(next_name) or has_timeout or wait_timeout is not None
         if not can_probe_resend:
             raise SentCodeAppDeliveryError(
@@ -2130,6 +2234,7 @@ class RegistrationOrchestrator:
             )
             if push_token:
                 push_token_obtained_at = time.monotonic()
+                info = classify_push_token(push_token)
                 manager.update_task_status(
                     task_id,
                     "running",
@@ -2139,8 +2244,23 @@ class RegistrationOrchestrator:
                 await manager.append_log(
                     task_id,
                     f"成功获取平台合规签署的 Attestation Push Token "
-                    f"(提供源: {push_provider}, task_id={push_task_id or '-'})"
+                    f"(提供源: {push_provider}, task_id={push_task_id or '-'}, "
+                    f"kind={info['kind']} len={info['length']} "
+                    f"suspicious={'是' if info['suspicious'] else '否'})"
                 )
+                if not info["ok"]:
+                    await manager.append_log(
+                        task_id,
+                        f"⚠️ Push Token 形态不合格（{info['kind']} len={info['length']}），"
+                        "将冷却换发"
+                    )
+                    cfg = ConfigManager.get_instance().config
+                    if is_strict_alignment(cfg) and bool(getattr(cfg, "flood_rotate_push_token", True)):
+                        await cls._refund_push_token(
+                            bypass_svc, push_task_id, push_provider, push_token_obtained_at,
+                            None, task_id, manager, "PUSH_TOKEN_INVALID", retire=True,
+                        )
+                        return None, None, None, None
             else:
                 await manager.append_log(task_id, "⚠️ Attestation Push Token 未返回，回退至标准信道...")
         except Exception as e:
@@ -2174,7 +2294,28 @@ class RegistrationOrchestrator:
         push_token_obtained_at, delivery_plan_for_refund)。
         """
         plan = delivery_plan
+        if plan.attach_push_token and not push_token:
+            api_id = profile.get("api_id")
+            api_hash = cls._api_hash_for_log(profile)
+            raise RequiredPushTokenMissingError(
+                f"通道计划要求 attach Push Token，但 Attestation 网关未返回可用凭证；"
+                f"拒绝以 api_id={api_id} api_hash={api_hash} 裸发 sendCode"
+                f"（否则会误报成 API_ID_PUBLISHED_FLOOD / 国家结论）",
+                api_id=api_id if isinstance(api_id, int) else None,
+            )
+        if plan.attach_push_token and push_token:
+            info = classify_push_token(push_token)
+            config = ConfigManager.get_instance().config
+            if is_strict_alignment(config) and not info["ok"]:
+                raise RequiredPushTokenMissingError(
+                    f"Push Token 形态不合格（kind={info['kind']} len={info['length']}），"
+                    "拒绝塞进 CodeSettings.token",
+                    api_id=profile.get("api_id") if isinstance(profile.get("api_id"), int) else None,
+                )
         code_settings = cls._build_code_settings_from_plan(push_token, plan)
+        await cls._append_send_code_credential_log(
+            task_id, manager, profile, push_token, plan, code_settings
+        )
         await manager.append_log(task_id, "调用 auth.sendCode 触发服务端瞬时握手挑战分发...")
         try:
             sent_code = await cls._send_code_with_recaptcha(
@@ -2211,7 +2352,16 @@ class RegistrationOrchestrator:
                 hunt_enabled=hunt_enabled,
             )
             plan = escalated
+            if plan.attach_push_token and not push_token:
+                api_id = profile.get("api_id")
+                raise RequiredPushTokenMissingError(
+                    f"FLOOD escalate 后仍未拿到 Push Token，拒绝以 api_id={api_id} 再次裸发 sendCode",
+                    api_id=api_id if isinstance(api_id, int) else None,
+                )
             code_settings = cls._build_code_settings_from_plan(push_token, plan)
+            await cls._append_send_code_credential_log(
+                task_id, manager, profile, push_token, plan, code_settings
+            )
             sent_code = await cls._send_code_with_recaptcha(
                 client=client,
                 phone=phone,
@@ -2268,7 +2418,10 @@ class RegistrationOrchestrator:
         return {
             "no_number_retries": retries,
             "no_number_delay": max(0.0, min(_float("hunt_no_number_retry_delay_sec", DEFAULT_HUNT_NO_NUMBER_DELAY_SEC), 60.0)),
-            "proxy_max_uses": max(1, min(_int("hunt_proxy_max_uses", DEFAULT_HUNT_PROXY_MAX_USES), 50)),
+            "proxy_max_uses": (
+                1 if is_strict_alignment(config)
+                else max(1, min(_int("hunt_proxy_max_uses", DEFAULT_HUNT_PROXY_MAX_USES), 50))
+            ),
             "device_max_uses": max(1, min(_int("hunt_device_max_uses", DEFAULT_HUNT_DEVICE_MAX_USES), 50)),
             "app_blacklist_ttl_hours": max(
                 0.5,
@@ -2573,6 +2726,25 @@ class RegistrationOrchestrator:
                 await manager.append_log(task_id, "硬件指纹包: 目录为空，回退端点模板默认机型")
             await manager.append_log(task_id, f"绑定硬件特征: {profile['device_model']} ({profile['system_version']}), App: {profile['app_version']}")
             await manager.append_log(task_id, f"网络语言拓扑: {profile['system_lang_code']}, 时区偏置: {profile.get('tz_offset', -14400)}")
+            await manager.append_log(task_id, alignment_summary_for_log(profile, config))
+            if profile.get("vault_fingerprint_source"):
+                await manager.append_log(
+                    task_id, f"vault 指纹回放: {profile.get('vault_fingerprint_source')}"
+                )
+            if profile.get("has_device_secret"):
+                await manager.append_log(
+                    task_id,
+                    f"vault attestation: has_device_secret=是 "
+                    f"len={profile.get('device_secret_len') or 0} "
+                    f"injected={'是' if profile.get('device_secret_injected') else '否'} "
+                    f"（CodeSettings 无此槽位，仅 FirebaseSms 可选注入）"
+                )
+            try:
+                validate_strict_device_profile(profile, config)
+            except DeviceAlignmentError as align_err:
+                await manager.append_log(task_id, f"❌ {align_err}")
+                manager.update_task_status(task_id, "failed", error=str(align_err))
+                return
 
             if hunt_enabled:
                 # 代理被 1:1 钉死（批量槽位 / 显式指定）时不存在池内轮换语义，如实播报
@@ -2680,6 +2852,13 @@ class RegistrationOrchestrator:
                         task_id,
                         f"[猎号] 新设备: {profile['device_model']} ({profile['system_version']}), App: {profile['app_version']}"
                     )
+                    try:
+                        validate_strict_device_profile(profile, config)
+                    except DeviceAlignmentError as align_err:
+                        await manager.append_log(task_id, f"❌ {align_err}")
+                        hunt_stop_reason = "DEVICE_ALIGNMENT_REJECTED"
+                        last_failure_reason = "DEVICE_ALIGNMENT_REJECTED"
+                        break
 
                 # 收码窗口保护：复用的 REGHelp Token 太老会把本轮 OTP 轮询压到几秒，
                 # 真 SMS 号也收不到码。宁可先退掉旧 Token 重新申请，也不能进一个收不到码的轮次。
@@ -2877,6 +3056,12 @@ class RegistrationOrchestrator:
                             "⚠️ api_credential_mode 已设为 custom，但未配置 custom_api_id / custom_api_hash，"
                             "本次仍将回退使用官方内置凭证"
                         )
+                    if profile.get("credential_source") == "vault_strict_api4":
+                        await manager.append_log(
+                            task_id,
+                            f"[严格对齐] api_id 已从 {profile.get('api_id_pinned_from')} 钉死为 4 "
+                            f"（hash={cls._api_hash_for_log(profile)}），禁止漂到 6/Payment"
+                        )
 
                 # 4. 初始化 MTProto 会话
                 clean_phone = phone.replace("+", "").strip()
@@ -2904,6 +3089,14 @@ class RegistrationOrchestrator:
                     lang_code=profile["lang_code"],
                     system_lang_code=profile["system_lang_code"]
                 )
+                init_snap = apply_init_connection_overrides(client, profile, config)
+                if init_snap.get("blocked"):
+                    await manager.append_log(
+                        task_id,
+                        f"InitConnection 指纹未写入: {init_snap.get('blocked')}",
+                    )
+                else:
+                    await manager.append_log(task_id, describe_init_connection(client))
 
                 if not await cls._connect_mtproto(
                     client, task_id, manager, sms_svc, act_id,
@@ -3044,6 +3237,53 @@ class RegistrationOrchestrator:
                         manager.update_task_status(task_id, "running")
                         continue
                     raise
+                except ApiIdPublishedFloodError:
+                    await cls._refund_and_revoke_channel(
+                        sms_svc, act_id, task_id, manager, "API_ID_PUBLISHED_FLOOD"
+                    )
+                    act_id = None
+                    await cls._disconnect_client_quiet(client)
+                    client = None
+                    cls._discard_incomplete_session(session_path, meta_path)
+                    session_path = None
+                    meta_path = None
+                    last_failure_reason = "API_ID_PUBLISHED_FLOOD"
+                    hunt_app_streak = 0
+                    await manager.append_log(
+                        task_id,
+                        f"[Expert] API_ID_PUBLISHED_FLOOD api_id={profile.get('api_id')} "
+                        f"{cls._log_push_token_slot(push_token, delivery_plan)} → Token 冷却后终止"
+                        "（凭证层全局故障，换号救不了）"
+                    )
+                    if push_token or push_task_id:
+                        await cls._refund_push_token(
+                            bypass_svc, push_task_id, push_provider, push_token_obtained_at,
+                            phone, task_id, manager, "API_ID_PUBLISHED_FLOOD", retire=True,
+                        )
+                        push_token = None
+                        push_task_id = None
+                        push_provider = None
+                        push_token_obtained_at = None
+                    raise
+                except RequiredPushTokenMissingError as push_ex:
+                    await cls._refund_and_revoke_channel(
+                        sms_svc, act_id, task_id, manager, "PUSH_TOKEN_MISSING"
+                    )
+                    act_id = None
+                    await cls._disconnect_client_quiet(client)
+                    client = None
+                    cls._discard_incomplete_session(session_path, meta_path)
+                    session_path = None
+                    meta_path = None
+                    last_failure_reason = "PUSH_TOKEN_MISSING"
+                    if not hunt_enabled:
+                        raise
+                    await manager.append_log(
+                        task_id,
+                        f"[猎号] {push_ex}，换号继续 ({attempt_idx}/{max_attempts})"
+                    )
+                    manager.update_task_status(task_id, "running")
+                    continue
                 except (PhoneNumberFloodError, FloodWaitError) as flood_ex:
                     sec = int(getattr(flood_ex, "seconds", 0) or 0)
                     await cls._refund_and_revoke_channel(sms_svc, act_id, task_id, manager, "FLOOD_WAIT")
@@ -3055,6 +3295,20 @@ class RegistrationOrchestrator:
                     meta_path = None
                     last_failure_reason = "FLOOD_WAIT"
                     hunt_app_streak = 0
+                    if bool(getattr(config, "flood_rotate_push_token", True)) and (push_token or push_task_id):
+                        await manager.append_log(
+                            task_id,
+                            f"[Expert] FLOOD → Push Token 冷却换发 "
+                            f"({cls._log_push_token_slot(push_token, delivery_plan)})"
+                        )
+                        await cls._refund_push_token(
+                            bypass_svc, push_task_id, push_provider, push_token_obtained_at,
+                            phone, task_id, manager, "FLOOD_WAIT", retire=True,
+                        )
+                        push_token = None
+                        push_task_id = None
+                        push_provider = None
+                        push_token_obtained_at = None
                     if not hunt_enabled:
                         raise
                     if sec >= HUNT_FLOOD_ABORT_SECONDS:
@@ -3413,21 +3667,39 @@ class RegistrationOrchestrator:
             if check_id: await bypass_svc.report_result(check_id, aid, "BANNED")
             manager.update_task_status(task_id, "failed", error=err)
         except ApiIdPublishedFloodError:
+            attached = bool(push_token)
             err = (
                 f"当前 api_id={profile.get('api_id')} 已被 Telegram 判定为公开泄露 ID，"
-                "在缺少合法 Push Token 的情况下触发 API_ID_PUBLISHED_FLOOD (SendCodeRequest)。"
-                "请在「🔐 凭证库 / 开发者 API」用已有账号申请专属 api_id/api_hash，"
-                "或在「全局参数拓扑」填入自建 custom_api_id / custom_api_hash "
-                "并将 api_credential_mode 设为 auto 或 custom，"
-                "或修复 Attestation 网关连通性以获取合法 Push Token 后重试"
+                + (
+                    f"本次已 attach REGHelp Push Token（len={len(push_token)}），"
+                    "服务端仍返回 API_ID_PUBLISHED_FLOOD。Token 未被接受为合法平台签署凭证。"
+                    if attached else
+                    "在缺少合法 Push Token 的情况下触发 API_ID_PUBLISHED_FLOOD (SendCodeRequest)。"
+                    "请修复 Attestation 网关或改用自建非泄露 api_id。"
+                )
             )
             await manager.append_log(task_id, f"❌ {err}")
             await cls._refund_and_revoke_channel(sms_svc, act_id, task_id, manager, "API_ID_PUBLISHED_FLOOD")
             await cls._refund_push_token(
                 bypass_svc, push_task_id, push_provider, push_token_obtained_at,
-                phone, task_id, manager, "API_ID_PUBLISHED_FLOOD",
+                phone, task_id, manager, "API_ID_PUBLISHED_FLOOD", retire=True,
             )
             if check_id: await bypass_svc.report_result(check_id, aid, "API_ID_PUBLISHED_FLOOD")
+            manager.update_task_status(task_id, "failed", error=err)
+        except RequiredPushTokenMissingError as ex:
+            err = str(ex)
+            await manager.append_log(task_id, f"❌ {err}")
+            await cls._refund_and_revoke_channel(sms_svc, act_id, task_id, manager, "PUSH_TOKEN_MISSING")
+            await cls._refund_push_token(
+                bypass_svc, push_task_id, push_provider, push_token_obtained_at,
+                phone, task_id, manager, "PUSH_TOKEN_MISSING", retire=True,
+            )
+            if check_id: await bypass_svc.report_result(check_id, aid, "PUSH_TOKEN_MISSING")
+            manager.update_task_status(task_id, "failed", error=err)
+        except DeviceAlignmentError as ex:
+            err = str(ex)
+            await manager.append_log(task_id, f"❌ {err}")
+            await cls._refund_and_revoke_channel(sms_svc, act_id, task_id, manager, "DEVICE_ALIGNMENT_REJECTED")
             manager.update_task_status(task_id, "failed", error=err)
         except (PhoneNumberFloodError, FloodWaitError) as e:
             sec = getattr(e, 'seconds', 0)

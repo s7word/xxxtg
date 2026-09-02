@@ -34,6 +34,22 @@ def normalize_proxy_mode(value: Any) -> str:
     return token if token in PROXY_MODES else "custom_pool"
 
 
+def coerce_bool(value: Any, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return bool(value)
+    if isinstance(value, str):
+        token = value.strip().lower()
+        if token in {"1", "true", "yes", "on"}:
+            return True
+        if token in {"0", "false", "no", "off", ""}:
+            return False
+    return bool(value)
+
+
 def normalize_sms_max_price(value: Any) -> Optional[float]:
     """把配置/任务级最高出价规范化为任意正浮点数。
 
@@ -311,8 +327,99 @@ class AppConfigModel(BaseModel):
             "官方客户端模拟：开启后强制使用模板官方 api_id/api_hash（telegram_android 为 6）"
             "并以 push_required 每轮申请并 attach REGHelp Push Token；"
             "sendCode 后处理 SetUpEmailRequired / FirebaseSms / PaymentRequired，"
-            "不再把非 App 通道一律当短信空等。猎号连续 App 强制 SMS 在此模式下关闭"
+            "不再把非 App 通道一律当短信空等。猎号连续 App 强制 SMS 在此模式下关闭。"
+            "vault 严格对齐开启时会覆盖为 api_id=4，避免漂到 6 触发 Payment。"
         ),
+    )
+    device_alignment_mode: str = Field(
+        default="loose",
+        description=(
+            "设备指纹对齐: strict（对照 vault 成功样本 + Telegram Expert："
+            "api_id=4 正确 hash、钉 app_version=12.7.3、lang_pack=android、号国 tz/lang、"
+            "InitConnection 写入握手、非 emu Push attach、缺字段拒绝发码）/ "
+            "loose（沿用指纹包抽样；api_id=4 路径仍会写入 InitConnection lang_pack/tz）"
+        ),
+    )
+    strict_vault_device_alignment: bool = Field(
+        default=False,
+        description="True 时等同 device_alignment_mode=strict。Settings 勾选即可开启。",
+    )
+    pin_app_version_substr: str = Field(
+        default="",
+        description=(
+            "设备指纹抽样时优先匹配 app_version 包含该子串的样本（如 12.7.3）。"
+            "空字符串在严格模式下回落到 12.7.3；loose 模式表示不钉死版本。"
+        ),
+    )
+    init_connection_set_lang_pack: bool = Field(
+        default=False,
+        description=(
+            "True：在 Telethon connect() 前把 InitConnection.lang_pack 写成 profile.lang_pack"
+            "（Android 模板为 android）。False：仅当严格对齐开启时仍会写入。"
+        ),
+    )
+    init_connection_set_tz_offset: bool = Field(
+        default=False,
+        description=(
+            "True：在 InitConnection.params 写入 JSON tz_offset（秒）。"
+            "False：仅当严格对齐开启时仍会按号国写入。"
+        ),
+    )
+    init_connection_tz_offset_override: Optional[int] = Field(
+        default=None,
+        description="若设置，覆盖 profile.tz_offset 写入 InitConnection.params。",
+    )
+    force_country_locale: bool = Field(
+        default=False,
+        description=(
+            "True：忽略设备包抽样的语言/时区，强制 COUNTRY_LANG_MAP 与号国对齐。"
+            "严格模式默认视为开启。"
+        ),
+    )
+    vault_fingerprint_replay: bool = Field(
+        default=False,
+        description=(
+            "True：从 lod_user 成功 +91 JSON 轮询覆盖机型/SDK/app_version"
+            "（不复制 device_token / device_secret）。严格模式默认开启。"
+        ),
+    )
+    inject_vault_device_secret: bool = Field(
+        default=False,
+        description=(
+            "True：把 vault JSON 的 device_secret 挂到 profile，供 FirebaseSms 路径尝试注入。"
+            "默认关闭：secret 绑定历史 nonce，不是 CodeSettings 字段。"
+        ),
+    )
+    vault_attestation_persist_secrets: bool = Field(
+        default=False,
+        description="True：把 device_secret 原文写入 data/vault_attestation.json（gitignore）。默认只存元数据。",
+    )
+    app_delivery_fast_drop: bool = Field(
+        default=True,
+        description=(
+            "SentCodeTypeApp 且无 next_type 时立即丢号（Expert：勿空等 2 分钟）。"
+            "关闭后仍会尝试 resend / 短轮询。"
+        ),
+    )
+    flood_rotate_push_token: bool = Field(
+        default=True,
+        description="FLOOD / API_ID_PUBLISHED_FLOOD 后冷却并换发 Push Token，禁止把同一枚 token 继续撞闸。",
+    )
+    code_settings_allow_firebase: bool = Field(
+        default=True,
+        description="auth.sendCode CodeSettings.allow_firebase。官方 Android 为 true。",
+    )
+    code_settings_unknown_number: bool = Field(
+        default=True,
+        description="CodeSettings.unknown_number：接码号不是本机 SIM 时设 true。",
+    )
+    code_settings_allow_flashcall: bool = Field(
+        default=False,
+        description="CodeSettings.allow_flashcall；接码网关通常收不到闪信，默认关闭。",
+    )
+    code_settings_allow_missed_call: bool = Field(
+        default=False,
+        description="CodeSettings.allow_missed_call。",
     )
     hunt_sms_first_after_app_streak: int = Field(
         default=2,
@@ -551,6 +658,58 @@ class AppConfigModel(BaseModel):
             if token in {"0", "false", "no", "off", "standard", ""}:
                 return False
         return bool(value)
+
+    @field_validator(
+        "strict_vault_device_alignment",
+        "init_connection_set_lang_pack",
+        "init_connection_set_tz_offset",
+        "force_country_locale",
+        "vault_fingerprint_replay",
+        "inject_vault_device_secret",
+        "vault_attestation_persist_secrets",
+        "app_delivery_fast_drop",
+        "flood_rotate_push_token",
+        "code_settings_allow_firebase",
+        "code_settings_unknown_number",
+        "code_settings_allow_flashcall",
+        "code_settings_allow_missed_call",
+        mode="before",
+    )
+    @classmethod
+    def _normalize_alignment_flags(cls, value, info):
+        true_defaults = {
+            "app_delivery_fast_drop",
+            "flood_rotate_push_token",
+            "code_settings_allow_firebase",
+            "code_settings_unknown_number",
+        }
+        field_name = getattr(info, "field_name", None)
+        return coerce_bool(value, default=bool(field_name in true_defaults))
+
+    @field_validator("device_alignment_mode", mode="before")
+    @classmethod
+    def _normalize_device_alignment_mode(cls, value):
+        token = str(value or "loose").strip().lower()
+        if token in {"strict", "vault", "expert", "1", "true", "yes", "on"}:
+            return "strict"
+        if token in {"loose", "off", "none", "legacy", "0", "false", "no"}:
+            return "loose"
+        return "loose"
+
+    @field_validator("pin_app_version_substr", mode="before")
+    @classmethod
+    def _normalize_pin_app_version_substr(cls, value):
+        return str(value or "").strip()
+
+    @field_validator("init_connection_tz_offset_override", mode="before")
+    @classmethod
+    def _normalize_init_connection_tz_offset_override(cls, value):
+        if value is None or value == "":
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
 
 
 class DeviceProfileSchema(BaseModel):
