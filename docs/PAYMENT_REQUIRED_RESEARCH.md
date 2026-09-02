@@ -48,29 +48,54 @@ sendCode → SentCodeTypeApp（或 SMS），无 PaymentRequired
 
 ## A–E 控制变量实验
 
-固定：`official_client_emulation=true`，`smsbower_only`，`push_required`，每实验 2 号。
+固定：`official_client_emulation=true`，`smsbower_only`，`push_required`，目标每实验 2 号（iq）。
 
-| 实验 | 变量 | 结果（post-verifyEmail sent_code） |
-|------|------|-----------------------------------|
-| A | api_id=6 baseline | _待填_ |
-| B | api_id=4 | _待填_ |
-| C | telegram_x 21724 | _待填_ |
-| D | telegram_9 / 9.6.7 | _待填_ |
-| E | device_max=1 proxy_max=1 | _待填_ |
+### 本次实测（2026-09-02）
 
-详细 JSON：`data/ab_reports/payment_bypass_ab_*.json`
+| 实验 | 变量 | 租号 | 完成 email | verifyEmail 后 sent_code | email→Payment 率 |
+|------|------|------|------------|---------------------------|------------------|
+| **A** | api_id=6 baseline | 6 | 2 | PaymentRequired ×2 | **100%** (2/2) |
+| **B** | api_id=4 | 2 | 0 | App ×1；黑名单跳过 ×1 | N/A（未到 email 后阶段） |
+| **C** | telegram_x 21724 | 2 | 0 | 未到达 sendCode | N/A |
+| **D** | telegram_9 / 9.6.7 | 1 | 1 | PaymentRequired ×1 | **100%** (1/1) |
+| **E** | device_max=1 proxy_max=1 | 2 | 1 | PaymentRequired ×1 | **100%** (1/1) |
 
-## 根因假设排序（实验前）
+补跑 A（4 租号 / 2 完成 email）：`payment_bypass_ab_iq_20260902_033109.json`  
+全矩阵：`payment_bypass_ab_iq_20260902_032747.json`
 
-1. **official 路径 + 国家 SMS 成本策略**（文档支持）— 最可能
-2. **api_id=6 官方身份** vs custom api_id（历史 A/B 强烈支持）
-3. 设备指纹重复 / IP 质量 — E 实验可否定或部分支持
-4. app_version 新旧 — D 实验
-5. Telegram X 独立策略 — C 实验
-6. CodeSettings / Push attach — official 模式已固定 attach，变量已控
+### 历史 official survey（iq + id + pe，同配置）
 
-## 建议路径
+| 国家 | 完成 email | email→Payment | 率 |
+|------|------------|---------------|-----|
+| iq | 9 | 9 | 100% |
+| id | 4 | 4 | 100% |
+| pe | 5 | 5 | 100% |
 
-若需 **自动化注册成功率**，关闭 `official_client_emulation`，使用 `balanced + custom api_id`（历史 iq/co/pe 数据支持）。
+合计 **18/18 = 100%**，产品均为 `telegram_premium.one_week.auth`（USD $1.00 或当地货币等价）。
 
-若业务 **必须官方 Push/Firebase 链路**，需接受 PaymentRequired 或接入真实 Play 内购（`payments.assignPlayMarketTransaction`），无免费绕过。
+### 关键对比
+
+- **A / D / E**：凡走完 `SetUpEmailRequired → smsbower verifyEmail`，下一跳 **均为 PaymentRequired**。
+- **B (api_id=4)**：首跳直接 **SentCodeTypeApp**，未进入 email 流程 — 与 api_id=6 路径不同，但**不是**「绕过内购」，而是号池/App 投递。
+- **C (Telegram X)**：本轮未成功 sendCode（REGHelp Push 对 tg_x 可能更严），**无法验证**是否免 PaymentRequired。
+- **E vs A**：全新设备+代理 **未改变** PaymentRequired（1/1）。
+
+## 根因假设排序（证据更新）
+
+| 排序 | 假设 | 证据 |
+|------|------|------|
+| 1 | **official 路径被服务端标记为「官方 App」→ Paid auth 是设计行为** | A/D/E 100%；文档明确「Official apps may receive sentCodePaymentRequired」 |
+| 2 | **与 custom api_id / balanced 路径本质不同** | 历史 non-official iq → SentCodeTypeApp，0% PaymentRequired |
+| 3 | **国家/号段 SMS 成本策略** | iq/id/pe 均 100%，与 IP 无关（E 未改善） |
+| 4 | app_version 新旧 | D (9.6.7) 仍 PaymentRequired → **否定** |
+| 5 | 设备指纹 / IP 重复 | E 全新设备+代理仍 PaymentRequired → **否定** |
+| 6 | api_id=4 可规避 | B 走 App 非 Payment，但非可用注册路径 → **部分否定** |
+| 7 | Telegram X 免内购 | C 未出码 → ** inconclusive** |
+
+## 结论
+
+**不存在可靠的 API 级「规避内购」办法。** 在 `official_client_emulation=true` 且完成 email 验证后，Telegram 对 iq/id/pe 等测试国 **系统性返回 PaymentRequired**，这与 core.telegram.org 的 Paid auth 设计一致，不是设备/IP 配置 bug。
+
+若自动化目标为 **可完成注册**：应关闭 official 模拟，使用 `balanced + custom api_id`（历史数据支持 SentCodeTypeApp/SMS 路径）。
+
+若必须 official 链路：仅能通过 **真实 Play/App Store 内购**（`payments.assignPlayMarketTransaction`）或放弃该号段。
