@@ -7,6 +7,7 @@ const config = reactive({
   antisafety_api_key: '',
   antisafety_aids: {
     telegram_android: '',
+    telegram_android_public: '',
     telegram_x: '',
     telegram_9: ''
   },
@@ -45,7 +46,7 @@ const config = reactive({
   },
   custom_proxies: [],
   default_2fa_password: 'Password@2026!Sec',
-  api_credential_mode: 'auto',
+  api_credential_mode: 'official',
   custom_api_id: null,
   custom_api_hash: '',
   antisafety_base_urls: ['https://api.antisafety.net'],
@@ -62,8 +63,9 @@ const config = reactive({
   push_token_reuse_enabled: false,
   push_token_reuse_max_uses: 2,
   push_token_save_issued: true,
-  code_delivery_mode: 'balanced',
-  official_client_emulation: false,
+  code_delivery_mode: 'push_required',
+  official_client_emulation: true,
+  official_api_id: 6,
   hunt_sms_first_after_app_streak: 2,
   hunt_no_number_retries: 20,
   hunt_no_number_retry_delay_sec: 2.0,

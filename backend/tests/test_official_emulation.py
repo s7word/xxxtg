@@ -95,7 +95,10 @@ class SequenceClient:
 class TestOfficialEmulationConfig(unittest.TestCase):
     def test_schema_default_and_coercion(self):
         cfg = AppConfigModel()
-        self.assertFalse(cfg.official_client_emulation)
+        self.assertTrue(cfg.official_client_emulation)
+        self.assertEqual(cfg.api_credential_mode, "official")
+        self.assertEqual(cfg.code_delivery_mode, "push_required")
+        self.assertEqual(cfg.official_api_id, 6)
         self.assertTrue(AppConfigModel(official_client_emulation="true").official_client_emulation)
         self.assertFalse(AppConfigModel(official_client_emulation="off").official_client_emulation)
 
@@ -112,6 +115,26 @@ class TestOfficialEmulationConfig(unittest.TestCase):
         )
         self.assertEqual(resolved["api_id"], 6)
         self.assertEqual(resolved["credential_source"], "official")
+
+    def test_official_api_id_four_override(self):
+        profile = _android_profile()
+        config = SimpleNamespace(
+            official_client_emulation=True,
+            official_api_id=4,
+            api_credential_mode="official",
+        )
+        resolved = DeviceProfileManager.resolve_effective_credentials(
+            profile, config, has_push_token=True
+        )
+        self.assertEqual(resolved["api_id"], 4)
+        self.assertEqual(resolved["api_hash"], "014b35b6184100b085b0d0572f9b5103")
+
+    def test_email_setup_failure_reason_service_disabled(self):
+        exc = RuntimeError("REGHelp Email 产品未开通 (SERVICE_DISABLED)")
+        self.assertEqual(
+            RegistrationOrchestrator._email_setup_failure_reason(exc),
+            "EMAIL_SERVICE_DISABLED",
+        )
 
     def test_plan_uses_official_label(self):
         plan = resolve_code_delivery_plan(

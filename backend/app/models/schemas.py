@@ -133,6 +133,7 @@ class AppConfigModel(BaseModel):
     antisafety_aids: Dict[str, str] = Field(
         default={
             "telegram_android": "308aba4e-5680-466b-81a5-477ac6befa95",
+            "telegram_android_public": "308aba4e-5680-466b-81a5-477ac6befa95",
             "telegram_x": "47f7d612-fe1a-4167-a450-db8a52048e9c",
             "telegram_9": "59e59906-5177-4f6f-8f7e-ced3fe370997"
         },
@@ -202,12 +203,13 @@ class AppConfigModel(BaseModel):
 
     # ---- 自建开发者 API 凭证 与 Attestation 网关容灾 (API_ID_PUBLISHED_FLOOD 应对方案) ----
     api_credential_mode: str = Field(
-        default="auto",
+        default="official",
         description=(
             "API 凭证选择策略: "
-            "official (始终使用官方内置 api_id/api_hash，需要有效 Push Token 才能规避 API_ID_PUBLISHED_FLOOD) / "
-            "custom (始终强制使用下方自建开发者 api_id/api_hash) / "
-            "auto (优先使用官方 ID；若本次未获取到有效 Push Token 且官方 ID 属于已知公开泄露 ID，则自动回退到自建开发者 ID)"
+            "official (默认；始终使用官方内置 api_id/api_hash=4/6，依赖 REGHelp Push Token；"
+            "2023-02 起 Telegram 注册 SMS/Firebase 仅官方移动客户端可走通) / "
+            "custom (legacy：强制自建 my.telegram.org api_id，sendCode 几乎只会 SentCodeTypeApp) / "
+            "auto (legacy：无 Push 时可能回退自建 ID，不推荐用于新用户注册)"
         )
     )
     custom_api_id: Optional[int] = Field(
@@ -289,22 +291,28 @@ class AppConfigModel(BaseModel):
         description="REGHelp 新签发成功后是否写入本地 Push Token 库存（与是否开启复用无关）",
     )
     code_delivery_mode: str = Field(
-        default="balanced",
+        default="push_required",
         description=(
             "auth.sendCode 验证码投递通道策略: "
-            "sms_first (优先 SMS：非泄露 api_id 不申请/不 attach Push Token；"
-            "遇 API_ID_PUBLISHED_FLOOD 可一次性 escalate) / "
-            "balanced (默认：非泄露 effective api_id 同 sms_first，泄露/official 路径需 Push) / "
-            "push_required (legacy：始终申请 Push 并 attach token)"
+            "push_required (默认：官方 api_id 路径每轮申请并 attach REGHelp Push Token) / "
+            "balanced (legacy：非泄露自建 api_id 可跳过 Push，但无法走官方注册 SMS 主路径) / "
+            "sms_first (legacy：优先 SMS，遇 API_ID_PUBLISHED_FLOOD 可 escalate Push)"
         ),
     )
     official_client_emulation: bool = Field(
-        default=False,
+        default=True,
         description=(
-            "官方客户端模拟：开启后强制使用模板官方 api_id/api_hash（telegram_android 为 6）"
-            "并以 push_required 每轮申请并 attach REGHelp Push Token；"
-            "sendCode 后处理 SetUpEmailRequired / FirebaseSms / PaymentRequired，"
-            "不再把非 App 通道一律当短信空等。猎号连续 App 强制 SMS 在此模式下关闭"
+            "官方客户端模拟（默认开启）：强制模板官方 api_id/api_hash（telegram_android=6，"
+            "telegram_android_public=4）+ push_required + REGHelp Push；"
+            "sendCode 后处理 SetUpEmailRequired / FirebaseSms / PaymentRequired。"
+            "自建 my.telegram.org api_id 无法替代官方 4/6 走注册 SMS 主路径（2023-02 政策）"
+        ),
+    )
+    official_api_id: int = Field(
+        default=6,
+        description=(
+            "官方客户端模拟使用的 api_id，仅允许 4（Public Android）或 6（正式 Telegram Android）。"
+            "与 active_app_type 模板 api_hash 联动；official_client_emulation 开启时覆盖 custom 凭证"
         ),
     )
     hunt_sms_first_after_app_streak: int = Field(
@@ -541,6 +549,15 @@ class AppConfigModel(BaseModel):
             if token in {"0", "false", "no", "off", "standard", ""}:
                 return False
         return bool(value)
+
+    @field_validator("official_api_id", mode="before")
+    @classmethod
+    def _normalize_official_api_id(cls, value):
+        try:
+            api_id = int(value or 6)
+        except (TypeError, ValueError):
+            return 6
+        return api_id if api_id in (4, 6) else 6
 
 
 class DeviceProfileSchema(BaseModel):

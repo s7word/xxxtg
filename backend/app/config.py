@@ -136,6 +136,18 @@ class ConfigManager:
                         data = json.load(f)
                     self._config = AppConfigModel(**data)
                     logger.info("已从持久化存储区载入系统配置快照")
+                    migrated = self._maybe_migrate_official_api_defaults(data)
+                    if migrated is not None:
+                        self._config = migrated
+                        try:
+                            _atomic_write_unlocked(self._config.model_dump(), CONFIG_FILE)
+                            logger.warning(
+                                "已迁移注册凭证策略至官方 api_id 默认值 "
+                                "(official_client_emulation=true, api_credential_mode=official, "
+                                "code_delivery_mode=push_required, official_api_id=6)"
+                            )
+                        except Exception as exc:
+                            logger.warning("回写官方 api 默认策略迁移失败: %s", exc)
                     # 旧配置可能把 api.reghelp.net 混进 antisafety_base_urls（或反过来），
                     # Pydantic 校验器会隔离地址；启动时强制清洗并回写，避免日志再出现
                     # 「候选网关: https://api.antisafety.net, https://api.reghelp.net」。
@@ -168,6 +180,22 @@ class ConfigManager:
             except Exception as e:
                 logger.error(f"持久化配置文件失败: {e}")
             return self._config
+
+    @staticmethod
+    def _maybe_migrate_official_api_defaults(raw: Dict[str, Any]) -> Optional[AppConfigModel]:
+        """一次性迁移：旧版 custom/auto 注册策略 → 官方 api_id=4/6 默认路径。"""
+        if raw.get("_official_api_defaults_v2"):
+            return None
+        if not raw.get("official_client_emulation"):
+            raw["official_client_emulation"] = True
+        if str(raw.get("api_credential_mode") or "").lower() in {"", "auto", "custom"}:
+            raw["api_credential_mode"] = "official"
+        if str(raw.get("code_delivery_mode") or "").lower() in {"", "balanced", "sms_first"}:
+            raw["code_delivery_mode"] = "push_required"
+        if raw.get("official_api_id") not in (4, 6):
+            raw["official_api_id"] = 6
+        raw["_official_api_defaults_v2"] = True
+        return AppConfigModel(**raw)
 
     @staticmethod
     def _persist_if_urls_sanitized(raw: Dict[str, Any], config: AppConfigModel) -> bool:

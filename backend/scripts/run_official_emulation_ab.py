@@ -30,7 +30,7 @@ from backend.scripts.run_registration_sprint import (  # noqa: E402
     summarize_evidence,
 )
 
-PREFERRED_COUNTRIES = ("pe", "cl", "ma", "id", "co")
+DEFAULT_PREFERRED_COUNTRIES = ("pe", "cl", "ma", "id", "co")
 
 
 def apply_round_config(client: ApiClient, snapshot: Dict[str, Any], *, official: bool) -> Dict[str, Any]:
@@ -54,7 +54,13 @@ def apply_round_config(client: ApiClient, snapshot: Dict[str, Any], *, official:
     }
 
 
-def pick_country(client: ApiClient, requested: Optional[str], provider: str) -> str:
+def pick_country(
+    client: ApiClient,
+    requested: Optional[str],
+    provider: str,
+    *,
+    preferred: tuple[str, ...] = DEFAULT_PREFERRED_COUNTRIES,
+) -> str:
     if requested:
         return requested.lower()
     try:
@@ -64,7 +70,7 @@ def pick_country(client: ApiClient, requested: Optional[str], provider: str) -> 
         return "cl"
     items = data.get("items") or []
     by_code = {str(item.get("code") or "").lower(): item for item in items}
-    for code in PREFERRED_COUNTRIES:
+    for code in preferred:
         item = by_code.get(code)
         if item and int(item.get("stock") or 0) > 0:
             print(
@@ -178,6 +184,21 @@ def main() -> int:
     parser.add_argument("--password", default=os.environ.get("EDGENODE_AUTH_PASSWORD"))
     parser.add_argument("--password-file", default="data/edgenode_auth_password")
     parser.add_argument("--country", default="")
+    parser.add_argument(
+        "--countries",
+        default="",
+        help="逗号分隔多国（如 iq,ir）；与 --country 互斥，优先 --countries",
+    )
+    parser.add_argument(
+        "--no-pe",
+        action="store_true",
+        help="自动选国时排除 pe（秘鲁）",
+    )
+    parser.add_argument(
+        "--official-only",
+        action="store_true",
+        help="仅跑 Round A（official 模拟），跳过 balanced+custom 对照",
+    )
     parser.add_argument("--sms-provider", default="grizzlysms")
     parser.add_argument("--count", type=int, default=3)
     parser.add_argument("--concurrency", type=int, default=2)
@@ -195,12 +216,25 @@ def main() -> int:
 
     client = ApiClient(args.base, args.username, password)
     original = client.get_config()
-    country = pick_country(client, args.country or None, args.sms_provider)
+    preferred = tuple(
+        c for c in DEFAULT_PREFERRED_COUNTRIES if not (args.no_pe and c == "pe")
+    )
+    if args.countries:
+        countries = [c.strip().lower() for c in args.countries.split(",") if c.strip()]
+    elif args.country:
+        countries = [args.country.lower()]
+    else:
+        countries = [pick_country(client, None, args.sms_provider, preferred=preferred)]
+    if args.no_pe:
+        countries = [c for c in countries if c != "pe"]
+    if not countries:
+        print("无可用国家（--no-pe 已排除全部请求国家）", flush=True)
+        return 1
     print(
         f"启动快照 cred={original.get('api_credential_mode')} "
         f"delivery={original.get('code_delivery_mode')} "
         f"emu={original.get('official_client_emulation')} "
-        f"api_id={original.get('custom_api_id')} country={country}",
+        f"api_id={original.get('custom_api_id')} countries={countries}",
         flush=True,
     )
     balances_before = snapshot_balances(client)
@@ -208,36 +242,38 @@ def main() -> int:
 
     rounds: List[Dict[str, Any]] = []
     try:
-        rounds.append(run_round(
-            client,
-            label="round_a_official_emulation",
-            official=True,
-            snapshot=original,
-            country=country,
-            sms_provider=args.sms_provider,
-            count=args.count,
-            concurrency=args.concurrency,
-            max_price=args.max_price,
-            max_number_attempts=args.max_number_attempts,
-            proxy_mode=args.proxy_mode,
-            poll=args.poll,
-            batch_timeout=args.batch_timeout,
-        ))
-        rounds.append(run_round(
-            client,
-            label="round_b_balanced_custom",
-            official=False,
-            snapshot=original,
-            country=country,
-            sms_provider=args.sms_provider,
-            count=args.count,
-            concurrency=args.concurrency,
-            max_price=args.max_price,
-            max_number_attempts=args.max_number_attempts,
-            proxy_mode=args.proxy_mode,
-            poll=args.poll,
-            batch_timeout=args.batch_timeout,
-        ))
+        for country in countries:
+            rounds.append(run_round(
+                client,
+                label=f"round_a_official_emulation_{country}",
+                official=True,
+                snapshot=original,
+                country=country,
+                sms_provider=args.sms_provider,
+                count=args.count,
+                concurrency=args.concurrency,
+                max_price=args.max_price,
+                max_number_attempts=args.max_number_attempts,
+                proxy_mode=args.proxy_mode,
+                poll=args.poll,
+                batch_timeout=args.batch_timeout,
+            ))
+            if not args.official_only:
+                rounds.append(run_round(
+                    client,
+                    label=f"round_b_balanced_custom_{country}",
+                    official=False,
+                    snapshot=original,
+                    country=country,
+                    sms_provider=args.sms_provider,
+                    count=args.count,
+                    concurrency=args.concurrency,
+                    max_price=args.max_price,
+                    max_number_attempts=args.max_number_attempts,
+                    proxy_mode=args.proxy_mode,
+                    poll=args.poll,
+                    batch_timeout=args.batch_timeout,
+                ))
     finally:
         restored = client.request("POST", "/api/config", original)
         print(
@@ -251,8 +287,10 @@ def main() -> int:
     any_success = any((item.get("summary") or {}).get("success") for item in rounds)
     report = {
         "generated_at": utc_now(),
-        "country": country,
+        "countries": countries,
         "sms_provider": args.sms_provider,
+        "official_only": bool(args.official_only),
+        "no_pe": bool(args.no_pe),
         "user_phone_skipped": "+51939693509 已在黑名单（SENT_CODE_TYPE_APP），本次用新号",
         "balances_before": balances_before,
         "balances_after": balances_after,

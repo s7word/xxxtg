@@ -60,6 +60,12 @@ GLOBAL_TOPOLOGY_COUNTRIES = tuple(COUNTRY_LANG_MAP.keys())
 # 会直接返回 API_ID_PUBLISHED_FLOOD，与账号、IP、地区历史无关。
 PUBLISHED_API_ID_BLOCKLIST = {4, 6, 8, 10, 2040, 2100, 17349, 21724}
 
+# 官方 Telegram Android 公开 api_id / api_hash（2023-02 起注册 SMS/Firebase 主路径仅认此二类）
+OFFICIAL_ANDROID_CREDENTIALS = {
+    4: "014b35b6184100b085b0d0572f9b5103",   # Public Android / 早期官方 Android
+    6: "eb06d4abfb49dc3eeb1aeb98ae0f581e",   # 正式版 Telegram Android (Play Store)
+}
+
 # 官方端点环境规范与特征参数矩阵
 DEFAULT_PROFILES = {
     "telegram_android": {
@@ -67,7 +73,7 @@ DEFAULT_PROFILES = {
         "name": "MTProto Android Endpoint (Mainstream SDK 33)",
         "default_aid": "308aba4e-5680-466b-81a5-477ac6befa95",
         "api_id": 6,
-        "api_hash": "eb06d4abfb49dc3eeb1aeb98ae0f581e",
+        "api_hash": OFFICIAL_ANDROID_CREDENTIALS[6],
         "app_name": "tg",
         "app_device": "Android",
         "device_model": "Samsung Galaxy S23 Ultra",
@@ -92,12 +98,27 @@ DEFAULT_PROFILES = {
         "app_build": "1692",
         "lang_pack": "android_x"
     },
+    "telegram_android_public": {
+        "key": "telegram_android_public",
+        "name": "MTProto Android Public API (api_id=4, Legacy)",
+        "default_aid": "308aba4e-5680-466b-81a5-477ac6befa95",
+        "api_id": 4,
+        "api_hash": OFFICIAL_ANDROID_CREDENTIALS[4],
+        "app_name": "tg",
+        "app_device": "Android",
+        "device_model": "Samsung Galaxy S23 Ultra",
+        "system_version": "SDK 33",
+        "app_version": "12.9.1 (69792)",
+        "app_version_pure": "12.9.1",
+        "app_build": "69792",
+        "lang_pack": "android"
+    },
     "telegram_9": {
         "key": "telegram_9",
         "name": "MTProto Legacy Stable Endpoint (SDK 32)",
         "default_aid": "59e59906-5177-4f6f-8f7e-ced3fe370997",
         "api_id": 6,
-        "api_hash": "eb06d4abfb49dc3eeb1aeb98ae0f581e",
+        "api_hash": OFFICIAL_ANDROID_CREDENTIALS[6],
         "app_name": "tg",
         "app_device": "Android",
         "device_model": "Xiaomi 13",
@@ -191,6 +212,22 @@ class DeviceProfileManager:
         return result
 
     @classmethod
+    def apply_official_api_id(cls, profile: Dict[str, Any], config: Any) -> Dict[str, Any]:
+        """按配置将 profile 锁定为官方 Android api_id=4 或 6（含对应 api_hash）。"""
+        resolved = dict(profile)
+        try:
+            api_id = int(getattr(config, "official_api_id", 6) or 6)
+        except (TypeError, ValueError):
+            api_id = 6
+        if api_id not in OFFICIAL_ANDROID_CREDENTIALS:
+            api_id = 6
+        resolved["api_id"] = api_id
+        resolved["api_hash"] = OFFICIAL_ANDROID_CREDENTIALS[api_id]
+        resolved["is_published_api_id"] = True
+        resolved["credential_source"] = "official"
+        return resolved
+
+    @classmethod
     def resolve_effective_credentials(
         cls,
         profile: Dict[str, Any],
@@ -206,18 +243,20 @@ class DeviceProfileManager:
                     (几乎必然触发 API_ID_PUBLISHED_FLOOD)，则在已配置自建凭证的前提下自动回退
         """
         official_emu = bool(getattr(config, "official_client_emulation", False))
-        mode = "official" if official_emu else (getattr(config, "api_credential_mode", "auto") or "auto")
+        mode = "official" if official_emu else (getattr(config, "api_credential_mode", "official") or "official")
         custom_id = getattr(config, "custom_api_id", None)
         custom_hash = getattr(config, "custom_api_hash", None)
         has_custom = bool(custom_id and custom_hash)
-        is_published = bool(profile.get("api_id") in PUBLISHED_API_ID_BLOCKLIST)
 
         resolved = dict(profile)
+        if official_emu or mode == "official":
+            resolved = cls.apply_official_api_id(resolved, config)
+        is_published = bool(resolved.get("api_id") in PUBLISHED_API_ID_BLOCKLIST)
         resolved["is_published_api_id"] = is_published
-        resolved["credential_source"] = "official"
+        resolved["credential_source"] = resolved.get("credential_source") or "official"
         resolved["credential_risk"] = "none"
 
-        if mode == "custom":
+        if mode == "custom" and not official_emu:
             if has_custom:
                 resolved["api_id"] = int(custom_id)
                 resolved["api_hash"] = custom_hash
@@ -236,7 +275,7 @@ class DeviceProfileManager:
                 resolved["credential_risk"] = "published_id_without_push_token"
             return resolved
 
-        # mode == "auto" (默认): 有 Push Token 就用官方 ID；没有 Push Token 且 ID 已知泄露，则自动切换自建 ID
+        # mode == "auto" (legacy): 有 Push Token 就用官方 ID；没有 Push Token 且 ID 已知泄露，则自动切换自建 ID
         if is_published and not has_push_token:
             if has_custom and int(custom_id) not in PUBLISHED_API_ID_BLOCKLIST:
                 resolved["api_id"] = int(custom_id)

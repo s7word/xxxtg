@@ -56,6 +56,7 @@ PUSH_REFUND_REASON_MAP: Dict[str, str] = {
     "SENT_CODE_TYPE_APP": "NOSMS",
     "PAYMENT_REQUIRED_OFFICIAL_ONLY": "NOSMS",
     "EMAIL_SETUP_FAILED": "NOSMS",
+    "EMAIL_SERVICE_DISABLED": "NOSMS",
     "EMAIL_CODE_UNAVAILABLE": "NOSMS",
     "FIREBASE_SMS_FAILED": "NOSMS",
     "API_ID_PUBLISHED_FLOOD": "NOSMS",
@@ -509,8 +510,14 @@ class RegHelpService:
         if is_auth_error_payload(data):
             raise RuntimeError(describe_auth_error("reghelp", data))
         if data.get("status") == "error":
+            detail = str(data.get("detail") or data.get("message") or data).strip()
+            if detail.upper().replace(" ", "_") == "SERVICE_DISABLED":
+                raise RuntimeError(
+                    "REGHelp Email 产品未开通 (SERVICE_DISABLED)："
+                    "请在 reghelp.net 控制台启用 Email 产品后再走 SetUpEmailRequired 官方注册链路"
+                )
             raise RuntimeError(
-                f"REGHelp Email 任务创建失败: {data.get('detail') or data.get('message') or data}"
+                f"REGHelp Email 任务创建失败: {detail or data}"
             )
         task_id = data.get("id")
         if not task_id:
