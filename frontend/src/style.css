@@ -737,6 +737,24 @@ code, pre, .mono, .font-mono {
   box-shadow: var(--glow-danger);
 }
 
+.payment-required-banner {
+  border-width: 2px;
+}
+
+.payment-required-title {
+  font-weight: 700;
+  font-size: 0.95rem;
+}
+
+.payment-required-amount {
+  font-size: 1.75rem;
+  font-weight: 800;
+  color: #fcd34d;
+  letter-spacing: 0.02em;
+  margin-top: 4px;
+  font-family: var(--font-mono, ui-monospace, monospace);
+}
+
 /* ========== Terminal ========== */
 .ce-terminal-shell {
   display: flex;

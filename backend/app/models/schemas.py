@@ -270,6 +270,22 @@ class AppConfigModel(BaseModel):
             "reghelp_only (仅使用 REGHelp) / antisafety_only (仅使用 AntiSafety)"
         )
     )
+    email_provider_mode: str = Field(
+        default="smsbower_only",
+        description=(
+            "SetUpEmailRequired 临时邮箱调度策略: "
+            "smsbower_only (仅 SMS Bower，默认，不再尝试 REGHelp Email) / "
+            "smsbower_primary (SMS Bower 优先，REGHelp 备选) / "
+            "reghelp_primary (REGHelp 优先，SMS Bower 备选，legacy)"
+        ),
+    )
+    email_smsbower_fallback_enabled: bool = Field(
+        default=False,
+        description=(
+            "smsbower_primary / reghelp_primary 模式下，主源失败"
+            "（SERVICE_DISABLED、超时、错误）时是否自动切换候补提供源"
+        ),
+    )
     push_token_reuse_enabled: bool = Field(
         default=False,
         description=(
@@ -906,6 +922,18 @@ class BatchStatusResponse(BaseModel):
     updated_at: str
 
 
+class PaymentRequiredInfo(BaseModel):
+    """auth.SentCodePaymentRequired 内购结构化字段（官方 App 专属，自动化不可完成）。"""
+    store_product: Optional[str] = Field(default=None, description="商店 SKU，如 telegram_premium.one_week.auth")
+    currency: Optional[str] = Field(default=None, description="ISO 4217 币种")
+    amount: Optional[int] = Field(default=None, description="最小货币单位整数（如 USD 100 = $1.00）")
+    amount_display: Optional[str] = Field(default=None, description="格式化主金额，如 USD $1.00")
+    premium_days: Optional[int] = Field(default=None, description="内购授予 Premium 天数")
+    support_email_address: Optional[str] = None
+    support_email_subject: Optional[str] = None
+    phone_code_hash: Optional[str] = None
+
+
 class TaskStatusResponse(BaseModel):
     """节点状态机生命周期与审计追踪响应"""
     task_id: str
@@ -933,6 +961,10 @@ class TaskStatusResponse(BaseModel):
     hunt_scanned: Optional[int] = Field(default=None, description="猎号：已扫过的号码数")
     hunt_blacklisted: Optional[int] = Field(default=None, description="猎号：已拉黑/拦截的号码数")
     hunt_last_reason: Optional[str] = Field(default=None, description="猎号：最后一次失败原因")
+    payment_required: Optional[PaymentRequiredInfo] = Field(
+        default=None,
+        description="auth.SentCodePaymentRequired 内购信息（官方 App 专属）",
+    )
     cancel_requested: bool = Field(default=False, description="是否已收到取消请求（下一轮取号前生效）")
     created_at: str
     updated_at: str
