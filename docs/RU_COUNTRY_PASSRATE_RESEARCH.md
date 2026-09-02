@@ -101,12 +101,12 @@
 
 | 国家 ISO | 为何看好/看衰 | 来源 | 本轮是否纳入实测 |
 |----------|----------------|------|------------------|
-| **kz** | 俄语圈第一推：+7、Kcell/Beeline、宣称高通过、未进 Paid auth 点名 | Soft Expert 时区/代理纪律；SMSCode；4PDA +7 偏好 | **是（优选主样本）** |
-| **ph** | 东南亚农场常客；Globe/Smart SIM-based；locale/代理目录已齐 | 农场惯例；VirtualSMS；本仓库 `ph` 指纹/姓名池 | **是（优选）** |
-| **vn** | Expert 明文「低难度」 | Soft Expert ban-guide Q5 | **是（优选）** |
-| **id** | Expert「低难度、适合量产」；**api_id=6 已被我们测成 100% Payment**，本轮只走 4 | Soft Expert；PAYMENT survey | **是（优选，仅 api_id=4）** |
-| **in** | 历史 vault 成功；近几轮 App/FLOOD。作对照，不占满 | lod_user；VAULT；FOLLOWUP | **是（对照，小 N）** |
-| pk | SMSCode 与 in 并列南亚池；指纹合成表较弱 | SMSCode | **候补**（kz/ph/vn/id 无库存时） |
+| **kz** | 俄语圈第一推：+7、Kcell/Beeline、宣称高通过、未进 Paid auth 点名 | Soft Expert 时区/代理纪律；SMSCode；4PDA +7 偏好 | **纳入，实测 0 号**（Grizzly getNumber 全 noNumber） |
+| **ph** | 东南亚农场常客；Globe/Smart SIM-based；locale/代理目录已齐 | 农场惯例；VirtualSMS；本仓库 `ph` 指纹/姓名池 | **是（优选，租 12）** |
+| **vn** | Expert 明文「低难度」 | Soft Expert ban-guide Q5 | **是（优选，租 8）** |
+| **id** | Expert「低难度、适合量产」；**api_id=6 已被我们测成 100% Payment**，本轮只走 4 | Soft Expert；PAYMENT survey | **是（优选，租 8，仅 api_id=4）** |
+| **in** | 历史 vault 成功；近几轮 App/FLOOD。作对照，不占满 | lod_user；VAULT；FOLLOWUP | **是（对照，租 4，全 FLOOD）** |
+| pk | SMSCode 与 in 并列南亚池；指纹合成表较弱 | SMSCode | **候补已跑（租 12）**：先代理超时，后 FLOOD |
 | ua | 宣称高通过，但贵、库存飘 | SMSCode | **否**（成本） |
 | ru | Expert「高难度」+ A2P 涨价 | Soft Expert；BitBrowser | **否** |
 | iq | api_id=6 Payment 死胡同；api_id=4 刚全 FLOOD | 本仓库今日两轮 | **否**（不占 50） |
@@ -165,3 +165,5 @@
 6. 余额不够跑满 50：跑能负担的最大 N，报告写「需充值 $X」。
 
 脚本：`backend/scripts/run_country_passrate_50.py`。
+
+实测数字与进步判断见 [COUNTRY_PASSRATE_50_RESULTS.md](./COUNTRY_PASSRATE_50_RESULTS.md)（租号 44，App 10 / FLOOD 22 / SMS 0）。
