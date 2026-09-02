@@ -1,0 +1,175 @@
+SMS after Payment 对照 stamp=20260902_092328 queue=['A', 'B', 'C', 'D', 'E', 'F']
+余额 {"at": "2026-09-02T09:23:28Z", "fivesim": {"success": true, "balance": 25.1154, "currency": "RUB", "message": "5SIM (5sim.net) 鉴权与通信正常，余额 25.1154（RUB），账号 s7word@gmail.com，评分 96，参考价 0.4072"}, "grizzlysms": {"success": true, "balance": 29.8, "currency": "USD", "message": "Grizzly SMS (grizzlysms.com) 鉴权与通信正常，余额 29.8（USD），参考价 0.26"}, "smsbower": {"success": true, "balance": 23.746, "currency": "USD", "message": "SMS Bower (smsbower.app) 鉴权与通信正常，余额 23.746（USD），参考价 0.336"}}
+
+=== A A_long_wait_iq === 延长 SMS 等待到 ~240s + 2s 密轮询（Payment 后 1 次 resend）
+    country=iq count=3 threads=3 attempts=2 provider=smsbower price=1.2 @ 2026-09-02T09:23:32Z
+    batch_id=5ff4a881 已提交并发批量引导: 3 个任务 / 并发度 3（batch_id=5ff4a881）；计划最多租号 6 次（3 路 × 2 次，联合上限 200）
+    [   0s] running=0 pending=3 unfinished=3/3
+    [  15s] running=3 pending=0 unfinished=3/3
+    [  30s] running=3 pending=0 unfinished=3/3
+    [  45s] running=3 pending=0 unfinished=3/3
+    [  60s] running=3 pending=0 unfinished=3/3
+    [  75s] running=3 pending=0 unfinished=3/3
+    [  90s] running=3 pending=0 unfinished=3/3
+    [ 105s] running=3 pending=0 unfinished=3/3
+    [ 120s] running=3 pending=0 unfinished=3/3
+    [ 135s] running=3 pending=0 unfinished=3/3
+    [ 150s] running=3 pending=0 unfinished=3/3
+    [ 165s] running=3 pending=0 unfinished=3/3
+    [ 180s] running=3 pending=0 unfinished=3/3
+    [ 195s] running=3 pending=0 unfinished=3/3
+    [ 210s] running=3 pending=0 unfinished=3/3
+    [ 225s] running=3 pending=0 unfinished=3/3
+    [ 240s] running=3 pending=0 unfinished=3/3
+    [ 255s] running=3 pending=0 unfinished=3/3
+    [ 270s] running=3 pending=0 unfinished=3/3
+    [ 285s] running=3 pending=0 unfinished=3/3
+    [ 300s] running=3 pending=0 unfinished=3/3
+    [ 315s] running=2 pending=0 unfinished=2/3
+    [ 330s] running=2 pending=0 unfinished=2/3
+    task=96ea086b status=failed sms=False pay=True resend=['SentCodeTypeSms'] wait=271s/NO_CODE raw=["'STATUS_WAIT_CODE'"]
+    task=53ad3b41 status=failed sms=False pay=True resend=['SentCodeTypeSms'] wait=272s/NO_CODE raw=["'STATUS_WAIT_CODE'"]
+    task=4e61ca98 status=failed sms=False pay=True resend=['SentCodeTypeSms'] wait=272s/NO_CODE raw=["'STATUS_WAIT_CODE'"]
+    -> 租号=3 发码=9 types={'SentCodeTypeSetUpEmailRequired': 3, 'SentCodeTypeSms': 6} 收码=0 成功=0 outcome=SMS_SIGNAL 耗时=345s
+
+=== B B_double_resend_iq === Payment 后连续 resend 两次 + reportMissingCode + 180s 等待
+    country=iq count=3 threads=3 attempts=2 provider=smsbower price=1.2 @ 2026-09-02T09:29:21Z
+    batch_id=0bcfe422 已提交并发批量引导: 3 个任务 / 并发度 3（batch_id=0bcfe422）；计划最多租号 6 次（3 路 × 2 次，联合上限 200）
+    [   0s] running=0 pending=3 unfinished=3/3
+    [  15s] running=3 pending=0 unfinished=3/3
+    [  30s] running=3 pending=0 unfinished=3/3
+    [  45s] running=3 pending=0 unfinished=3/3
+    [  60s] running=3 pending=0 unfinished=3/3
+    [  75s] running=3 pending=0 unfinished=3/3
+    [  90s] running=3 pending=0 unfinished=3/3
+    [ 105s] running=3 pending=0 unfinished=3/3
+    [ 120s] running=3 pending=0 unfinished=3/3
+    [ 135s] running=3 pending=0 unfinished=3/3
+    [ 150s] running=3 pending=0 unfinished=3/3
+    [ 165s] running=3 pending=0 unfinished=3/3
+    [ 180s] running=3 pending=0 unfinished=3/3
+    [ 195s] running=3 pending=0 unfinished=3/3
+    [ 210s] running=3 pending=0 unfinished=3/3
+    [ 225s] running=3 pending=0 unfinished=3/3
+    [ 240s] running=3 pending=0 unfinished=3/3
+    [ 255s] running=2 pending=0 unfinished=2/3
+    [ 270s] running=1 pending=0 unfinished=1/3
+    [ 285s] running=1 pending=0 unfinished=1/3
+    task=e2c280e1 status=failed sms=False pay=True resend=['SentCodeTypeSms'] wait=205s/NO_CODE raw=["'STATUS_WAIT_CODE'"]
+    task=dbd73812 status=failed sms=False pay=True resend=['SentCodeTypeSms'] wait=204s/NO_CODE raw=["'STATUS_WAIT_CODE'"]
+    task=f734e8e1 status=failed sms=False pay=True resend=['SentCodeTypeSms'] wait=203s/NO_CODE raw=["'STATUS_WAIT_CODE'"]
+    -> 租号=4 发码=9 types={'SentCodeTypeSetUpEmailRequired': 3, 'SentCodeTypeSms': 6} 收码=0 成功=0 outcome=SMS_SIGNAL 耗时=300s
+
+>>> C 选用 grizzlysms: grizzly balance=29.8 stock=103214
+
+=== C C_alt_grizzlysms_iq === 换接码平台对照 smsbower（优先 Grizzly，其次 5SIM）
+    country=iq count=3 threads=3 attempts=2 provider=grizzlysms price=1.2 @ 2026-09-02T09:34:26Z
+    batch_id=886a3bef 已提交并发批量引导: 3 个任务 / 并发度 3（batch_id=886a3bef）；计划最多租号 6 次（3 路 × 2 次，联合上限 200）
+    [   0s] running=0 pending=3 unfinished=3/3
+    [  15s] running=3 pending=0 unfinished=3/3
+    [  30s] running=3 pending=0 unfinished=3/3
+    [  45s] running=3 pending=0 unfinished=3/3
+    [  60s] running=3 pending=0 unfinished=3/3
+    [  75s] running=3 pending=0 unfinished=3/3
+    [  90s] running=3 pending=0 unfinished=3/3
+    [ 105s] running=3 pending=0 unfinished=3/3
+    [ 120s] running=3 pending=0 unfinished=3/3
+    [ 135s] running=3 pending=0 unfinished=3/3
+    [ 150s] running=3 pending=0 unfinished=3/3
+    [ 165s] running=3 pending=0 unfinished=3/3
+    [ 180s] running=3 pending=0 unfinished=3/3
+    [ 195s] running=3 pending=0 unfinished=3/3
+    [ 210s] running=3 pending=0 unfinished=3/3
+    [ 225s] running=3 pending=0 unfinished=3/3
+    [ 240s] running=3 pending=0 unfinished=3/3
+    [ 255s] running=3 pending=0 unfinished=3/3
+    task=2e66034a status=failed sms=False pay=True resend=['SentCodeTypeSms'] wait=213s/NO_CODE raw=["'STATUS_WAIT_CODE'"]
+    task=10db01a8 status=failed sms=False pay=True resend=['SentCodeTypeSms'] wait=217s/NO_CODE raw=["'STATUS_WAIT_CODE'"]
+    task=08f29e47 status=failed sms=False pay=True resend=['SentCodeTypeSms'] wait=221s/NO_CODE raw=["'STATUS_WAIT_CODE'"]
+    -> 租号=3 发码=9 types={'SentCodeTypeSetUpEmailRequired': 3, 'SentCodeTypeSms': 6} 收码=0 成功=0 outcome=SMS_SIGNAL 耗时=270s
+
+=== D D_api4_resend_ma === 非 Payment 路径 api_id=4 在 ma 上 resendCode 能否得到 SMS
+    country=ma count=2 threads=2 attempts=2 provider=smsbower price=1.8 @ 2026-09-02T09:38:59Z
+    batch_id=a45a4f03 已提交并发批量引导: 2 个任务 / 并发度 2（batch_id=a45a4f03）；计划最多租号 4 次（2 路 × 2 次，联合上限 200）
+    [   0s] running=0 pending=2 unfinished=2/2
+    [  15s] running=2 pending=0 unfinished=2/2
+    task=be053971 status=failed sms=False pay=False resend=[] wait=-s/- raw=[]
+    task=2bad3002 status=failed sms=False pay=False resend=[] wait=-s/- raw=[]
+    -> 租号=2 发码=0 types={} 收码=0 成功=0 outcome=FLOOD 耗时=30s
+
+=== E E_long_wait_ma === 同 A，国家换成 ma
+    country=ma count=3 threads=3 attempts=2 provider=smsbower price=1.8 @ 2026-09-02T09:39:32Z
+    batch_id=8afdc0eb 已提交并发批量引导: 3 个任务 / 并发度 3（batch_id=8afdc0eb）；计划最多租号 6 次（3 路 × 2 次，联合上限 200）
+    [   0s] running=0 pending=3 unfinished=3/3
+    [  15s] running=3 pending=0 unfinished=3/3
+    [  30s] running=3 pending=0 unfinished=3/3
+    [  45s] running=3 pending=0 unfinished=3/3
+    [  60s] running=3 pending=0 unfinished=3/3
+    [  75s] running=3 pending=0 unfinished=3/3
+    [  90s] running=3 pending=0 unfinished=3/3
+    [ 105s] running=3 pending=0 unfinished=3/3
+    [ 120s] running=3 pending=0 unfinished=3/3
+    [ 135s] running=3 pending=0 unfinished=3/3
+    [ 150s] running=3 pending=0 unfinished=3/3
+    [ 165s] running=3 pending=0 unfinished=3/3
+    [ 180s] running=3 pending=0 unfinished=3/3
+    [ 195s] running=3 pending=0 unfinished=3/3
+    [ 210s] running=3 pending=0 unfinished=3/3
+    [ 225s] running=3 pending=0 unfinished=3/3
+    [ 240s] running=3 pending=0 unfinished=3/3
+    [ 255s] running=3 pending=0 unfinished=3/3
+    [ 270s] running=3 pending=0 unfinished=3/3
+    [ 285s] running=3 pending=0 unfinished=3/3
+    [ 300s] running=3 pending=0 unfinished=3/3
+    [ 315s] running=3 pending=0 unfinished=3/3
+    [ 330s] running=1 pending=0 unfinished=1/3
+    [ 345s] running=1 pending=0 unfinished=1/3
+    [ 360s] running=1 pending=0 unfinished=1/3
+    [ 375s] running=1 pending=0 unfinished=1/3
+    [ 390s] running=1 pending=0 unfinished=1/3
+    [ 405s] running=1 pending=0 unfinished=1/3
+    [ 420s] running=1 pending=0 unfinished=1/3
+    [ 435s] running=1 pending=0 unfinished=1/3
+    [ 450s] running=1 pending=0 unfinished=1/3
+    task=3e1a2ccc status=failed sms=False pay=True resend=['SentCodeTypeSms'] wait=273s/NO_CODE raw=["'STATUS_WAIT_CODE'"]
+    task=614c740a status=failed sms=False pay=True resend=['SentCodeTypeSms'] wait=271s/NO_CODE raw=["'STATUS_WAIT_CODE'"]
+    task=b6295b60 status=failed sms=False pay=True resend=['SentCodeTypeSms'] wait=274s/NO_CODE raw=["'STATUS_WAIT_CODE'"]
+    -> 租号=4 发码=10 types={'SentCodeTypeSetUpEmailRequired': 4, 'SentCodeTypeSms': 6} 收码=0 成功=0 outcome=SMS_SIGNAL 耗时=465s
+
+=== F F_wait_timeout_then_resend_iq === email verify 后等 90s 再 resend（对齐官方 timeout）再等 180s
+    country=iq count=3 threads=3 attempts=2 provider=smsbower price=1.2 @ 2026-09-02T09:47:21Z
+    batch_id=6e822428 已提交并发批量引导: 3 个任务 / 并发度 3（batch_id=6e822428）；计划最多租号 6 次（3 路 × 2 次，联合上限 200）
+    [   0s] running=0 pending=3 unfinished=3/3
+    [  15s] running=3 pending=0 unfinished=3/3
+    [  30s] running=3 pending=0 unfinished=3/3
+    [  45s] running=3 pending=0 unfinished=3/3
+    [  60s] running=3 pending=0 unfinished=3/3
+    [  75s] running=3 pending=0 unfinished=3/3
+    [  90s] running=3 pending=0 unfinished=3/3
+    [ 105s] running=3 pending=0 unfinished=3/3
+    [ 120s] running=3 pending=0 unfinished=3/3
+    [ 135s] running=3 pending=0 unfinished=3/3
+    [ 150s] running=3 pending=0 unfinished=3/3
+    [ 165s] running=3 pending=0 unfinished=3/3
+    [ 180s] running=3 pending=0 unfinished=3/3
+    [ 195s] running=3 pending=0 unfinished=3/3
+    [ 210s] running=3 pending=0 unfinished=3/3
+    [ 225s] running=3 pending=0 unfinished=3/3
+    [ 240s] running=3 pending=0 unfinished=3/3
+    [ 255s] running=3 pending=0 unfinished=3/3
+    [ 270s] running=2 pending=0 unfinished=2/3
+    [ 285s] running=2 pending=0 unfinished=2/3
+    [ 300s] running=2 pending=0 unfinished=2/3
+    [ 315s] running=2 pending=0 unfinished=2/3
+    [ 330s] running=2 pending=0 unfinished=2/3
+    [ 345s] running=2 pending=0 unfinished=2/3
+    [ 360s] running=1 pending=0 unfinished=1/3
+    task=93aa9ba3 status=failed sms=False pay=True resend=['SentCodeTypeSms'] wait=204s/NO_CODE raw=["'STATUS_WAIT_CODE'"]
+    task=b98355ba status=failed sms=False pay=False resend=[] wait=202s/NO_CODE raw=["'STATUS_WAIT_CODE'"]
+    task=c452eabf status=failed sms=False pay=True resend=['SentCodeTypeSms'] wait=204s/NO_CODE raw=["'STATUS_WAIT_CODE'"]
+    -> 租号=3 发码=8 types={'SentCodeTypeSetUpEmailRequired': 3, 'SentCodeTypeSms': 4, 'SentCodeTypeCall': 1} 收码=0 成功=0 outcome=SMS_SIGNAL 耗时=375s
+
+已恢复 config emu=True probe=off
+
+报告: data/ab_reports/grok_sms_after_payment_20260902_092328.json
+结论: stop=exhausted_hypotheses 租号=19 成功=0 充值提示=无 轮次=['A:SMS_SIGNAL', 'B:SMS_SIGNAL', 'C:SMS_SIGNAL', 'D:FLOOD', 'E:SMS_SIGNAL', 'F:SMS_SIGNAL']

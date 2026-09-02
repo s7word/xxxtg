@@ -157,6 +157,11 @@ def _excerpt(logs: List[str], limit: int = 12) -> List[str]:
         "绑定硬件特征",
         "跳过 Push",
         "SentCodeType",
+        "sendCode 凭证核对",
+        "成功获取平台合规签署",
+        "Attestation Push Token 未返回",
+        "[official]",
+        "force_skip_push_attach",
     )
     picked: List[str] = []
     for line in logs:
