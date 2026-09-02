@@ -76,7 +76,7 @@ const config = reactive({
   app_delivery_fast_drop: true,
   flood_rotate_push_token: true,
   flood_window_scope: 'process',
-  flood_block_new_sends: true,
+  flood_block_new_sends: false,
   ignore_published_flood_window: false,
   published_flood_hold_seconds: 120,
   hunt_sms_first_after_app_streak: 2,

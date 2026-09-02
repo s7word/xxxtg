@@ -170,19 +170,81 @@ class TestFloodWindowGate(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(gate.is_hard_stop())
         self.assertGreater(gate.remaining(), 100)
 
-    async def test_respect_hard_stop_returns_reason(self):
+    def _default_cfg(self):
+        return SimpleNamespace(
+            ignore_published_flood_window=False,
+            flood_window_scope="process",
+            flood_block_new_sends=False,
+            published_flood_hold_seconds=120.0,
+        )
+
+    async def test_default_published_flood_allows_sibling_rent(self):
+        """默认：一任务 PUBLISHED_FLOOD 后，兄弟/后续任务仍可租号发码。"""
+        # 模拟「已有硬闩」残留；默认 flood_block_new_sends=false 仍放行
         SendCodeFloodWindow.get().trip(
             reason="API_ID_PUBLISHED_FLOOD", seconds=3600, hard=True, api_id=4
         )
         manager = RegistrationTaskManager()
         manager.tasks = {}
         tid = manager.create_task()
-        stop = await RegistrationOrchestrator._respect_flood_window(tid, manager)
+        stop = await RegistrationOrchestrator._respect_flood_window(
+            tid, manager, config=self._default_cfg()
+        )
+        self.assertIsNone(stop)
+        logs = "\n".join(manager.get_task(tid)["logs"])
+        self.assertIn("不拦新测试", logs)
+        self.assertNotIn("停止本任务以免继续填满窗口", logs)
+        self.assertNotIn("填满窗口", logs)
+
+    async def test_default_trip_does_not_hard_latch(self):
+        """默认 trip PUBLISHED_FLOOD 不设进程硬门闩。"""
+        RegistrationOrchestrator._trip_flood_window(
+            reason="API_ID_PUBLISHED_FLOOD",
+            seconds=0,
+            hard=True,
+            api_id=4,
+            config=self._default_cfg(),
+        )
+        gate = SendCodeFloodWindow.get()
+        self.assertFalse(gate.is_hard_stop())
+        self.assertLess(gate.remaining(), 1.0)
+
+        manager = RegistrationTaskManager()
+        manager.tasks = {}
+        tid = manager.create_task()
+        stop = await RegistrationOrchestrator._respect_flood_window(
+            tid, manager, config=self._default_cfg()
+        )
+        self.assertIsNone(stop)
+
+    async def test_opt_in_block_new_sends_stops_sibling(self):
+        """显式 flood_block_new_sends=true 才拦兄弟任务。"""
+        cfg = SimpleNamespace(
+            ignore_published_flood_window=False,
+            flood_window_scope="process",
+            flood_block_new_sends=True,
+            published_flood_hold_seconds=120.0,
+        )
+        RegistrationOrchestrator._trip_flood_window(
+            reason="API_ID_PUBLISHED_FLOOD",
+            seconds=0,
+            hard=True,
+            api_id=4,
+            config=cfg,
+        )
+        self.assertTrue(SendCodeFloodWindow.get().is_hard_stop())
+
+        manager = RegistrationTaskManager()
+        manager.tasks = {}
+        tid = manager.create_task()
+        stop = await RegistrationOrchestrator._respect_flood_window(
+            tid, manager, config=cfg
+        )
         self.assertEqual(stop, "HUNT_FLOOD_WINDOW")
         logs = "\n".join(manager.get_task(tid)["logs"])
-        self.assertIn("跳过本任务的租号/发码", logs)
+        self.assertIn("flood_block_new_sends=开", logs)
+        self.assertIn("跳过本任务租号/发码", logs)
         self.assertNotIn("停止本任务以免继续填满窗口", logs)
-        self.assertIn("不会被 cancel", logs)
 
     async def test_ignore_published_flood_window_allows_sibling(self):
         SendCodeFloodWindow.get().trip(
@@ -203,7 +265,6 @@ class TestFloodWindowGate(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(stop)
         logs = "\n".join(manager.get_task(tid)["logs"])
         self.assertIn("ignore_published_flood_window=开", logs)
-        self.assertIn("通常仍 FLOOD", logs)
 
     async def test_task_scope_allows_sibling(self):
         SendCodeFloodWindow.get().trip(
@@ -242,6 +303,10 @@ class TestFloodWindowGate(unittest.IsolatedAsyncioTestCase):
         gate = SendCodeFloodWindow.get()
         self.assertFalse(gate.is_hard_stop())
         self.assertLess(gate.remaining(), 1.0)
+
+    def test_schema_default_flood_block_new_sends_false(self):
+        cfg = AppConfigModel()
+        self.assertFalse(cfg.flood_block_new_sends)
 
     def test_push_slot_label_is_android_fcm_not_ios_client(self):
         from backend.app.services.device_alignment import describe_push_slot

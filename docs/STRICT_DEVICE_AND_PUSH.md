@@ -49,21 +49,20 @@ Settings →「严格设备对齐（vault 成功样本 + Telegram Expert）」�
 
 ## FLOOD 门闩与并发探测
 
-`API_ID_PUBLISHED_FLOOD` 会拉起**进程级**冷却窗（默认约 120s）：后续任务在租号/sendCode 前看到门闩会**跳过发码**，避免同 published `api_id` 继续填窗烧钱。
+`API_ID_PUBLISHED_FLOOD` **只结束触发它的那一号 / 本任务**（可退号 / 黑名单按现有逻辑）。
+**默认不**用进程门闩挡住后续 hunt / 新任务 / 其它并发线程的租号与 `sendCode`。
 
 要点：
 
-- **不会**把已开跑的其它 asyncio 任务 cancel 掉；看起来像「全部停止」，其实是还没过门闩的兄弟任务被跳过。
-- 日志会写「同 published api_id 冷却中…跳过租号/发码」，不再写吓人的「停止本任务以免继续填满窗口」。
-- 默认要拦新发码（省钱）。若你要 **api_id=4 × 10 并发探测**，在 Settings 打开其一：
-  - `ignore_published_flood_window=true`，或
-  - `flood_window_scope=task`
-- 放宽后日志会警告：同窗续发通常仍 FLOOD，会烧号/烧钱。
+- 日志类似「本号 API_ID_PUBLISHED_FLOOD，本任务结束；不阻止后续新测试」。
+- 普通 `FLOOD_WAIT_X` 仍可软等满窗再发，但不会因此 cancel 整批新任务。
+- **省钱硬停**为显式 opt-in：`flood_block_new_sends=true`（可选再配合 `published_flood_hold_seconds`）。
+- 硬停开启后若仍要临时放开并发探测：`ignore_published_flood_window=true` 或 `flood_window_scope=task`。
 
 ```json
 {
   "flood_window_scope": "process",
-  "flood_block_new_sends": true,
+  "flood_block_new_sends": false,
   "ignore_published_flood_window": false,
   "published_flood_hold_seconds": 120
 }

@@ -312,7 +312,7 @@ DEFAULT_HUNT_APP_DELIVERY_FUSE = 5
 # （不再用 30s 上限短退避后再发，否则等于把 Telegram 的 FLOOD 窗填满）。
 HUNT_FLOOD_ABORT_SECONDS = 3600
 HUNT_FLOOD_BACKOFF_CAP_SECONDS = 30.0  # 仅作日志/兼容；实际等待不再截断到此值
-# 无 seconds 的 API_ID_PUBLISHED_FLOOD 也要挡住并发兄弟任务
+# 无 seconds 的 API_ID_PUBLISHED_FLOOD：仅作本任务冷却记录；默认不拦兄弟/新租号
 DEFAULT_PUBLISHED_FLOOD_PAUSE_SECONDS = 120.0
 # 猎号专用的内部原因标识 → REGHelp 已支持的规范原因。
 # 主动轮换/扫尽的共同事实是「这枚 Token 始终没等到短信」，与 NO_CODE 同类（setStatus=NOSMS）；
@@ -365,10 +365,10 @@ class ProxyCountryMismatchError(Exception):
 
 
 class SendCodeFloodWindow:
-    """进程级 FLOOD 窗：默认挡住「同 published api_id 的新租号/发码」以免烧钱填窗。
+    """进程级 FLOOD 窗：记录冷却；默认可继续新租号/发码（便于并发探测）。
 
-    不是 asyncio 级 cancel：已开跑、已过门闩的任务不会被这里杀掉。
-    测试并发探测可开 ignore_published_flood_window / flood_window_scope=task。
+    API_ID_PUBLISHED_FLOOD 只结束触发它的那一号/任务；省钱硬停需显式
+    flood_block_new_sends=true。普通 FLOOD_WAIT 仍可软等满窗再发。
     """
 
     _instance: Optional["SendCodeFloodWindow"] = None
@@ -405,7 +405,7 @@ class SendCodeFloodWindow:
         return self._api_id
 
     def is_hard_stop(self) -> bool:
-        """API_ID_PUBLISHED_FLOOD / 小时级 FLOOD：默认跳过新租号/发码。"""
+        """硬门闩：仅在显式 flood_block_new_sends（或等价）开启时才会拦新发码。"""
         return bool(self._hard) and self.remaining() > 0
 
     def trip(
@@ -1182,9 +1182,10 @@ class RegistrationOrchestrator:
         if scope not in {"process", "task"}:
             scope = "process"
         ignore = bool(getattr(cfg, "ignore_published_flood_window", False))
-        block_new = getattr(cfg, "flood_block_new_sends", True)
+        # 默认不拦新测试：省钱硬停需显式 flood_block_new_sends=true
+        block_new = getattr(cfg, "flood_block_new_sends", False)
         if block_new is None:
-            block_new = True
+            block_new = False
         hold = getattr(cfg, "published_flood_hold_seconds", None)
         try:
             hold_sec = float(hold) if hold is not None else float(DEFAULT_PUBLISHED_FLOOD_PAUSE_SECONDS)
@@ -1205,60 +1206,70 @@ class RegistrationOrchestrator:
         manager: RegistrationTaskManager,
         config=None,
     ) -> Optional[str]:
-        """FLOOD 窗未结束则暂停或跳过新租号/发码。
+        """FLOOD 窗未结束则软等待，或（opt-in）跳过新租号/发码。
 
-        默认 process 作用域 + 拦新发码：兄弟任务不会被 cancel，只是不再租号/sendCode。
-        ignore_published_flood_window / flood_window_scope=task 供并发探测放宽。
+        默认：API_ID_PUBLISHED_FLOOD 不拦兄弟/后续任务的租号与 sendCode。
+        省钱硬停：flood_block_new_sends=true（可选再配合 process 作用域）。
+        普通 FLOOD_WAIT 仍等满窗再发，但不因此 cancel 整批。
         """
         gate = SendCodeFloodWindow.get()
         policy = cls._flood_gate_policy(config)
         reason = gate.reason() or "FLOOD"
         api_id = gate.api_id()
         api_hint = f" api_id={api_id}" if api_id is not None else ""
+        reason_u = str(reason).upper()
 
-        if gate.is_hard_stop() and str(reason).upper() == "API_ID_PUBLISHED_FLOOD":
+        if gate.is_hard_stop() and reason_u == "API_ID_PUBLISHED_FLOOD":
             if policy["ignore_published"]:
                 await manager.append_log(
                     task_id,
                     f"⚠️ [FLOOD窗] ignore_published_flood_window=开：不拦本任务租号/发码"
-                    f"（{reason}{api_hint}）。警告：同 published api_id 同窗续发通常仍 FLOOD，会烧钱。",
+                    f"（{reason}{api_hint}）。同窗续发通常仍 FLOOD。",
                 )
                 return None
             if policy["scope"] == "task":
                 await manager.append_log(
                     task_id,
                     f"⚠️ [FLOOD窗] flood_window_scope=task：进程内已有 {reason}{api_hint}，"
-                    f"本任务仍继续（并发探测模式）。同窗续发通常仍 FLOOD。",
+                    f"本任务仍继续（不阻止后续新测试）。",
                 )
                 return None
             if not policy["block_new_sends"]:
                 left = gate.remaining()
                 await manager.append_log(
                     task_id,
-                    f"⚠️ [FLOOD窗] flood_block_new_sends=关：不跳过本任务；"
-                    f"仍建议等待冷却 {left:.0f}s（{reason}{api_hint}）。同窗续发通常仍 FLOOD。",
+                    f"[FLOOD窗] 本号/兄弟任务曾触发 {reason}{api_hint}；"
+                    f"默认不拦新测试，本任务继续租号/发码"
+                    f"（剩余记录冷却 {left:.0f}s；省钱硬停请开 flood_block_new_sends）。",
                 )
-                if left > 0:
-                    await asyncio.sleep(min(left, 5.0))
                 return None
             left = gate.remaining()
             await manager.append_log(
                 task_id,
-                f"⛔ [FLOOD窗] 同 published api_id 冷却中（{reason}{api_hint}，剩余 {left:.0f}s）："
-                f"跳过本任务的租号/发码，避免继续填窗烧钱。"
-                f"已开跑且已过门闩的任务不会被 cancel；"
-                f"若要 10 并发探测请开 ignore_published_flood_window 或 flood_window_scope=task。",
+                f"⛔ [FLOOD窗] flood_block_new_sends=开：同 published api_id 冷却中"
+                f"（{reason}{api_hint}，剩余 {left:.0f}s），跳过本任务租号/发码（省钱硬停）。"
+                f"已开跑且已过门闩的任务不会被 cancel。",
             )
             return "HUNT_FLOOD_WINDOW"
 
         if gate.is_hard_stop():
+            # 小时级 FLOOD_WAIT 等硬停：仅 opt-in 时跳过；否则软等有限时间后继续
             left = gate.remaining()
+            if policy["block_new_sends"]:
+                await manager.append_log(
+                    task_id,
+                    f"⛔ [FLOOD窗] flood_block_new_sends=开：硬冷却中（{reason}{api_hint}，"
+                    f"剩余 {left:.0f}s），跳过本任务租号/发码",
+                )
+                return "HUNT_FLOOD_WINDOW"
             await manager.append_log(
                 task_id,
-                f"⛔ [FLOOD窗] 硬冷却中（{reason}{api_hint}，剩余 {left:.0f}s）："
-                f"跳过本任务的租号/发码（未 cancel 其它已开跑任务）",
+                f"[FLOOD窗] 硬冷却记录中（{reason}{api_hint}，剩余 {left:.0f}s）；"
+                f"默认不取消新任务，短暂退避后继续",
             )
-            return "HUNT_FLOOD_WINDOW"
+            if left > 0:
+                await asyncio.sleep(min(left, 5.0))
+            return None
 
         left = gate.remaining()
         if left > 0:
@@ -1286,8 +1297,12 @@ class RegistrationOrchestrator:
         hold = None
         if str(reason or "").upper() == "API_ID_PUBLISHED_FLOOD":
             hold = policy["published_hold_seconds"]
-            # 探测模式：只打点，不设进程硬门闩，也不让兄弟软等 120s
-            if policy["scope"] == "task" or policy["ignore_published"]:
+            # 默认 / 探测模式：只打点，不设进程硬门闩拦兄弟任务
+            if (
+                policy["scope"] == "task"
+                or policy["ignore_published"]
+                or not policy["block_new_sends"]
+            ):
                 return SendCodeFloodWindow.get().trip(
                     reason=reason,
                     seconds=0.05,
@@ -3564,9 +3579,9 @@ class RegistrationOrchestrator:
                     hunt_app_streak = 0
                     await manager.append_log(
                         task_id,
-                        f"[Expert] API_ID_PUBLISHED_FLOOD api_id={profile.get('api_id')} "
-                        f"{cls._log_push_token_slot(push_token, delivery_plan)} → Token 冷却后终止"
-                        "（凭证层全局故障，换号救不了）"
+                        f"[Expert] 本号 API_ID_PUBLISHED_FLOOD api_id={profile.get('api_id')} "
+                        f"{cls._log_push_token_slot(push_token, delivery_plan)} → 本任务结束；"
+                        "不阻止后续新测试 / 其它并发租号（省钱硬停需 flood_block_new_sends=true）"
                     )
                     if push_token or push_task_id:
                         await cls._refund_push_token(
@@ -4198,9 +4213,8 @@ class RegistrationOrchestrator:
                         tid,
                         "failed",
                         error=(
-                            f"{flood_stop}: 同 api_id 冷却中，跳过本任务租号/发码"
-                            "（未 cancel 其它已开跑任务；"
-                            "并发探测请开 ignore_published_flood_window 或 flood_window_scope=task）"
+                            f"{flood_stop}: flood_block_new_sends=开，冷却中跳过本任务租号/发码"
+                            "（未 cancel 其它已开跑任务；默认不拦新测试）"
                         ),
                     )
                     return
