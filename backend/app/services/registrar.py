@@ -264,6 +264,7 @@ CHANNEL_FAIL_NOTES = {
     "SENT_CODE_TYPE_APP": "auth.sendCode 仅下发站内 App 推送（未必已注册）",
     "PAYMENT_REQUIRED_OFFICIAL_ONLY": "需官方 App 内购，自动化不可完成",
     "EMAIL_SETUP_FAILED": "SetUpEmailRequired 流程失败",
+    "EMAIL_SERVICE_DISABLED": "REGHelp Email 服务暂不可用 (SERVICE_DISABLED，平台侧关闭)",
     "EMAIL_CODE_UNAVAILABLE": "SentCodeTypeEmailCode 无法接收该邮箱验证码",
 }
 
@@ -1639,6 +1640,13 @@ class RegistrationOrchestrator:
         return 0
 
     @classmethod
+    def _email_setup_failure_reason(cls, exc: Optional[Exception]) -> str:
+        text = str(exc or "").upper()
+        if "SERVICE_DISABLED" in text:
+            return "EMAIL_SERVICE_DISABLED"
+        return "EMAIL_SETUP_FAILED"
+
+    @classmethod
     async def _complete_setup_email(
         cls,
         client,
@@ -1691,7 +1699,7 @@ class RegistrationOrchestrator:
         if not inbox or not getattr(inbox, "email", None):
             raise SentCodeAppDeliveryError(
                 f"REGHelp 未能提供临时邮箱: {last_err}",
-                reason="EMAIL_SETUP_FAILED",
+                reason=cls._email_setup_failure_reason(last_err),
             )
         await manager.append_log(task_id, f"[{emulation_label}] 临时邮箱已就绪: {inbox.email}")
         purpose = types.EmailVerifyPurposeLoginSetup(
