@@ -55,13 +55,13 @@ def _android_profile(**kwargs):
 
 def make_payment_required():
     return type("SentCodePaymentRequired", (), {
-        "store_product": "org.telegram.messenger.premium",
+        "store_product": "telegram_premium.one_week.auth",
         "phone_code_hash": "hash-pay",
         "support_email_address": "sms@telegram.org",
         "support_email_subject": "Payment",
-        "premium_days": 30,
+        "premium_days": 7,
         "currency": "USD",
-        "amount": 499,
+        "amount": 100,
         "type": None,
         "next_type": None,
         "timeout": None,
@@ -138,6 +138,26 @@ class TestSentCodeTypeHelpers(unittest.TestCase):
         self.assertFalse(RegistrationOrchestrator._is_app_delivery(sent))
         self.assertFalse(RegistrationOrchestrator._is_sms_delivery(sent))
         self.assertIn("SentCodePaymentRequired", RegistrationOrchestrator._describe_sent_code(sent))
+        self.assertIn("amount_display=USD $1.00", RegistrationOrchestrator._describe_sent_code(sent))
+
+    def test_extract_payment_required_info(self):
+        sent = make_payment_required()
+        info = RegistrationOrchestrator.extract_payment_required_info(sent)
+        self.assertEqual(info["store_product"], "telegram_premium.one_week.auth")
+        self.assertEqual(info["currency"], "USD")
+        self.assertEqual(info["amount"], 100)
+        self.assertEqual(info["amount_display"], "USD $1.00")
+        self.assertEqual(info["premium_days"], 7)
+
+    def test_format_payment_amount(self):
+        self.assertEqual(
+            RegistrationOrchestrator._format_payment_amount("USD", 100),
+            "USD $1.00",
+        )
+        self.assertEqual(
+            RegistrationOrchestrator._format_payment_amount("JPY", 500),
+            "JPY 500",
+        )
 
     def test_email_setup_and_email_code(self):
         setup = make_sent_code("SentCodeTypeSetUpEmailRequired")
@@ -191,11 +211,17 @@ class TestResolveNewSentCodeTypes(unittest.IsolatedAsyncioTestCase):
                 self.task_id, self.manager, emulation_label="official",
             )
         self.assertEqual(ctx.exception.reason, "PAYMENT_REQUIRED_OFFICIAL_ONLY")
+        self.assertEqual(ctx.exception.payment_required["amount_display"], "USD $1.00")
+        self.assertEqual(ctx.exception.payment_required["store_product"], "telegram_premium.one_week.auth")
         self.assertEqual(client.calls, [])
         logs = self._logs()
         self.assertIn("SentCodePaymentRequired", logs)
         self.assertIn("[模式=official]", logs)
-        self.assertIn("需官方 App 内购", logs)
+        self.assertIn("PaymentRequired: USD $1.00", logs)
+        self.assertIn("product=telegram_premium.one_week.auth", logs)
+        task = self.manager.get_task(self.task_id)
+        self.assertEqual(task["payment_required"]["amount"], 100)
+        self.assertEqual(task["delivery_type"], "SentCodePaymentRequired")
 
     async def test_email_code_fails_fast(self):
         sent = make_sent_code("SentCodeTypeEmailCode")

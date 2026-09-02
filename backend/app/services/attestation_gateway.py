@@ -114,8 +114,8 @@ class AttestationGatewayService:
             await self.smsbower.close()
 
     def _email_provider_order(self) -> List[Tuple[str, Any]]:
-        mode = getattr(self.config, "email_provider_mode", "reghelp_primary") or "reghelp_primary"
-        fallback = bool(getattr(self.config, "email_smsbower_fallback_enabled", True))
+        mode = getattr(self.config, "email_provider_mode", "smsbower_only") or "smsbower_only"
+        fallback = bool(getattr(self.config, "email_smsbower_fallback_enabled", False))
         candidates = {
             self.PROVIDER_REGHELP: self.reghelp,
             self.PROVIDER_SMSBOWER: self.smsbower,
@@ -350,13 +350,13 @@ class AttestationGatewayService:
         log_callback=None,
         ref: Optional[str] = None,
     ):
-        """按 email_provider_mode 在 REGHelp 与 SMS Bower 之间调度临时登录邮箱。"""
+        """按 email_provider_mode 在 SMS Bower / REGHelp 之间调度临时登录邮箱。"""
         order = self._email_provider_order()
         if not order:
-            mode = getattr(self.config, "email_provider_mode", "reghelp_primary") or "reghelp_primary"
+            mode = getattr(self.config, "email_provider_mode", "smsbower_only") or "smsbower_only"
             raise RuntimeError(
                 f"未启用任何 Email 提供源 (mode={mode})；"
-                "请配置 reghelp_api_key 和/或 smsbower_api_key"
+                "请配置 smsbower_api_key（默认 smsbower_only）和/或 reghelp_api_key"
             )
 
         if log_callback:

@@ -314,12 +314,25 @@ HUNT_SWAPPABLE_SEND_ERROR_REASONS = {
 HUNT_SWAPPABLE_SEND_ERRORS = tuple(HUNT_SWAPPABLE_SEND_ERROR_REASONS)
 
 
+# ISO 4217 常见币种小数位（Telegram amount 为最小货币单位整数）
+_CURRENCY_DECIMALS: Dict[str, int] = {
+    "USD": 2, "EUR": 2, "GBP": 2, "RUB": 2, "UAH": 2, "BYN": 2,
+    "JPY": 0, "KRW": 0, "VND": 0,
+}
+
+
 class SentCodeAppDeliveryError(Exception):
     """服务端将验证码下发到已登录官方客户端，带外短信网关无法接收。"""
 
-    def __init__(self, message: str, reason: str = "SENT_CODE_TYPE_APP"):
+    def __init__(
+        self,
+        message: str,
+        reason: str = "SENT_CODE_TYPE_APP",
+        payment_required: Optional[Dict[str, Any]] = None,
+    ):
         super().__init__(message)
         self.reason = reason
+        self.payment_required = payment_required
 
 
 class RegistrationTaskManager:
@@ -1505,6 +1518,82 @@ class RegistrationOrchestrator:
         return cls._sent_code_type_name(sent_code) in PAYMENT_REQUIRED_TYPE_NAMES
 
     @classmethod
+    def _format_payment_amount(cls, currency: Optional[str], amount: Any) -> Optional[str]:
+        """将 Telegram 最小货币单位 amount 格式化为可读主金额（如 USD $1.00）。"""
+        if amount is None:
+            return None
+        try:
+            minor = int(amount)
+        except (TypeError, ValueError):
+            return None
+        code = (currency or "USD").strip().upper() or "USD"
+        decimals = _CURRENCY_DECIMALS.get(code, 2)
+        if decimals <= 0:
+            major = minor
+            formatted = f"{major}"
+        else:
+            major = minor / (10 ** decimals)
+            formatted = f"{major:.{decimals}f}"
+        if code == "USD":
+            return f"USD ${formatted}"
+        return f"{code} {formatted}"
+
+    @classmethod
+    def extract_payment_required_info(cls, sent_code: Any) -> Optional[Dict[str, Any]]:
+        """从 auth.SentCodePaymentRequired 提取结构化内购字段。"""
+        if not cls._is_payment_required(sent_code):
+            return None
+        currency = getattr(sent_code, "currency", None)
+        amount_raw = getattr(sent_code, "amount", None)
+        info: Dict[str, Any] = {
+            "store_product": getattr(sent_code, "store_product", None),
+            "currency": currency,
+            "amount": amount_raw,
+            "amount_display": cls._format_payment_amount(currency, amount_raw),
+            "premium_days": getattr(sent_code, "premium_days", None),
+            "support_email_address": getattr(sent_code, "support_email_address", None),
+            "support_email_subject": getattr(sent_code, "support_email_subject", None),
+            "phone_code_hash": getattr(sent_code, "phone_code_hash", None),
+        }
+        return info
+
+    @classmethod
+    def _format_payment_required_log(cls, info: Optional[Dict[str, Any]]) -> str:
+        if not info:
+            return "内购信息不可用"
+        parts: List[str] = []
+        display = info.get("amount_display")
+        if display:
+            parts.append(str(display))
+        elif info.get("currency") and info.get("amount") is not None:
+            parts.append(f"{info['currency']} {info['amount']}")
+        product = info.get("store_product")
+        if product:
+            parts.append(f"product={product}")
+        days = info.get("premium_days")
+        if days is not None:
+            parts.append(f"premium_days={days}")
+        return " ".join(parts) if parts else "内购信息不可用"
+
+    @classmethod
+    def _attach_payment_required_to_task(
+        cls,
+        task_id: str,
+        manager: "RegistrationTaskManager",
+        info: Optional[Dict[str, Any]],
+    ) -> None:
+        if not info:
+            return
+        task = manager.get_task(task_id) or {}
+        status = task.get("status") or "running"
+        manager.update_task_status(
+            task_id,
+            status,
+            payment_required=info,
+            delivery_type="SentCodePaymentRequired",
+        )
+
+    @classmethod
     def _is_email_setup(cls, sent_code: Any) -> bool:
         return cls._sent_code_type_name(sent_code) in EMAIL_SETUP_TYPE_NAMES
 
@@ -1545,6 +1634,15 @@ class RegistrationOrchestrator:
             extras.append(f"store_product={getattr(sent_code, 'store_product', None)}")
             extras.append(f"currency={getattr(sent_code, 'currency', None)}")
             extras.append(f"amount={getattr(sent_code, 'amount', None)}")
+            premium_days = getattr(sent_code, "premium_days", None)
+            if premium_days is not None:
+                extras.append(f"premium_days={premium_days}")
+            display = cls._format_payment_amount(
+                getattr(sent_code, "currency", None),
+                getattr(sent_code, "amount", None),
+            )
+            if display:
+                extras.append(f"amount_display={display}")
         code_type = getattr(sent_code, "type", None)
         pattern = getattr(code_type, "email_pattern", None) if code_type is not None else None
         if pattern:
@@ -1838,7 +1936,7 @@ class RegistrationOrchestrator:
         """解析 sendCode 分发通道。
 
         - SentCodeTypeApp：尝试 ResendCode 降级到短信，失败则快退
-        - SetUpEmailRequired：REGHelp Email + account.verifyEmail 后继续
+        - SetUpEmailRequired：SMS Bower 临时邮箱 + account.verifyEmail 后继续
         - EmailCode：无对应邮箱时快退，不空等 SMS
         - PaymentRequired：标记需官方 App 内购，快退
         - FirebaseSms：Play Integrity + requestFirebaseSms 后按短信轮询
@@ -1851,15 +1949,19 @@ class RegistrationOrchestrator:
         )
 
         if cls._is_payment_required(sent_code):
-            product = getattr(sent_code, "store_product", None)
+            pay_info = cls.extract_payment_required_info(sent_code)
+            cls._attach_payment_required_to_task(task_id, manager, pay_info)
+            pay_summary = cls._format_payment_required_log(pay_info)
             await manager.append_log(
                 task_id,
-                f"[{emulation_label}] PaymentRequired：需官方 App 内购 "
-                f"(store_product={product})，自动化不可完成，快退以免空等 SMS"
+                f"[{emulation_label}] PaymentRequired: {pay_summary} — "
+                "需官方 App 内购，自动化不可完成，快退以免空等 SMS",
             )
+            product = (pay_info or {}).get("store_product")
             raise SentCodeAppDeliveryError(
-                f"auth.SentCodePaymentRequired store_product={product}，需官方 App 内购",
+                f"auth.SentCodePaymentRequired {pay_summary}，需官方 App 内购",
                 reason="PAYMENT_REQUIRED_OFFICIAL_ONLY",
+                payment_required=pay_info,
             )
 
         if cls._is_email_setup(sent_code):
@@ -3470,7 +3572,12 @@ class RegistrationOrchestrator:
                 phone, task_id, manager, reason,
             )
             if check_id: await bypass_svc.report_result(check_id, aid, reason)
-            manager.update_task_status(task_id, "failed", error=err)
+            fail_kwargs: Dict[str, Any] = {"error": err}
+            pay_info = getattr(ex, "payment_required", None)
+            if pay_info:
+                fail_kwargs["payment_required"] = pay_info
+                fail_kwargs["delivery_type"] = "SentCodePaymentRequired"
+            manager.update_task_status(task_id, "failed", **fail_kwargs)
         except TimeoutError as ex:
             err = f"等待带外挑战证明超时 (NO_CODE): {str(ex) or repr(ex)}"
             await manager.append_log(task_id, f"❌ {err}")

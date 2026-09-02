@@ -438,7 +438,7 @@
         <div class="ce-panel-head">
           <div class="row">
             <h3>📩 SMS Bower 接码平台 (smsbower.app)</h3>
-            <span class="ce-badge is-info">备选</span>
+            <span class="ce-badge is-info">Email + SMS</span>
           </div>
           <button class="ce-btn-ghost" :disabled="probeTesting.smsbower" @click="testSmsBower">
             {{ probeTesting.smsbower ? '测试中...' : '余额/连通性探针' }}
@@ -451,7 +451,7 @@
         <div class="ce-tiny">
           协议与 SMS-Activate / Grizzly 兼容，Telegram 服务码 <code>tg</code>。
           将上方「当前接码提供源」切到 SMS Bower 后生效。失败路径自动 <code>setStatus=8</code> 退款。
-          官方模拟 <code>SetUpEmailRequired</code> 时，同一 API Key 也可作 REGHelp Email 候补（<code>email_provider_mode</code> 默认 REGHelp 优先）。
+          官方模拟 <code>SetUpEmailRequired</code> 时默认仅用 SMS Bower 临时 Gmail（<code>email_provider_mode=smsbower_only</code>）。
         </div>
         <div v-if="testResults.smsbower" class="ce-alert" :class="testResults.smsbower.success ? 'is-ok' : 'is-danger'">
           <div>{{ testResults.smsbower.message }}</div>
@@ -532,21 +532,21 @@
         </label>
         <p class="ce-tiny ce-muted">
           开启后运行时覆盖凭证与通道计划：强制官方模板 api_id/api_hash、push_required，
-          并处理 SetUpEmailRequired（REGHelp Email 优先，SMS Bower 候补）、FirebaseSms（Play Integrity）、
-          PaymentRequired（标记需官方 App 内购并快退）。猎号连续 App 强制 SMS 在此模式下关闭。
-          REGHelp Email 为按次计费；若 API 返回 <code>SERVICE_DISABLED</code> 将自动尝试 SMS Bower 临时 Gmail。
+          并处理 SetUpEmailRequired（SMS Bower 临时 Gmail）、FirebaseSms（Play Integrity）、
+          PaymentRequired（标记需官方 App 内购并快退，日志/任务详情展示金额与 product id）。
+          猎号连续 App 强制 SMS 在此模式下关闭。
         </p>
         <div>
           <label class="ce-label">Email 临时邮箱调度策略</label>
           <select v-model="config.email_provider_mode" class="ce-select">
-            <option value="reghelp_primary">reghelp_primary（REGHelp 优先，SMS Bower 备选）</option>
+            <option value="smsbower_only">smsbower_only（仅 SMS Bower，默认）</option>
             <option value="smsbower_primary">smsbower_primary（SMS Bower 优先，REGHelp 备选）</option>
-            <option value="smsbower_only">smsbower_only（仅 SMS Bower）</option>
+            <option value="reghelp_primary">reghelp_primary（REGHelp 优先，legacy）</option>
           </select>
         </div>
         <label class="ce-check">
           <input type="checkbox" v-model="config.email_smsbower_fallback_enabled" />
-          Email 主源失败时自动切换候补提供源（reghelp_primary / smsbower_primary）
+          Email 主源失败时自动切换候补提供源（smsbower_primary / reghelp_primary）
         </label>
         <div>
           <label class="ce-label">猎号连续 App 后强制 SMS（次数）</label>

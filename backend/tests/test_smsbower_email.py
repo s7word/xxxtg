@@ -15,6 +15,8 @@ if str(REPO_ROOT) not in sys.path:
 
 os.chdir(REPO_ROOT)
 
+from backend.app.config import ConfigManager  # noqa: E402
+from backend.app.models.schemas import AppConfigModel  # noqa: E402
 from backend.app.services.attestation_gateway import AttestationGatewayService  # noqa: E402
 from backend.app.services.reghelp import EmailInboxResult  # noqa: E402
 from backend.app.services.smsbower import (  # noqa: E402
@@ -88,6 +90,16 @@ class TestSmsBowerEmailClient(unittest.IsolatedAsyncioTestCase):
             await self.svc.poll_email_code("42", max_attempts=1, interval_sec=0)
 
 
+class TestConfigEmailMigration(unittest.TestCase):
+    def test_migrate_reghelp_primary_to_smsbower_only(self):
+        raw = {"email_provider_mode": "reghelp_primary", "email_smsbower_fallback_enabled": True}
+        cfg = AppConfigModel(**raw)
+        changed = ConfigManager._migrate_legacy_config(raw, cfg)
+        self.assertTrue(changed)
+        self.assertEqual(cfg.email_provider_mode, "smsbower_only")
+        self.assertFalse(cfg.email_smsbower_fallback_enabled)
+
+
 class TestAttestationEmailFallback(unittest.IsolatedAsyncioTestCase):
     def _config(self, **overrides):
         base = dict(
@@ -95,14 +107,35 @@ class TestAttestationEmailFallback(unittest.IsolatedAsyncioTestCase):
             reghelp_enabled=True,
             reghelp_base_urls=["https://api.reghelp.net"],
             smsbower_api_key="bower-key",
-            email_provider_mode="reghelp_primary",
-            email_smsbower_fallback_enabled=True,
+            email_provider_mode="smsbower_only",
+            email_smsbower_fallback_enabled=False,
         )
         base.update(overrides)
         return SimpleNamespace(**base)
 
-    async def test_reghelp_service_disabled_falls_back_to_smsbower(self):
+    def test_schema_default_smsbower_only(self):
+        cfg = AppConfigModel()
+        self.assertEqual(cfg.email_provider_mode, "smsbower_only")
+        self.assertFalse(cfg.email_smsbower_fallback_enabled)
+
+    async def test_default_mode_skips_reghelp(self):
         cfg = self._config()
+        gateway = AttestationGatewayService(cfg)
+        try:
+            gateway.reghelp.get_login_email = AsyncMock(
+                side_effect=AssertionError("reghelp should not be called")
+            )
+            gateway.smsbower.get_login_email = AsyncMock(
+                return_value=EmailInboxResult(email="default@gmail.com", task_id="1")
+            )
+            inbox = await gateway.get_login_email({}, "+1")
+            self.assertEqual(inbox.email, "default@gmail.com")
+            gateway.smsbower.get_login_email.assert_awaited_once()
+        finally:
+            await gateway.close()
+
+    async def test_reghelp_service_disabled_falls_back_to_smsbower(self):
+        cfg = self._config(email_provider_mode="reghelp_primary", email_smsbower_fallback_enabled=True)
         gateway = AttestationGatewayService(cfg)
         try:
             gateway.reghelp.get_login_email = AsyncMock(
