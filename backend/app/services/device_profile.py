@@ -64,6 +64,10 @@ GLOBAL_TOPOLOGY_COUNTRIES = tuple(COUNTRY_LANG_MAP.keys())
 # Telegram 服务端针对这些 ID 的 auth.sendCode 请求执行近乎无差别的风控：
 # 若请求未附带合法的平台级 Push/Play-Integrity 签署凭证 (Signed Push Token)，
 # 会直接返回 API_ID_PUBLISHED_FLOOD，与账号、IP、地区历史无关。
+# API_ID_PUBLISHED_FLOOD 本身是 Telegram 官方 400 RPC（auth.sendCode /
+# auth.exportLoginToken），不是本仓库自造的错误码；本名单只用于本地预测/拦截
+# 裸发，关掉拦截只会更早撞上同一条服务端错误，不能绕过。
+# api_id=6 另走 Paid/Premium auth（短期会员号后备路径）；当前策略暂时不要主动切到 6。
 PUBLISHED_API_ID_BLOCKLIST = {4, 6, 8, 10, 2040, 2100, 17349, 21724}
 
 # 官方客户端 api_id → api_hash 固定配对（反编译 / opentele 共识值）。
@@ -117,6 +121,8 @@ def normalize_official_api_credentials(profile: Dict[str, Any]) -> Dict[str, Any
 DEFAULT_PROFILES = {
     "telegram_android": {
         "key": "telegram_android",
+        # api_id=6 = 现网官方 Android。服务端常走 Paid/Premium auth（可作短期会员号后备）。
+        # 当前策略：暂时不要主动切到 6；需要 Paid 路径时再开，不是默认。
         "name": "MTProto Android Endpoint (Mainstream SDK 33)",
         "default_aid": "308aba4e-5680-466b-81a5-477ac6befa95",
         "api_id": 6,

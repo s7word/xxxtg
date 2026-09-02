@@ -333,6 +333,7 @@ class AppConfigModel(BaseModel):
             "官方客户端模拟（本地编排旗标，不发给 Telegram）：强制模板官方 api_id/api_hash"
             "（telegram_android=6，telegram_android_public=4）并以 push_required attach Push。"
             "服务端认的是 api_id 身份：关此旗标但继续用 api_id=6 仍会 Paid auth。"
+            "api_id=6 可作为 Paid/Premium 短期会员号后备路径，当前策略暂时不要主动切到 6。"
             "Email/Firebase/Payment constructor 由 registrar 按返回值处理，不独属于此旗标。"
             "说明见 docs/OFFICIAL_AND_PAYMENT_EXPLAINED.md。"
         ),

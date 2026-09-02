@@ -64,6 +64,21 @@ active_app_type           = telegram_android_public   → api_id=4
 - **带了** token 仍可能 FLOOD（api_id=4 在 iq：G1 已 attach 仍被拒）。那是「Token 未被当成合法平台签署」，不是「没申请 Push」。
 - 带 token 等于告诉服务端「有一条可推送通道」，会**提高**走 `SentCodeTypeApp` 的机会，不是提高 SMS。
 
+### A.2.1 `API_ID_PUBLISHED_FLOOD` 是官方还是本地？
+
+**一句话：官方 MTProto RPC（400）。本仓库只翻译中文、并在裸发前拦截；关掉本地拦截不能绕过。**
+
+| 层 | 是什么 | 日志里长什么样 |
+|----|--------|----------------|
+| Telegram 服务端 | `auth.sendCode` / `auth.exportLoginToken` 返回 `400 API_ID_PUBLISHED_FLOOD`。官方原文：[obtaining_api_id](https://core.telegram.org/api/obtaining_api_id)（开源 sample api_id **server-side limited**）、[auth.sendCode errors](https://core.telegram.org/method/auth.sendCode)（「This API id was published somewhere, you can't use it now.」） | Telethon `ApiIdPublishedFloodError` |
+| Telethon | 把 RPC `error_message` 映射成异常，**不发明**这个字符串 | `rpcerrorlist.py`：`'API_ID_PUBLISHED_FLOOD': ApiIdPublishedFloodError` |
+| 本仓库包装 | `registrar._published_flood_error_message()` 在 **catch 到上述异常之后** 写成中文 | 「服务端仍返回 API_ID_PUBLISHED_FLOOD」= **已经打到 Telegram** |
+| 本仓库拦截（自我限制） | 计划要求 attach Push 但没有 Token 时 `RequiredPushTokenMissingError`，**根本不发** sendCode | 「拒绝以 api_id=… 裸发 sendCode（否则会误报成 API_ID_PUBLISHED_FLOOD）」= **本地没发**，不是 FLOOD |
+
+公开 api_id（4/6/21724 等）容易中，是因为它们随官方 APK / 开源客户端泄露，被大量第三方复用；Telegram 对「已 published」的 ID 做服务端限额。合法官方客户端靠平台签署的 Push/Play Integrity 把自己和滥用流量分开；我们没有被接受的签署时，4 和 6 都会 FLOOD。4 与 6 的差别主要在 **过了 FLOOD 之后**：6 常进 Paid/Premium auth（短期会员号后备路径，**当前策略暂时不要主动切到 6**）；4 更常 App 或继续 FLOOD，不是「关掉本地检查就能当官方用」。
+
+没有「忽略 API_ID_PUBLISHED_FLOOD」的开关。`force_skip_push_attach` 是对照实验，打开后只会**更容易**撞上官方 FLOOD。`PUBLISHED_API_ID_BLOCKLIST` / `push_is_mandatory` 只预测、不伪造 RPC。
+
 **CodeSettings 其它位**（`allow_firebase` / `unknown_number` / `allow_app_hash` / 闪信）
 
 这些是**通道协商**，不是付款。官方说明见 [codeSettings](https://core.telegram.org/constructor/codeSettings)。
@@ -435,6 +450,7 @@ Fragment 要先能登录才能买东西，用它来**完成尚未登录的 auth*
 | vault 冲刺无 Payment 是因为关了 official 模拟 | [VAULT_MODE_SPRINT.md](./VAULT_MODE_SPRINT.md) §4.3 | 主因是 **api_id=4 + in 号池给了 App**。同一旗标配 api_id=6 仍会 Payment。 |
 | Payment 后出现 `SentCodeTypeSms` 表示接近成功 | 早期口头/日志直觉 | **否**。见 B.3 / C.5。跟进文已改口为「空壳」，以跟进文+本文为准。 |
 | FLOOD 文案「缺少 Push Token」= 没申请到 Token | 更早 vault 对照 | **已勘误**（V3 03:44:48 已 attach 仍 FLOOD）。见 vault 对照文第 6 节。 |
+| `API_ID_PUBLISHED_FLOOD` 是本仓库自我限制，关掉就能绕过 | 日志中文包装容易误读 | **不成立**。见 A.2.1：该码是 Telegram 400 RPC。本地拦截只阻止无 Token 裸发；关掉拦截会真打到服务端同一错误。 |
 | 仅 `official_client_emulation=true` 才会处理 Email/Payment | schemas 描述容易读成这样 | registrar **凡收到该 constructor 都会处理**。旗标只让你更容易收到它们。 |
 
 保留不变、仍然成立的结论：

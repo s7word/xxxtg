@@ -22,7 +22,9 @@ CodeSettings 各字段的官方语义（core.telegram.org/constructor/codeSettin
 2. **Push Token 因素（次因，但代码可控）**：压测全程强制申请并 attach Push Token，
    等于主动给服务端一条推送通道。非泄露 api_id 下没有任何理由付这个代价，跳过申请
    既省 REGHelp 费用，也移除了「服务端可以走推送」这个变量。
-3. **api_id 因素**：公开泄露 ID（4/6/21724 等）无 Push 时几乎必然 API_ID_PUBLISHED_FLOOD；
+3. **api_id 因素**：公开泄露 ID（4/6/21724 等）无 Push 时几乎必然触发 Telegram
+   官方 RPC ``API_ID_PUBLISHED_FLOOD``（不是本仓库自造；本地拦截只避免裸发误报）。
+   api_id=6 过了 FLOOD 后常进 Paid/Premium auth；当前策略暂时不要主动切到 6。
    自建 api_id 可不带 Push 先发码，FLOOD 再一次性 escalate 到 push_required。
 4. **猎号连续 App**：同一 Push+设备组合连续多号 App 说明是系统性失败，应在达到
    ``hunt_sms_first_after_app_streak`` 后强制 sms_first（仍持有 Token 但不 attach）。

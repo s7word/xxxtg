@@ -1533,6 +1533,11 @@ class RegistrationOrchestrator:
         push_token: Optional[str],
         plan,
     ) -> str:
+        """把 Telegram 官方 RPC `API_ID_PUBLISHED_FLOOD` 译成中文。
+
+        调用方必须已经 catch 到 Telethon ``ApiIdPublishedFloodError``：
+        本函数不发明该错误码，也不能靠关掉本地拦截来绕过服务端限额。
+        """
         api_id = profile.get("api_id")
         api_hash = cls._api_hash_for_log(profile)
         attached = bool(getattr(plan, "attach_push_token", False) and push_token)
