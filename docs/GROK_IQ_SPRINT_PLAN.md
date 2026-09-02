@@ -2,7 +2,10 @@
 
 > 生成：2026-09-02 · 分支 `cursor/grok-autonomous-iq-sprint-88d6`  
 > 约束：api_id **仅 4 或 6**；目标 = **至少 1 个完整注册成功**  
-> 脚本：`backend/scripts/run_grok_autonomous_sprint.py`
+> 脚本：`backend/scripts/run_grok_autonomous_sprint.py`  
+>
+> 事后概念说明：[OFFICIAL_AND_PAYMENT_EXPLAINED.md](./OFFICIAL_AND_PAYMENT_EXPLAINED.md)。
+> 本计划第 3 条「official api_id=6」在结果里被精确化为：**api_id=6 本身**就会 Payment，与 `official_client_emulation` 旗标无关（H3）。
 
 ## 0. 已内化、不再重复的事实
 

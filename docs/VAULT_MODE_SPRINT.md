@@ -1,6 +1,11 @@
 # Vault 模式注册冲刺实验
 
 > 分支：`cursor/vault-mode-sprint-88d6`（基于 `cursor/grok-api4-push-fix-4641`）  
+>
+> **勘误**：[OFFICIAL_AND_PAYMENT_EXPLAINED.md](./OFFICIAL_AND_PAYMENT_EXPLAINED.md) A.4。
+> 本轮无 Payment **主要因为 api_id=4 + in 号池返回 App**，不是「关掉 official 旗标」这一条就够。
+> 同旗标配 api_id=6 仍会 Email→Payment（H3）。`api_credential_mode=official` 与
+> `official_client_emulation` 不是同一件事。  
 > 报告：`data/ab_reports/vault_mode_sprint_in_20260902_042245.json`  
 > 脚本：`backend/scripts/run_vault_mode_sprint.py`
 
@@ -77,7 +82,8 @@
 
 1. **Vault 模式配置生效**：关闭 official 模拟后，in 号池仍 100% 走 **App 推送**，与当日 official api_id=4 行为一致；未出现 FLOOD（对比 earlier V3 balanced 变体曾 FLOOD）。
 2. **未收到 SMS**：10 次 sendCode 均为 `SentCodeTypeApp`，猎号在 App-only 号段耗尽后标记 `SENT_CODE_TYPE_APP` 失败；**未达到「至少 1 次 SMS」目标**。
-3. **无 Payment 墙**：因 `official_client_emulation=false`，未触发 SetUpEmailRequired，符合 vault 成功路径设计意图。
+3. **无 Payment 墙**：本轮 in + api_id=4 走 App，未触发 SetUpEmailRequired。
+   **不要**读成「关掉 official 模拟就不会 Payment」——api_id=6 关旗标仍会 Payment（H3）。
 4. **设备指纹**：采样机型含 Xiaomi/Samsung/vivo 等，app_version 多为 12.7.3，亦有个别 12.2.x（设备库随机采样，非 vault JSON 逐字段 replay）。
 
 ## 5. 凭证库 +91 参考指纹（9 条）
@@ -116,5 +122,6 @@ python3 backend/scripts/run_vault_mode_sprint.py \
 
 ## 8. 相关文档
 
+- [OFFICIAL_AND_PAYMENT_EXPLAINED.md](./OFFICIAL_AND_PAYMENT_EXPLAINED.md)
 - [VAULT_SUCCESS_VS_OFFICIAL_ANALYSIS.md](./VAULT_SUCCESS_VS_OFFICIAL_ANALYSIS.md)
 - [PAYMENT_REQUIRED_RESEARCH.md](./PAYMENT_REQUIRED_RESEARCH.md)

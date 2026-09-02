@@ -118,6 +118,11 @@ def _has_usable_custom_credentials(config: Any) -> bool:
 
 
 def is_official_client_emulation(config: Any) -> bool:
+    """本地编排旗标，不会发给 Telegram。
+
+    true 时锁死模板官方 api_id 并强制 attach Push。服务端认的是 api_id=4/6
+    这份身份，不是这个布尔值。说明见 docs/OFFICIAL_AND_PAYMENT_EXPLAINED.md。
+    """
     return bool(getattr(config, "official_client_emulation", False))
 
 

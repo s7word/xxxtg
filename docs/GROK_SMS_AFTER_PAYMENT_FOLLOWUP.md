@@ -2,6 +2,9 @@
 
 > 时间：2026-09-02  
 > 分支：`cursor/grok-sms-after-payment-88d6`  
+>
+> **概念对照**：[OFFICIAL_AND_PAYMENT_EXPLAINED.md](./OFFICIAL_AND_PAYMENT_EXPLAINED.md)
+> B.3 / C.5。本文实验把「SentCodeTypeSms ≠ 真短信」写成工作假设；解释文把它标成**原则性误判**若当作接近成功。  
 > 上一轮：`docs/GROK_IQ_SPRINT_RESULTS.md`（H5/H10：resend → `SentCodeTypeSms`，smsbower 100% NO_CODE）  
 > 脚本：`backend/scripts/run_grok_sms_after_payment.py`  
 > 原始报告：`data/ab_reports/grok_sms_after_payment_*.json`
@@ -59,7 +62,7 @@ iq 与 ma 都如此。`SentCodeTypeSms` 是本项目在 api_id∈{4,6} 约束下
 - **缺信**：`auth.reportMissingCode` 仅官方 App；本轮假设 B 会探测一次。
 - **第三方**：文档写明非官方 App 在部分条件下不能走 SMS/Call，应联系 `sms@telegram.org` `#enableSMS`。我们用的是泄露官方 api_id=6，服务端把会话当成官方 Android，所以会进 Paid auth；这不是 bug。
 
-**结论先行：** 我们离「看清墙的形状」已经很近（Email → $1 墙 → resend 改 constructor 全是可复现事实），离「不付钱完成注册」仍然远。若本轮延长等待 + 换号源仍然 0 码，就应把「空壳 SMS」从猜想升级为工作假设，下一步只剩真实 IAP 或放弃 official api_id=6。
+**结论先行：** 我们离「看清墙的形状」已经很近（Email → $1 墙 → resend 改 constructor 全是可复现事实），离「不付钱完成注册」仍然远。本轮把等待、二次 resend、换平台、换国、等 timeout 全部打穿之后仍然 0 码，**把「空壳 SMS」从猜想升级为工作假设**。下一步只剩真实 IAP 或放弃 official api_id=6。
 
 ## 2. 代码上检查并改了什么（最小 diff）
 

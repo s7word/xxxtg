@@ -330,11 +330,11 @@ class AppConfigModel(BaseModel):
     official_client_emulation: bool = Field(
         default=False,
         description=(
-            "官方客户端模拟：开启后强制使用模板官方 api_id/api_hash（telegram_android 为 6，"
-            "telegram_android_public 为 4）并以 push_required 每轮申请并 attach REGHelp Push Token；"
-            "sendCode 后处理 SetUpEmailRequired / FirebaseSms / PaymentRequired，"
-            "不再把非 App 通道一律当短信空等。猎号连续 App 强制 SMS 在此模式下关闭；"
-            "api_credential_mode=official 且 api_id 为 4/6 等泄露 ID 时同样始终 attach Push"
+            "官方客户端模拟（本地编排旗标，不发给 Telegram）：强制模板官方 api_id/api_hash"
+            "（telegram_android=6，telegram_android_public=4）并以 push_required attach Push。"
+            "服务端认的是 api_id 身份：关此旗标但继续用 api_id=6 仍会 Paid auth。"
+            "Email/Firebase/Payment constructor 由 registrar 按返回值处理，不独属于此旗标。"
+            "说明见 docs/OFFICIAL_AND_PAYMENT_EXPLAINED.md。"
         ),
     )
     force_skip_push_attach: bool = Field(

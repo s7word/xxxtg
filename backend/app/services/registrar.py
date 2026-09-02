@@ -2148,6 +2148,9 @@ class RegistrationOrchestrator:
         )
 
         if cls._is_payment_required(sent_code):
+            # 官方 Paid auth：须 Play/App Store 内购后再 assign*Transaction + checkPaidAuth。
+            # auth.resendCode 返回 SentCodeTypeSms 不等于短信已投递（空壳）。
+            # 见 docs/OFFICIAL_AND_PAYMENT_EXPLAINED.md B/C。
             pay_info = cls.extract_payment_required_info(sent_code)
             cls._attach_payment_required_to_task(task_id, manager, pay_info)
             pay_summary = cls._format_payment_required_log(pay_info)

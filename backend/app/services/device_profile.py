@@ -271,6 +271,8 @@ class DeviceProfileManager:
         - auto:     优先使用官方 ID；若本次未拿到有效 Push Token，且官方 ID 属于已知公开泄露 ID
                     (几乎必然触发 API_ID_PUBLISHED_FLOOD)，则在已配置自建凭证的前提下自动回退
         """
+        # official_client_emulation 只在本地把凭证策略锁成 official（不回退自建 ID）。
+        # Telegram 仍然只看见最终 api_id/hash；关旗标但继续用 api_id=6 仍会进 Paid auth。
         official_emu = bool(getattr(config, "official_client_emulation", False))
         mode = "official" if official_emu else (getattr(config, "api_credential_mode", "auto") or "auto")
         custom_id = getattr(config, "custom_api_id", None)

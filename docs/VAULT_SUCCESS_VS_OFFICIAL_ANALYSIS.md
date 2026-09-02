@@ -1,8 +1,11 @@
 # 凭证库成功账号 vs Official api_id 对照分析
 
-> 生成时间：2026-09-02 · 分支 `cursor/vault-api4-reanalysis-88d6`  
-> 实验报告：`data/ab_reports/vault_compare_in_20260902_034804.json`  
-> 脚本：`backend/scripts/run_vault_compare_ab.py`
+> 生成时间：2026-09-02 · 分支 `cursor/grok-api4-push-fix-4641`（续 `cursor/vault-api4-reanalysis-88d6`）  
+>
+> **概念对照**：[OFFICIAL_AND_PAYMENT_EXPLAINED.md](./OFFICIAL_AND_PAYMENT_EXPLAINED.md) A.4
+> （成功路径 = api_id=4 + Push + 非 emu；与 api_id=6 official 的 Email→Payment 不是同一条路）。  
+> 实验报告：`data/ab_reports/vault_compare_in_20260902_034804.json`、`data/ab_reports/grok_api4_retest_iq_20260902_040956.json`  
+> 脚本：`backend/scripts/run_vault_compare_ab.py`、`backend/scripts/run_grok_api4_retest.py`
 
 ## 1. 凭证库成功账号共性（126 条扫描，10 条 usable）
 

@@ -1,7 +1,14 @@
 # PaymentRequired 调研摘要
 
 > 生成时间：2026-09-02 · 分支 `cursor/payment-bypass-research-88d6`  
-> 实验脚本：`backend/scripts/run_payment_bypass_ab.py`
+> 实验脚本：`backend/scripts/run_payment_bypass_ab.py`  
+>
+> **勘误（2026-09-02）**：概念解释与「关官方模拟旗标能否避开内购」以
+> [OFFICIAL_AND_PAYMENT_EXPLAINED.md](./OFFICIAL_AND_PAYMENT_EXPLAINED.md) 为准。
+> 下文「关闭 official 模拟 + custom api_id 即可完成注册」**不成立**：
+> `official_client_emulation=false` + **api_id=6** 仍会 PaymentRequired
+> （见 `GROK_IQ_SPRINT_RESULTS.md` H3/H8）；自建 api_id 则多走 App-only。
+> 本文 A–E 的 **email→Payment 100%** 数字仍有效。
 
 ## 官方文档要点
 
@@ -111,6 +118,6 @@ Grok 对照：**api_id=6 official iq** 再次 **SetUpEmailRequired → PaymentRe
 
 **不存在可靠的 API 级「规避内购」办法。** 在 `official_client_emulation=true` 且完成 email 验证后，Telegram 对 iq/id/pe 等测试国 **系统性返回 PaymentRequired**，这与 core.telegram.org 的 Paid auth 设计一致，不是设备/IP 配置 bug。
 
-若自动化目标为 **可完成注册**：应关闭 official 模拟，使用 `balanced + custom api_id`（历史数据支持 SentCodeTypeApp/SMS 路径）。
+若自动化目标为 **可完成注册**：关掉 `official_client_emulation` **不够**——还必须离开 **api_id=6** 这份官方 Android 身份。自建 api_id 的历史数据支持的是 **SentCodeTypeApp**（第三方 2023 年起默认无 SMS），不是可用短信注册路径。详见 [OFFICIAL_AND_PAYMENT_EXPLAINED.md](./OFFICIAL_AND_PAYMENT_EXPLAINED.md) C.1 / 勘误表。
 
-若必须 official 链路：仅能通过 **真实 Play/App Store 内购**（`payments.assignPlayMarketTransaction`）或放弃该号段。
+若必须官方链路（api_id=6 并走完 email）：仅能通过 **真实 Play/App Store 内购**（`payments.assignPlayMarketTransaction`）或放弃该号段。

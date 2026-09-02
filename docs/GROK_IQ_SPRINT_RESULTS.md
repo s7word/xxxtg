@@ -2,6 +2,9 @@
 
 > 时间：2026-09-02 04:41–05:17 UTC  
 > 分支：`cursor/grok-autonomous-iq-sprint-88d6`  
+>
+> **概念对照**：[OFFICIAL_AND_PAYMENT_EXPLAINED.md](./OFFICIAL_AND_PAYMENT_EXPLAINED.md)
+> （H3 已否证「关 official 旗标」；本文实验数字仍是第一手来源）。  
 > 脚本：`backend/scripts/run_grok_autonomous_sprint.py`  
 > 原始报告：  
 > - `data/ab_reports/grok_autonomous_sprint_20260902_044128.json`  
