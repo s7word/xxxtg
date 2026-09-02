@@ -43,7 +43,10 @@ PUSH_SLOT_RE = re.compile(r"push_slot=(?P<slot>\S+)")
 TOKEN_KIND_RE = re.compile(r"token_kind=(?P<kind>\S+)")
 ALIGN_RE = re.compile(r"设备对齐模式=(?P<mode>\S+)")
 STRICT_REJECT_RE = re.compile(r"严格设备对齐拒绝发码|DEVICE_ALIGNMENT_REJECTED")
-GEO_MISMATCH_RE = re.compile(r"代理国|异国|country.?match|geo.?mismatch|拒绝使用", re.I)
+GEO_MISMATCH_RE = re.compile(r"异国|country.?match|geo.?mismatch|拒绝使用异国|禁止跨区 fallback 失败", re.I)
+FLOOD_GATE_RE = re.compile(r"\[FLOOD窗\]")
+# 旧分类器把任意含「代理」的日志（含「代理槽位」成功预分配）误判为 PROXY_UNAVAILABLE。
+PROXY_TRUE_FAIL_RE = re.compile(r"没有可用于注册的节点|ProxyError|代理匹配失败|无可用.*代理")
 
 PROVIDER = "smscode"
 # 历史 R1/R2：vn App 率最高，其次 id/ph；kz 俄语圈 + SMSCode 有库存
@@ -109,8 +112,10 @@ def enrich_row(row: Dict[str, Any], task: Dict[str, Any], expect_tz: Optional[in
     issues: List[str] = []
     if STRICT_REJECT_RE.search(blob):
         issues.append("strict_reject")
-    if row.get("api_id_published_flood"):
+    if row.get("api_id_published_flood") or "API_ID_PUBLISHED_FLOOD" in blob:
         issues.append("API_ID_PUBLISHED_FLOOD")
+    if FLOOD_GATE_RE.search(blob) and "成功获取端点通信句柄" not in blob:
+        issues.append("flood_gate_no_lease")
     if row.get("geo_1to1") is False:
         issues.append("proxy_geo_mismatch")
     if lang_pack not in {None, "android"} and lang_pack not in {"(empty)", ""}:
@@ -119,9 +124,12 @@ def enrich_row(row: Dict[str, Any], task: Dict[str, Any], expect_tz: Optional[in
         issues.append(f"tz_mismatch:{tz_val}!={expect_tz}")
     if any("SentCodeTypeApp" in str(s.get("sent_code_type")) for s in row.get("samples") or []):
         issues.append("sentcode_app")
-    if GEO_MISMATCH_RE.search(blob) and row.get("geo_1to1") is not True:
-        if "proxy_geo_mismatch" not in issues:
-            issues.append("proxy_geo_hint")
+    if PROXY_TRUE_FAIL_RE.search(blob):
+        issues.append("proxy_unavailable_true")
+    nosend = row.get("no_sendcode_reason")
+    if nosend == "PROXY_UNAVAILABLE" and "proxy_unavailable_true" not in issues:
+        # 分类器误伤：日志里常见「代理槽位」成功行
+        nosend = "MISCLASSIFIED_PROXY_UNAVAILABLE"
     out = dict(row)
     out.update(
         {
@@ -137,6 +145,7 @@ def enrich_row(row: Dict[str, Any], task: Dict[str, Any], expect_tz: Optional[in
             "error": (task.get("error") or task.get("last_error") or "")[:240] or None,
             "issues": issues,
             "expect_tz": expect_tz,
+            "no_sendcode_reason": nosend,
         }
     )
     return out

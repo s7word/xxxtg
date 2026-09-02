@@ -1,0 +1,55 @@
+SMSCode balance: {'success': True, 'balance': 24.5, 'currency': 'USD', 'telegram_stock': 273419, 'message': 'SMSCode (smscode.gg) 鉴权与通信正常，余额 24.5 USD，目录国家 242，参考价 0.2794'}
+stock: {"id": {"stock": 4512476, "cost": 0.0176, "name": "印尼", "tz_offset": 25200}, "ph": {"stock": 693801, "cost": 0.151, "name": "菲律宾", "tz_offset": 28800}, "vn": {"stock": 273419, "cost": 0.2794, "name": "越南", "tz_offset": 25200}, "kz": {"stock": 224894, "cost": 0.308, "name": "哈萨克斯坦", "tz_offset": 18000}}
+applied: {"sms_provider": "smscode", "device_alignment_mode": "strict", "strict_vault_device_alignment": true, "code_delivery_mode": "push_required", "proxy_require_country_match": true, "hunt_proxy_max_uses": 1, "hunt_device_max_uses": 1, "app_delivery_fast_drop": true, "official_client_emulation": false, "flood_rotate_push_token": true, "force_country_locale": true, "init_connection_set_lang_pack": true, "init_connection_set_tz_offset": true, "vault_fingerprint_replay": true, "pin_app_version_substr": "12.7.3", "api_credential_mode": "official", "active_app_type": "telegram_android_public", "force_skip_push_attach": null}
+
+=== vn_w1_2 role=best_app_signal price<=0.55 @ 2026-09-02T23:08:58Z ===
+    batch_id=6ecbff06 已提交并发批量引导: 2 个任务 / 并发度 2（batch_id=6ecbff06）
+    [   0s] running=0 pending=2 unfinished=2/2
+    [   4s] running=2 pending=0 unfinished=2/2
+    [   8s] running=2 pending=0 unfinished=2/2
+    [  12s] running=2 pending=0 unfinished=2/2
+    [  16s] running=2 pending=0 unfinished=2/2
+    [  20s] running=2 pending=0 unfinished=2/2
+    [  24s] running=2 pending=0 unfinished=2/2
+    [  28s] running=2 pending=0 unfinished=2/2
+    [  32s] running=2 pending=0 unfinished=2/2
+    [  36s] running=1 pending=0 unfinished=1/2
+    [  40s] running=1 pending=0 unfinished=1/2
+    [  44s] running=1 pending=0 unfinished=1/2
+    [  48s] running=1 pending=0 unfinished=1/2
+    [  52s] running=1 pending=0 unfinished=1/2
+    [  56s] running=1 pending=0 unfinished=1/2
+    [  60s] running=1 pending=0 unfinished=1/2
+    [  64s] running=1 pending=0 unfinished=1/2
+    [  68s] running=1 pending=0 unfinished=1/2
+    [  72s] running=1 pending=0 unfinished=1/2
+    [  76s] running=1 pending=0 unfinished=1/2
+    [  80s] running=1 pending=0 unfinished=1/2
+    [  84s] running=1 pending=0 unfinished=1/2
+    [  88s] running=1 pending=0 unfinished=1/2
+    [  92s] running=1 pending=0 unfinished=1/2
+    [  96s] running=1 pending=0 unfinished=1/2
+    [ 100s] running=1 pending=0 unfinished=1/2
+    -> leased~2 send=0 App=0 SMS=0 ok=0 FLOOD=2 1:1=0/0 104s
+STOP vn: wave FLOOD-dead leftover=6
+
+=== id_w2_2 role=stock_plus_app price<=0.25 @ 2026-09-02T23:10:51Z ===
+    batch_id=d2f54c21 已提交并发批量引导: 2 个任务 / 并发度 2（batch_id=d2f54c21）
+    [   0s] running=0 pending=2 unfinished=2/2
+    -> leased~0 send=0 App=0 SMS=0 ok=0 FLOOD=2 1:1=0/0 4s
+STOP id: wave FLOOD-dead leftover=4
+
+=== ph_w3_2 role=preferred_history price<=0.45 @ 2026-09-02T23:11:03Z ===
+    batch_id=8e9107ff 已提交并发批量引导: 2 个任务 / 并发度 2（batch_id=8e9107ff）
+    [   0s] running=0 pending=2 unfinished=2/2
+    -> leased~0 send=0 App=0 SMS=0 ok=0 FLOOD=2 1:1=0/0 4s
+STOP ph: wave FLOOD-dead leftover=2
+
+=== kz_w4_2 role=ru_sphere_probe price<=0.55 @ 2026-09-02T23:11:15Z ===
+    batch_id=fd6f2e24 已提交并发批量引导: 2 个任务 / 并发度 2（batch_id=fd6f2e24）
+    [   0s] running=0 pending=2 unfinished=2/2
+    -> leased~0 send=0 App=0 SMS=0 ok=0 FLOOD=2 1:1=0/0 4s
+STOP kz: wave FLOOD-dead leftover=0
+
+REPORT /opt/xxxtg/data/ab_reports/smscode_round_20_20260902_231128.json
+TOTALS {"tasks": 8, "leased_budget": 8, "sendcode": 0, "app": 0, "sms": 0, "flood": 8, "success": 0, "geo_1to1_true": 0, "geo_1to1_false": 0, "issue_counts": {"API_ID_PUBLISHED_FLOOD": 8, "no_sendcode:PROXY_UNAVAILABLE": 8}, "api_ids": {"4": 2}, "countries": {"vn": 2, "id": 2, "ph": 2, "kz": 2}}

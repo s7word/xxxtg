@@ -1,0 +1,1033 @@
+{
+  "title": "SMSCode round ~20（strict device + push_required + geo match）",
+  "started_at": "2026-09-02T23:08:58Z",
+  "provider": "smscode",
+  "plan": [
+    {
+      "country": "vn",
+      "target": 8,
+      "max_price": 0.55,
+      "tz": 25200,
+      "role": "best_app_signal"
+    },
+    {
+      "country": "id",
+      "target": 6,
+      "max_price": 0.25,
+      "tz": 25200,
+      "role": "stock_plus_app"
+    },
+    {
+      "country": "ph",
+      "target": 4,
+      "max_price": 0.45,
+      "tz": 28800,
+      "role": "preferred_history"
+    },
+    {
+      "country": "kz",
+      "target": 2,
+      "max_price": 0.55,
+      "tz": 18000,
+      "role": "ru_sphere_probe"
+    }
+  ],
+  "lease_cap": 20,
+  "strict_apply": {
+    "sms_provider": "smscode",
+    "device_alignment_mode": "strict",
+    "strict_vault_device_alignment": true,
+    "code_delivery_mode": "push_required",
+    "proxy_require_country_match": true,
+    "hunt_proxy_max_uses": 1,
+    "hunt_device_max_uses": 1,
+    "app_delivery_fast_drop": true,
+    "official_client_emulation": false,
+    "flood_rotate_push_token": true,
+    "force_country_locale": true,
+    "init_connection_set_lang_pack": true,
+    "init_connection_set_tz_offset": true,
+    "vault_fingerprint_replay": true,
+    "pin_app_version_substr": "12.7.3",
+    "api_credential_mode": "official",
+    "active_app_type": "telegram_android_public",
+    "force_skip_push_attach": false
+  },
+  "applied": {
+    "sms_provider": "smscode",
+    "device_alignment_mode": "strict",
+    "strict_vault_device_alignment": true,
+    "code_delivery_mode": "push_required",
+    "proxy_require_country_match": true,
+    "hunt_proxy_max_uses": 1,
+    "hunt_device_max_uses": 1,
+    "app_delivery_fast_drop": true,
+    "official_client_emulation": false,
+    "flood_rotate_push_token": true,
+    "force_country_locale": true,
+    "init_connection_set_lang_pack": true,
+    "init_connection_set_tz_offset": true,
+    "vault_fingerprint_replay": true,
+    "pin_app_version_substr": "12.7.3",
+    "api_credential_mode": "official",
+    "active_app_type": "telegram_android_public",
+    "force_skip_push_attach": null
+  },
+  "balances_before": {
+    "success": true,
+    "balance": 24.5,
+    "currency": "USD",
+    "telegram_stock": 273419,
+    "message": "SMSCode (smscode.gg) 鉴权与通信正常，余额 24.5 USD，目录国家 242，参考价 0.2794"
+  },
+  "stock": {
+    "id": {
+      "stock": 4512476,
+      "cost": 0.0176,
+      "name": "印尼",
+      "tz_offset": 25200
+    },
+    "ph": {
+      "stock": 693801,
+      "cost": 0.151,
+      "name": "菲律宾",
+      "tz_offset": 28800
+    },
+    "vn": {
+      "stock": 273419,
+      "cost": 0.2794,
+      "name": "越南",
+      "tz_offset": 25200
+    },
+    "kz": {
+      "stock": 224894,
+      "cost": 0.308,
+      "name": "哈萨克斯坦",
+      "tz_offset": 18000
+    }
+  },
+  "rounds": [
+    {
+      "label": "vn_w1_2",
+      "country": "vn",
+      "role": "best_app_signal",
+      "wave": "w1",
+      "count": 2,
+      "max_price": 0.55,
+      "batch_id": "6ecbff06",
+      "timed_out": false,
+      "elapsed_seconds": 104.3,
+      "batch_status": "failed",
+      "summary": {
+        "tasks": 2,
+        "success": 0,
+        "leased_numbers": 2,
+        "blacklist_skips": 0,
+        "sendcode_samples": 0,
+        "sms": 0,
+        "app": 0,
+        "other_type": 0,
+        "sms_rate": null,
+        "sent_code_types": {},
+        "next_type_none": 0,
+        "app_next_type_none": 0,
+        "plan_modes": {
+          "push_required": 2
+        },
+        "attached_token": {
+          "是": 2
+        },
+        "allow_app_hash": {
+          "是": 2
+        },
+        "skipped_push_tasks": 0,
+        "api_id_published_flood": 6,
+        "connect_timeout": 0,
+        "mtproto_handshake": 2,
+        "sms_code_received": 0,
+        "geo_1to1_true": 0,
+        "geo_1to1_false": 0,
+        "fallback_proxy": 0,
+        "precheck_registered": 0,
+        "api_ids": {
+          "4": 2
+        },
+        "devices": {
+          "XiaomiM2003J15SC (SDK 29), App: 12.7.3 (67502)": 1,
+          "samsungSM-G950F (SDK 33), App: 12.7.3 (67502)": 1
+        },
+        "statuses": {
+          "failed": 2
+        },
+        "no_sendcode_reasons": {
+          "PROXY_UNAVAILABLE": 2
+        },
+        "tasks_without_sendcode": 2,
+        "task_ids": [
+          "d68e9d1c",
+          "318e6cb7"
+        ]
+      },
+      "flood_tasks": 2,
+      "rows": [
+        {
+          "task_id": "d68e9d1c",
+          "status": "failed",
+          "phone": "+8476****675",
+          "leased_numbers": 1,
+          "blacklist_skips": 0,
+          "samples": [],
+          "resend_types": [],
+          "plan_modes": [
+            "push_required"
+          ],
+          "plan_attached_token": [
+            "是"
+          ],
+          "plan_allow_app_hash": [
+            "是"
+          ],
+          "plan_request_push": [
+            "是"
+          ],
+          "skipped_push": false,
+          "api_ids": [
+            "4"
+          ],
+          "credential_custom": false,
+          "device": "XiaomiM2003J15SC (SDK 29), App: 12.7.3 (67502)",
+          "precheck_ok": true,
+          "precheck_registered": false,
+          "mtproto_connect": true,
+          "mtproto_handshake": true,
+          "connect_timeout": false,
+          "api_id_published_flood": 3,
+          "flood_wait": false,
+          "sms_code_received": false,
+          "proxy_country": null,
+          "phone_country": "VN",
+          "geo_1to1": null,
+          "used_fallback_proxy": false,
+          "provider_ids": null,
+          "egress_ip": null,
+          "no_sendcode_reason": "PROXY_UNAVAILABLE",
+          "error": "当前 api_id=4 已被 Telegram 判定为公开泄露 ID，在缺少合法 Push Token 的情况下触发 API_ID_PUBLISHED_FLOOD (SendCodeRequest)。请修复 Attestation 网关或改用自建非泄露 api_id。",
+          "log_excerpt": [
+            "[23:09:00] 选定端点模板: MTProto Android Legacy Public (api_id=4) (AID: 308aba4e-5680-466b-81a5-477ac6befa95)",
+            "[23:09:00] 绑定硬件特征: XiaomiM2003J15SC (SDK 29), App: 12.7.3 (67502)",
+            "[23:09:10] 正在对通信句柄 +84764560675 执行 Telegram 号码注册状态预检探测...",
+            "[23:09:15] 预检通过：号码 +84764560675 在 Telegram 官方库中未注册（白号），继续申请 Push Token 并发送 auth.sendCode",
+            "[23:09:18] [验证码通道] 通道策略=push_required，申请Push=是，attach_token=是，allow_app_hash=是，模式标签=push_required，泄露/official_api_id，allow_firebase，unknown_number",
+            "[23:09:18] [验证码通道] 严格设备对齐：非 emu 强制 attach Push（CodeSettings.token / FCM）",
+            "[23:09:18] [验证码通道] push_required：申请 Push 并 attach token",
+            "[23:09:34] 建立 MTProto 协议传输通道 (中继节点: res.proxy-seller.com:10000)...",
+            "[23:09:39] 已完成 MTProto 传输层 Diffie-Hellman 密钥交换与加密连接建立",
+            "[23:09:49] ⚠️ 自动退订/撤销信道句柄未成功 (act_id=11866545, 原因: API_ID_PUBLISHED_FLOOD): SMSCode (smscode.gg) HTTP 409 CANCEL_TOO_EARLY: Please wait 81 more seconds before canceling",
+            "[23:09:49] [Expert] API_ID_PUBLISHED_FLOOD api_id=4 push_slot=CodeSettings.token(iOS-semantic) token_kind=fcm_legacy token_len=142 suspicious=否 → Token 冷却后终止（凭证层全局故障，换号救不了）",
+            "[23:10:37] ❌ 当前 api_id=4 已被 Telegram 判定为公开泄露 ID，在缺少合法 Push Token 的情况下触发 API_ID_PUBLISHED_FLOOD (SendCodeRequest)。请修复 Attestation 网关或改用自建非泄露 api_id。"
+          ],
+          "log_lines": 45,
+          "init_lang_pack": "android",
+          "init_tz_offset": 25200,
+          "init_tz_written": true,
+          "profile_lang": "vi-vn",
+          "profile_tz": "25200",
+          "push_slot": "CodeSettings.token(iOS-semantic)",
+          "token_kind": "fcm_legacy",
+          "align_mode": "strict",
+          "issues": [
+            "API_ID_PUBLISHED_FLOOD"
+          ],
+          "expect_tz": 25200
+        },
+        {
+          "task_id": "318e6cb7",
+          "status": "failed",
+          "phone": "+8493****378",
+          "leased_numbers": 1,
+          "blacklist_skips": 0,
+          "samples": [],
+          "resend_types": [],
+          "plan_modes": [
+            "push_required"
+          ],
+          "plan_attached_token": [
+            "是"
+          ],
+          "plan_allow_app_hash": [
+            "是"
+          ],
+          "plan_request_push": [
+            "是"
+          ],
+          "skipped_push": false,
+          "api_ids": [
+            "4"
+          ],
+          "credential_custom": false,
+          "device": "samsungSM-G950F (SDK 33), App: 12.7.3 (67502)",
+          "precheck_ok": true,
+          "precheck_registered": false,
+          "mtproto_connect": true,
+          "mtproto_handshake": true,
+          "connect_timeout": false,
+          "api_id_published_flood": 3,
+          "flood_wait": false,
+          "sms_code_received": false,
+          "proxy_country": null,
+          "phone_country": "VN",
+          "geo_1to1": null,
+          "used_fallback_proxy": false,
+          "provider_ids": null,
+          "egress_ip": null,
+          "no_sendcode_reason": "PROXY_UNAVAILABLE",
+          "error": "当前 api_id=4 已被 Telegram 判定为公开泄露 ID，在缺少合法 Push Token 的情况下触发 API_ID_PUBLISHED_FLOOD (SendCodeRequest)。请修复 Attestation 网关或改用自建非泄露 api_id。",
+          "log_excerpt": [
+            "[23:09:00] 选定端点模板: MTProto Android Legacy Public (api_id=4) (AID: 308aba4e-5680-466b-81a5-477ac6befa95)",
+            "[23:09:00] 绑定硬件特征: samsungSM-G950F (SDK 33), App: 12.7.3 (67502)",
+            "[23:09:03] 正在对通信句柄 +84937125378 执行 Telegram 号码注册状态预检探测...",
+            "[23:09:09] 预检通过：号码 +84937125378 在 Telegram 官方库中未注册（白号），继续申请 Push Token 并发送 auth.sendCode",
+            "[23:09:13] [验证码通道] 通道策略=push_required，申请Push=是，attach_token=是，allow_app_hash=是，模式标签=push_required，泄露/official_api_id，allow_firebase，unknown_number",
+            "[23:09:13] [验证码通道] 严格设备对齐：非 emu 强制 attach Push（CodeSettings.token / FCM）",
+            "[23:09:13] [验证码通道] push_required：申请 Push 并 attach token",
+            "[23:09:13] 建立 MTProto 协议传输通道 (中继节点: res.proxy-seller.com:10001)...",
+            "[23:09:21] 已完成 MTProto 传输层 Diffie-Hellman 密钥交换与加密连接建立",
+            "[23:09:30] ⚠️ 自动退订/撤销信道句柄未成功 (act_id=11866541, 原因: API_ID_PUBLISHED_FLOOD): SMSCode (smscode.gg) HTTP 409 CANCEL_TOO_EARLY: Please wait 94 more seconds before canceling",
+            "[23:09:30] [Expert] API_ID_PUBLISHED_FLOOD api_id=4 push_slot=CodeSettings.token(iOS-semantic) token_kind=fcm_legacy token_len=142 suspicious=否 → Token 冷却后终止（凭证层全局故障，换号救不了）",
+            "[23:09:30] ❌ 当前 api_id=4 已被 Telegram 判定为公开泄露 ID，在缺少合法 Push Token 的情况下触发 API_ID_PUBLISHED_FLOOD (SendCodeRequest)。请修复 Attestation 网关或改用自建非泄露 api_id。"
+          ],
+          "log_lines": 38,
+          "init_lang_pack": "android",
+          "init_tz_offset": 25200,
+          "init_tz_written": true,
+          "profile_lang": "vi-vn",
+          "profile_tz": "25200",
+          "push_slot": "CodeSettings.token(iOS-semantic)",
+          "token_kind": "fcm_legacy",
+          "align_mode": "strict",
+          "issues": [
+            "API_ID_PUBLISHED_FLOOD"
+          ],
+          "expect_tz": 25200
+        }
+      ]
+    },
+    {
+      "label": "id_w2_2",
+      "country": "id",
+      "role": "stock_plus_app",
+      "wave": "w2",
+      "count": 2,
+      "max_price": 0.25,
+      "batch_id": "d2f54c21",
+      "timed_out": false,
+      "elapsed_seconds": 4.0,
+      "batch_status": "failed",
+      "summary": {
+        "tasks": 2,
+        "success": 0,
+        "leased_numbers": 0,
+        "blacklist_skips": 0,
+        "sendcode_samples": 0,
+        "sms": 0,
+        "app": 0,
+        "other_type": 0,
+        "sms_rate": null,
+        "sent_code_types": {},
+        "next_type_none": 0,
+        "app_next_type_none": 0,
+        "plan_modes": {},
+        "attached_token": {},
+        "allow_app_hash": {},
+        "skipped_push_tasks": 0,
+        "api_id_published_flood": 2,
+        "connect_timeout": 0,
+        "mtproto_handshake": 0,
+        "sms_code_received": 0,
+        "geo_1to1_true": 0,
+        "geo_1to1_false": 0,
+        "fallback_proxy": 0,
+        "precheck_registered": 0,
+        "api_ids": {},
+        "devices": {
+          "-": 2
+        },
+        "statuses": {
+          "failed": 2
+        },
+        "no_sendcode_reasons": {
+          "PROXY_UNAVAILABLE": 2
+        },
+        "tasks_without_sendcode": 2,
+        "task_ids": [
+          "8fe7f5df",
+          "f4327c1d"
+        ]
+      },
+      "flood_tasks": 2,
+      "rows": [
+        {
+          "task_id": "8fe7f5df",
+          "status": "failed",
+          "phone": null,
+          "leased_numbers": 0,
+          "blacklist_skips": 0,
+          "samples": [],
+          "resend_types": [],
+          "plan_modes": [],
+          "plan_attached_token": [],
+          "plan_allow_app_hash": [],
+          "plan_request_push": [],
+          "skipped_push": false,
+          "api_ids": [],
+          "credential_custom": false,
+          "device": null,
+          "precheck_ok": false,
+          "precheck_registered": false,
+          "mtproto_connect": false,
+          "mtproto_handshake": false,
+          "connect_timeout": false,
+          "api_id_published_flood": 1,
+          "flood_wait": false,
+          "sms_code_received": false,
+          "proxy_country": null,
+          "phone_country": "ID",
+          "geo_1to1": null,
+          "used_fallback_proxy": false,
+          "provider_ids": null,
+          "egress_ip": null,
+          "no_sendcode_reason": "PROXY_UNAVAILABLE",
+          "error": "HUNT_FLOOD_WINDOW: 批次内已触发 FLOOD，停止填满窗口",
+          "log_excerpt": [
+            "[23:10:52] ❌ [FLOOD窗] 已触发 API_ID_PUBLISHED_FLOOD，停止本任务以免继续填满窗口"
+          ],
+          "log_lines": 4,
+          "init_lang_pack": null,
+          "init_tz_offset": null,
+          "init_tz_written": false,
+          "profile_lang": null,
+          "profile_tz": null,
+          "push_slot": null,
+          "token_kind": null,
+          "align_mode": null,
+          "issues": [
+            "API_ID_PUBLISHED_FLOOD"
+          ],
+          "expect_tz": 25200
+        },
+        {
+          "task_id": "f4327c1d",
+          "status": "failed",
+          "phone": null,
+          "leased_numbers": 0,
+          "blacklist_skips": 0,
+          "samples": [],
+          "resend_types": [],
+          "plan_modes": [],
+          "plan_attached_token": [],
+          "plan_allow_app_hash": [],
+          "plan_request_push": [],
+          "skipped_push": false,
+          "api_ids": [],
+          "credential_custom": false,
+          "device": null,
+          "precheck_ok": false,
+          "precheck_registered": false,
+          "mtproto_connect": false,
+          "mtproto_handshake": false,
+          "connect_timeout": false,
+          "api_id_published_flood": 1,
+          "flood_wait": false,
+          "sms_code_received": false,
+          "proxy_country": null,
+          "phone_country": "ID",
+          "geo_1to1": null,
+          "used_fallback_proxy": false,
+          "provider_ids": null,
+          "egress_ip": null,
+          "no_sendcode_reason": "PROXY_UNAVAILABLE",
+          "error": "HUNT_FLOOD_WINDOW: 批次内已触发 FLOOD，停止填满窗口",
+          "log_excerpt": [
+            "[23:10:52] ❌ [FLOOD窗] 已触发 API_ID_PUBLISHED_FLOOD，停止本任务以免继续填满窗口"
+          ],
+          "log_lines": 4,
+          "init_lang_pack": null,
+          "init_tz_offset": null,
+          "init_tz_written": false,
+          "profile_lang": null,
+          "profile_tz": null,
+          "push_slot": null,
+          "token_kind": null,
+          "align_mode": null,
+          "issues": [
+            "API_ID_PUBLISHED_FLOOD"
+          ],
+          "expect_tz": 25200
+        }
+      ]
+    },
+    {
+      "label": "ph_w3_2",
+      "country": "ph",
+      "role": "preferred_history",
+      "wave": "w3",
+      "count": 2,
+      "max_price": 0.45,
+      "batch_id": "8e9107ff",
+      "timed_out": false,
+      "elapsed_seconds": 4.0,
+      "batch_status": "failed",
+      "summary": {
+        "tasks": 2,
+        "success": 0,
+        "leased_numbers": 0,
+        "blacklist_skips": 0,
+        "sendcode_samples": 0,
+        "sms": 0,
+        "app": 0,
+        "other_type": 0,
+        "sms_rate": null,
+        "sent_code_types": {},
+        "next_type_none": 0,
+        "app_next_type_none": 0,
+        "plan_modes": {},
+        "attached_token": {},
+        "allow_app_hash": {},
+        "skipped_push_tasks": 0,
+        "api_id_published_flood": 2,
+        "connect_timeout": 0,
+        "mtproto_handshake": 0,
+        "sms_code_received": 0,
+        "geo_1to1_true": 0,
+        "geo_1to1_false": 0,
+        "fallback_proxy": 0,
+        "precheck_registered": 0,
+        "api_ids": {},
+        "devices": {
+          "-": 2
+        },
+        "statuses": {
+          "failed": 2
+        },
+        "no_sendcode_reasons": {
+          "PROXY_UNAVAILABLE": 2
+        },
+        "tasks_without_sendcode": 2,
+        "task_ids": [
+          "f996b249",
+          "9f1f1ace"
+        ]
+      },
+      "flood_tasks": 2,
+      "rows": [
+        {
+          "task_id": "f996b249",
+          "status": "failed",
+          "phone": null,
+          "leased_numbers": 0,
+          "blacklist_skips": 0,
+          "samples": [],
+          "resend_types": [],
+          "plan_modes": [],
+          "plan_attached_token": [],
+          "plan_allow_app_hash": [],
+          "plan_request_push": [],
+          "skipped_push": false,
+          "api_ids": [],
+          "credential_custom": false,
+          "device": null,
+          "precheck_ok": false,
+          "precheck_registered": false,
+          "mtproto_connect": false,
+          "mtproto_handshake": false,
+          "connect_timeout": false,
+          "api_id_published_flood": 1,
+          "flood_wait": false,
+          "sms_code_received": false,
+          "proxy_country": null,
+          "phone_country": "PH",
+          "geo_1to1": null,
+          "used_fallback_proxy": false,
+          "provider_ids": null,
+          "egress_ip": null,
+          "no_sendcode_reason": "PROXY_UNAVAILABLE",
+          "error": "HUNT_FLOOD_WINDOW: 批次内已触发 FLOOD，停止填满窗口",
+          "log_excerpt": [
+            "[23:11:04] ❌ [FLOOD窗] 已触发 API_ID_PUBLISHED_FLOOD，停止本任务以免继续填满窗口"
+          ],
+          "log_lines": 4,
+          "init_lang_pack": null,
+          "init_tz_offset": null,
+          "init_tz_written": false,
+          "profile_lang": null,
+          "profile_tz": null,
+          "push_slot": null,
+          "token_kind": null,
+          "align_mode": null,
+          "issues": [
+            "API_ID_PUBLISHED_FLOOD"
+          ],
+          "expect_tz": 28800
+        },
+        {
+          "task_id": "9f1f1ace",
+          "status": "failed",
+          "phone": null,
+          "leased_numbers": 0,
+          "blacklist_skips": 0,
+          "samples": [],
+          "resend_types": [],
+          "plan_modes": [],
+          "plan_attached_token": [],
+          "plan_allow_app_hash": [],
+          "plan_request_push": [],
+          "skipped_push": false,
+          "api_ids": [],
+          "credential_custom": false,
+          "device": null,
+          "precheck_ok": false,
+          "precheck_registered": false,
+          "mtproto_connect": false,
+          "mtproto_handshake": false,
+          "connect_timeout": false,
+          "api_id_published_flood": 1,
+          "flood_wait": false,
+          "sms_code_received": false,
+          "proxy_country": null,
+          "phone_country": "PH",
+          "geo_1to1": null,
+          "used_fallback_proxy": false,
+          "provider_ids": null,
+          "egress_ip": null,
+          "no_sendcode_reason": "PROXY_UNAVAILABLE",
+          "error": "HUNT_FLOOD_WINDOW: 批次内已触发 FLOOD，停止填满窗口",
+          "log_excerpt": [
+            "[23:11:04] ❌ [FLOOD窗] 已触发 API_ID_PUBLISHED_FLOOD，停止本任务以免继续填满窗口"
+          ],
+          "log_lines": 4,
+          "init_lang_pack": null,
+          "init_tz_offset": null,
+          "init_tz_written": false,
+          "profile_lang": null,
+          "profile_tz": null,
+          "push_slot": null,
+          "token_kind": null,
+          "align_mode": null,
+          "issues": [
+            "API_ID_PUBLISHED_FLOOD"
+          ],
+          "expect_tz": 28800
+        }
+      ]
+    },
+    {
+      "label": "kz_w4_2",
+      "country": "kz",
+      "role": "ru_sphere_probe",
+      "wave": "w4",
+      "count": 2,
+      "max_price": 0.55,
+      "batch_id": "fd6f2e24",
+      "timed_out": false,
+      "elapsed_seconds": 4.0,
+      "batch_status": "failed",
+      "summary": {
+        "tasks": 2,
+        "success": 0,
+        "leased_numbers": 0,
+        "blacklist_skips": 0,
+        "sendcode_samples": 0,
+        "sms": 0,
+        "app": 0,
+        "other_type": 0,
+        "sms_rate": null,
+        "sent_code_types": {},
+        "next_type_none": 0,
+        "app_next_type_none": 0,
+        "plan_modes": {},
+        "attached_token": {},
+        "allow_app_hash": {},
+        "skipped_push_tasks": 0,
+        "api_id_published_flood": 2,
+        "connect_timeout": 0,
+        "mtproto_handshake": 0,
+        "sms_code_received": 0,
+        "geo_1to1_true": 0,
+        "geo_1to1_false": 0,
+        "fallback_proxy": 0,
+        "precheck_registered": 0,
+        "api_ids": {},
+        "devices": {
+          "-": 2
+        },
+        "statuses": {
+          "failed": 2
+        },
+        "no_sendcode_reasons": {
+          "PROXY_UNAVAILABLE": 2
+        },
+        "tasks_without_sendcode": 2,
+        "task_ids": [
+          "770bb4d1",
+          "0016ac6a"
+        ]
+      },
+      "flood_tasks": 2,
+      "rows": [
+        {
+          "task_id": "770bb4d1",
+          "status": "failed",
+          "phone": null,
+          "leased_numbers": 0,
+          "blacklist_skips": 0,
+          "samples": [],
+          "resend_types": [],
+          "plan_modes": [],
+          "plan_attached_token": [],
+          "plan_allow_app_hash": [],
+          "plan_request_push": [],
+          "skipped_push": false,
+          "api_ids": [],
+          "credential_custom": false,
+          "device": null,
+          "precheck_ok": false,
+          "precheck_registered": false,
+          "mtproto_connect": false,
+          "mtproto_handshake": false,
+          "connect_timeout": false,
+          "api_id_published_flood": 1,
+          "flood_wait": false,
+          "sms_code_received": false,
+          "proxy_country": null,
+          "phone_country": "KZ",
+          "geo_1to1": null,
+          "used_fallback_proxy": false,
+          "provider_ids": null,
+          "egress_ip": null,
+          "no_sendcode_reason": "PROXY_UNAVAILABLE",
+          "error": "HUNT_FLOOD_WINDOW: 批次内已触发 FLOOD，停止填满窗口",
+          "log_excerpt": [
+            "[23:11:16] ❌ [FLOOD窗] 已触发 API_ID_PUBLISHED_FLOOD，停止本任务以免继续填满窗口"
+          ],
+          "log_lines": 4,
+          "init_lang_pack": null,
+          "init_tz_offset": null,
+          "init_tz_written": false,
+          "profile_lang": null,
+          "profile_tz": null,
+          "push_slot": null,
+          "token_kind": null,
+          "align_mode": null,
+          "issues": [
+            "API_ID_PUBLISHED_FLOOD"
+          ],
+          "expect_tz": 18000
+        },
+        {
+          "task_id": "0016ac6a",
+          "status": "failed",
+          "phone": null,
+          "leased_numbers": 0,
+          "blacklist_skips": 0,
+          "samples": [],
+          "resend_types": [],
+          "plan_modes": [],
+          "plan_attached_token": [],
+          "plan_allow_app_hash": [],
+          "plan_request_push": [],
+          "skipped_push": false,
+          "api_ids": [],
+          "credential_custom": false,
+          "device": null,
+          "precheck_ok": false,
+          "precheck_registered": false,
+          "mtproto_connect": false,
+          "mtproto_handshake": false,
+          "connect_timeout": false,
+          "api_id_published_flood": 1,
+          "flood_wait": false,
+          "sms_code_received": false,
+          "proxy_country": null,
+          "phone_country": "KZ",
+          "geo_1to1": null,
+          "used_fallback_proxy": false,
+          "provider_ids": null,
+          "egress_ip": null,
+          "no_sendcode_reason": "PROXY_UNAVAILABLE",
+          "error": "HUNT_FLOOD_WINDOW: 批次内已触发 FLOOD，停止填满窗口",
+          "log_excerpt": [
+            "[23:11:16] ❌ [FLOOD窗] 已触发 API_ID_PUBLISHED_FLOOD，停止本任务以免继续填满窗口"
+          ],
+          "log_lines": 4,
+          "init_lang_pack": null,
+          "init_tz_offset": null,
+          "init_tz_written": false,
+          "profile_lang": null,
+          "profile_tz": null,
+          "push_slot": null,
+          "token_kind": null,
+          "align_mode": null,
+          "issues": [
+            "API_ID_PUBLISHED_FLOOD"
+          ],
+          "expect_tz": 18000
+        }
+      ]
+    }
+  ],
+  "skipped": [
+    {
+      "country": "vn",
+      "reason": "flood_dead_after_wave",
+      "leftover": 6,
+      "flood": 2
+    },
+    {
+      "country": "id",
+      "reason": "flood_dead_after_wave",
+      "leftover": 4,
+      "flood": 2
+    },
+    {
+      "country": "ph",
+      "reason": "flood_dead_after_wave",
+      "leftover": 2,
+      "flood": 2
+    },
+    {
+      "country": "kz",
+      "reason": "flood_dead_after_wave",
+      "leftover": 0,
+      "flood": 2
+    }
+  ],
+  "balances_after": {
+    "success": true,
+    "balance": 23.84,
+    "currency": "USD",
+    "telegram_stock": 274107,
+    "message": "SMSCode (smscode.gg) 鉴权与通信正常，余额 23.84 USD，目录国家 242，参考价 0.2794"
+  },
+  "config_restored": true,
+  "restored_sample": {
+    "device_alignment_mode": "loose",
+    "official_client_emulation": true,
+    "sms_provider": "fivesim",
+    "hunt_proxy_max_uses": 5
+  },
+  "finished_at": "2026-09-02T23:11:28Z",
+  "issues": [
+    {
+      "country": "vn",
+      "task_id": "d68e9d1c",
+      "phone": "+8476****675",
+      "issue": "API_ID_PUBLISHED_FLOOD",
+      "proxy_cc": null,
+      "api_ids": [
+        "4"
+      ],
+      "init_lang_pack": "android",
+      "init_tz_offset": 25200,
+      "samples": [],
+      "status": "failed",
+      "error": "当前 api_id=4 已被 Telegram 判定为公开泄露 ID，在缺少合法 Push Token 的情况下触发 API_ID_PUBLISHED_FLOOD (SendCodeRequest)。请修复 Attestation 网关或改用自建非泄露 api_id。"
+    },
+    {
+      "country": "vn",
+      "task_id": "d68e9d1c",
+      "phone": "+8476****675",
+      "issue": "no_sendcode:PROXY_UNAVAILABLE",
+      "proxy_cc": null,
+      "status": "failed",
+      "error": "当前 api_id=4 已被 Telegram 判定为公开泄露 ID，在缺少合法 Push Token 的情况下触发 API_ID_PUBLISHED_FLOOD (SendCodeRequest)。请修复 Attestation 网关或改用自建非泄露 api_id。"
+    },
+    {
+      "country": "vn",
+      "task_id": "318e6cb7",
+      "phone": "+8493****378",
+      "issue": "API_ID_PUBLISHED_FLOOD",
+      "proxy_cc": null,
+      "api_ids": [
+        "4"
+      ],
+      "init_lang_pack": "android",
+      "init_tz_offset": 25200,
+      "samples": [],
+      "status": "failed",
+      "error": "当前 api_id=4 已被 Telegram 判定为公开泄露 ID，在缺少合法 Push Token 的情况下触发 API_ID_PUBLISHED_FLOOD (SendCodeRequest)。请修复 Attestation 网关或改用自建非泄露 api_id。"
+    },
+    {
+      "country": "vn",
+      "task_id": "318e6cb7",
+      "phone": "+8493****378",
+      "issue": "no_sendcode:PROXY_UNAVAILABLE",
+      "proxy_cc": null,
+      "status": "failed",
+      "error": "当前 api_id=4 已被 Telegram 判定为公开泄露 ID，在缺少合法 Push Token 的情况下触发 API_ID_PUBLISHED_FLOOD (SendCodeRequest)。请修复 Attestation 网关或改用自建非泄露 api_id。"
+    },
+    {
+      "country": "id",
+      "task_id": "8fe7f5df",
+      "phone": null,
+      "issue": "API_ID_PUBLISHED_FLOOD",
+      "proxy_cc": null,
+      "api_ids": [],
+      "init_lang_pack": null,
+      "init_tz_offset": null,
+      "samples": [],
+      "status": "failed",
+      "error": "HUNT_FLOOD_WINDOW: 批次内已触发 FLOOD，停止填满窗口"
+    },
+    {
+      "country": "id",
+      "task_id": "8fe7f5df",
+      "phone": null,
+      "issue": "no_sendcode:PROXY_UNAVAILABLE",
+      "proxy_cc": null,
+      "status": "failed",
+      "error": "HUNT_FLOOD_WINDOW: 批次内已触发 FLOOD，停止填满窗口"
+    },
+    {
+      "country": "id",
+      "task_id": "f4327c1d",
+      "phone": null,
+      "issue": "API_ID_PUBLISHED_FLOOD",
+      "proxy_cc": null,
+      "api_ids": [],
+      "init_lang_pack": null,
+      "init_tz_offset": null,
+      "samples": [],
+      "status": "failed",
+      "error": "HUNT_FLOOD_WINDOW: 批次内已触发 FLOOD，停止填满窗口"
+    },
+    {
+      "country": "id",
+      "task_id": "f4327c1d",
+      "phone": null,
+      "issue": "no_sendcode:PROXY_UNAVAILABLE",
+      "proxy_cc": null,
+      "status": "failed",
+      "error": "HUNT_FLOOD_WINDOW: 批次内已触发 FLOOD，停止填满窗口"
+    },
+    {
+      "country": "ph",
+      "task_id": "f996b249",
+      "phone": null,
+      "issue": "API_ID_PUBLISHED_FLOOD",
+      "proxy_cc": null,
+      "api_ids": [],
+      "init_lang_pack": null,
+      "init_tz_offset": null,
+      "samples": [],
+      "status": "failed",
+      "error": "HUNT_FLOOD_WINDOW: 批次内已触发 FLOOD，停止填满窗口"
+    },
+    {
+      "country": "ph",
+      "task_id": "f996b249",
+      "phone": null,
+      "issue": "no_sendcode:PROXY_UNAVAILABLE",
+      "proxy_cc": null,
+      "status": "failed",
+      "error": "HUNT_FLOOD_WINDOW: 批次内已触发 FLOOD，停止填满窗口"
+    },
+    {
+      "country": "ph",
+      "task_id": "9f1f1ace",
+      "phone": null,
+      "issue": "API_ID_PUBLISHED_FLOOD",
+      "proxy_cc": null,
+      "api_ids": [],
+      "init_lang_pack": null,
+      "init_tz_offset": null,
+      "samples": [],
+      "status": "failed",
+      "error": "HUNT_FLOOD_WINDOW: 批次内已触发 FLOOD，停止填满窗口"
+    },
+    {
+      "country": "ph",
+      "task_id": "9f1f1ace",
+      "phone": null,
+      "issue": "no_sendcode:PROXY_UNAVAILABLE",
+      "proxy_cc": null,
+      "status": "failed",
+      "error": "HUNT_FLOOD_WINDOW: 批次内已触发 FLOOD，停止填满窗口"
+    },
+    {
+      "country": "kz",
+      "task_id": "770bb4d1",
+      "phone": null,
+      "issue": "API_ID_PUBLISHED_FLOOD",
+      "proxy_cc": null,
+      "api_ids": [],
+      "init_lang_pack": null,
+      "init_tz_offset": null,
+      "samples": [],
+      "status": "failed",
+      "error": "HUNT_FLOOD_WINDOW: 批次内已触发 FLOOD，停止填满窗口"
+    },
+    {
+      "country": "kz",
+      "task_id": "770bb4d1",
+      "phone": null,
+      "issue": "no_sendcode:PROXY_UNAVAILABLE",
+      "proxy_cc": null,
+      "status": "failed",
+      "error": "HUNT_FLOOD_WINDOW: 批次内已触发 FLOOD，停止填满窗口"
+    },
+    {
+      "country": "kz",
+      "task_id": "0016ac6a",
+      "phone": null,
+      "issue": "API_ID_PUBLISHED_FLOOD",
+      "proxy_cc": null,
+      "api_ids": [],
+      "init_lang_pack": null,
+      "init_tz_offset": null,
+      "samples": [],
+      "status": "failed",
+      "error": "HUNT_FLOOD_WINDOW: 批次内已触发 FLOOD，停止填满窗口"
+    },
+    {
+      "country": "kz",
+      "task_id": "0016ac6a",
+      "phone": null,
+      "issue": "no_sendcode:PROXY_UNAVAILABLE",
+      "proxy_cc": null,
+      "status": "failed",
+      "error": "HUNT_FLOOD_WINDOW: 批次内已触发 FLOOD，停止填满窗口"
+    }
+  ],
+  "totals": {
+    "tasks": 8,
+    "leased_budget": 8,
+    "sendcode": 0,
+    "app": 0,
+    "sms": 0,
+    "flood": 8,
+    "success": 0,
+    "geo_1to1_true": 0,
+    "geo_1to1_false": 0,
+    "issue_counts": {
+      "API_ID_PUBLISHED_FLOOD": 8,
+      "no_sendcode:PROXY_UNAVAILABLE": 8
+    },
+    "api_ids": {
+      "4": 2
+    },
+    "countries": {
+      "vn": 2,
+      "id": 2,
+      "ph": 2,
+      "kz": 2
+    }
+  },
+  "feedback_doc": "docs/SMSCODE_ROUND_20_FEEDBACK.md",
+  "note_posthoc": {
+    "real_leases": 2,
+    "flood_gate_blocked_tasks": 6,
+    "proxy_unavailable_misclassified": true,
+    "hard_stop_seconds": 3600,
+    "did_not_fill_window": true
+  }
+}
