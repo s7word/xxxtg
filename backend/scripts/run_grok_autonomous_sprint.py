@@ -192,6 +192,28 @@ HYPOTHESES: Dict[str, Dict[str, Any]] = {
         "verify": "api6_push",
         "apply": dict(VAULT6),
     },
+    "H9": {
+        "label": "H9_payment_probe_jo",
+        "hypothesis": "jo + official api_id=6 + Payment 后 resend（iq 上 constructor 为 SMS 但未收码）",
+        "country": "jo",
+        "count": 5,
+        "threads": 5,
+        "max_attempts": 2,
+        "max_price": 1.0,
+        "verify": "official_api6",
+        "apply": {**OFFICIAL6, "payment_required_probe": "both"},
+    },
+    "H10": {
+        "label": "H10_payment_probe_ma",
+        "hypothesis": "ma + official api_id=6 + Payment 后 resend",
+        "country": "ma",
+        "count": 5,
+        "threads": 5,
+        "max_attempts": 2,
+        "max_price": 0.8,
+        "verify": "official_api6",
+        "apply": {**OFFICIAL6, "payment_required_probe": "both"},
+    },
 }
 
 
@@ -409,7 +431,12 @@ def next_queue(
     if outcome == "SUCCESS":
         return [], skip
     if outcome == "SMS_SIGNAL":
-        prepend.append(hid)
+        # 仅加码一次：constructor 报 SMS 但接码 0 次时不要无限重复
+        if ran.count(hid) < 2:
+            prepend.append(hid)
+        else:
+            take("H7")
+            take("H8")
         return prepend, skip
     if outcome == "FLOOD" and hid in {"H1", "H2", "H6", "H7"}:
         skip.update({"H2", "H6"})
@@ -546,16 +573,15 @@ def main() -> int:
                 extra, skipped = next_queue(
                     hid, result["outcome"], ran, skipped, args.budget - leases_used,
                 )
-                # 已跑过的不再无脑重复，除非 SMS_SIGNAL / FIREBASE 明确要求加码
-                if result["outcome"] in {"SMS_SIGNAL", "FIREBASE"}:
-                    queue = [hid] + extra + queue
+                if result["outcome"] in {"SMS_SIGNAL", "FIREBASE"} and ran.count(hid) < 2:
+                    queue = [hid] + extra + [q for q in queue if q != hid]
                 else:
                     seen = set(ran) | set(queue)
                     for item in extra:
                         if item not in seen:
                             queue.append(item)
                     if not queue:
-                        for fallback in ("H3", "H4", "H6", "H7", "H8"):
+                        for fallback in ("H3", "H7", "H8", "H9", "H10"):
                             if fallback not in ran and fallback not in skipped:
                                 queue.append(fallback)
                                 break
