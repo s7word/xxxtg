@@ -93,25 +93,73 @@ iq 与 ma 都如此。`SentCodeTypeSms` 是本项目在 api_id∈{4,6} 约束下
 
 ## 4. 余额 / 充值
 
-实验前会查 smsbower / Grizzly / 5SIM。smsbower 低于约 8 USD 时**停止**，并在下面写明充值金额。不硬跑空单。
+实验前（2026-09-02 09:23 UTC）：
 
-（实测数字见下一节，跑完后回填。）
+| 平台 | 余额 | 库存（Telegram） | 本轮是否够用 |
+|------|------|------------------|--------------|
+| **SMS Bower** | **23.746 USD** | iq 19 万 / ma 24 万 | 够。参考价 iq≈$1、ma≈$1.70 |
+| **Grizzly SMS** | **29.8 USD** | iq 10 万 @ $0.53 | 够，C 组用了它 |
+| **5SIM** | **25.12 RUB**（约 $0.27） | iq 无货；ma 有货 | **不够**当主路径，未使用 |
+
+实验后：smsbower **23.602 USD**（约 −$0.14，多数租号 cancel 后退回；主要是邮箱小额消耗），Grizzly 仍 **29.8**（C 组 3 号应已退订）。
+
+**现在不需要充值。** 若还要继续烧 official email→Payment 链路，建议 smsbower 保持 ≥15 USD；5SIM 若要用请至少充 **200–300 RUB**。不要为「再等一次 SMS constructor」盲目加钱。
 
 ## 5. 实测结果
 
-*本节在跑完 `run_grok_sms_after_payment.py` 后回填。*
+报告：`data/ab_reports/grok_sms_after_payment_20260902_092328.json`  
+租号 **19**，注册成功 **0**，接码平台真正读到验证码 **0**。  
+全程 getStatus 原始响应只有 `STATUS_WAIT_CODE`（订单活着、从未出码）。
 
-| ID | 国家 | 平台 | 租号 | SMS constructor | 收码 | 成功 | 结论 |
-|----|------|------|------|-----------------|------|------|------|
-| A | iq | smsbower | — | — | — | — | 待测 |
-| B | iq | smsbower | — | — | — | — | 待测 |
-| C | iq | TBD | — | — | — | — | 待测 |
-| D | ma | smsbower | — | — | — | — | 待测 |
-| E | ma | smsbower | — | — | — | — | 待测 |
-| F | iq | smsbower | — | — | — | — | 待测 |
+| ID | 猜想 | 国家 | 平台 | 租号 | constructor | 等待 | 收码 | 结论 |
+|----|------|------|------|------|-------------|------|------|------|
+| **A** | 等 240s + 2s 密轮询 | iq | smsbower | 3 | Email→Payment→**Sms×3** | **271–272s** NO_CODE | 0 | **否证「等久一点」** |
+| **B** | 立刻 resend 两次 + reportMissingCode | iq | smsbower | 4 | Sms×3 | 203–205s NO_CODE | 0 | 第 2 次 resend 被 **FLOOD_WAIT 95s** 拒绝（对齐 timeout=90）；`reportMissingCode` 返回 **True** 仍无短信 |
+| **C** | 换接码平台 | iq | **grizzlysms** | 3 | Sms×3 | 213–221s NO_CODE | 0 | **否证「smsbower 号段独有」**；Grizzly 同样 `STATUS_WAIT_CODE` |
+| **D** | 非 Payment 的 api_id=4 resend | ma | smsbower | 2 | 无 sendCode | — | 0 | **FLOOD**（已 attach Push）。ma 上 4 与 iq/jo 一样不能发码 |
+| **E** | 同 A 换 ma | ma | smsbower | 4 | Sms×3 | 271–274s NO_CODE | 0 | **否证「iq 号段独有」** |
+| **F** | Payment 后先等 90s 再 resend | iq | smsbower | 3 | Sms×2；**Call×1**（verifyEmail 直出 Call，跳过 Payment） | 202–204s NO_CODE | 0 | 等 timeout 再 resend **仍是 Sms 空壳**；偶发 Call 虚拟号也收不到 |
 
-## 6. 下一步（预写，按结果选用）
+### 关键日志（脱敏）
 
-- 若仍 0 码：把「Payment 后 SMS = 空壳」当作工作假设；不要再在 iq/ma 上烧 official api_id=6 email 链路，除非准备付 $1 IAP。
-- 若某平台/某国收到码：用该配置加码直到注册成功或 FLOOD。
-- 真钱路径不在自动化范围：需要用户在官方 Android 上完成 `telegram_premium.one_week.auth`，再考虑把收据交给 `assignPlayMarketTransaction`。
+B 组二次 resend（hash 前后相同，说明 hash 传递正确）：
+
+```
+PaymentRequired 后 resend max=2 hash=ecea8181…len=18
+→ SentCodeTypeSms next_type=CodeTypeCall timeout=90  （同一 hash）
+→ auth.reportMissingCode mnc=99 返回 True
+→ 立刻第二次 resend → FLOOD_WAIT 95s
+→ 继续轮询第一次 SMS 180s → last_getStatus='STATUS_WAIT_CODE'
+```
+
+F 组等 90s 再 resend：同样立刻得到 `SentCodeTypeSms`，再 180s `STATUS_WAIT_CODE`。
+
+F 组另 1 号：`verifyEmail` 直接返回 `SentCodeTypeCall`（无 Payment）。虚拟号无法接语音，180s 仍 NO_CODE。这是稀有变体，不是可用注册路径。
+
+phone_code_hash：Payment 对象与 resend 返回的 SMS **共用同一 hash**。RPC 成功改 constructor，排除「hash 传错所以没发出去」。
+
+`auth.requestFirebaseSms`：本轮 0 次 FirebaseSms constructor，未调用（日志明确跳过）。
+
+## 6. 结论与下一步
+
+**离真相：协议形状已经看清；可完成注册仍然远。**
+
+Payment 后的 `SentCodeTypeSms` 现在可以更有把握地称为 **付费墙未解除时的形式上 SMS**：
+
+- 不是「等 120s 太短」（A/E 等到 270s+）。
+- 不是「smsbower 一家的问题」（C 换 Grizzly 同样 0 码）。
+- 不是「没等官方 timeout」（F 等 90s 再 resend 仍空壳）。
+- 不是「hash 传错」（同一 hash，resend 成功）。
+- 第二次立刻 resend 被服务端按 timeout 拒绝，说明 Telegram 把这条 SMS **当作已下发的通道**在计时，但接码平台从未看到短信 —— 更像网关没真正投递给虚拟号，或投递被策略丢掉。
+
+官方过墙步骤仍是真实 Play/App Store 内购（`assignPlayMarketTransaction` + `checkPaidAuth`）。假收据已 400。本项目不会伪造收据。
+
+**建议停止**在 iq/ma 上继续烧 official api_id=6 的 Email→Payment→resend 链路来「碰运气收码」。余额还够，但边际信息量已经接近 0。
+
+若还要继续，只剩高成本选项：
+
+1. **真实 $1 IAP**（用户在官方 Android 完成 `telegram_premium.one_week.auth`），再把收据交给 `assignPlayMarketTransaction`。自动化做不了这一步。
+2. 换时段重跑 **+91 vault api_id=4 非 official**（历史唯一成功样本）；当前 iq/ma 上 api_id=4 是 FLOOD。
+3. 非虚拟号 / 实体 SIM（本仓库接码源覆盖不到）。
+
+不要再测：自建 api_id、无 Push 的 4/6、Firebase 开关、再延长等待、再换 smsbower/Grizzly 的 iq/ma 虚拟号。
