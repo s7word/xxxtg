@@ -279,4 +279,14 @@ SMSCode 另写 766=Kcell，并把 707/708 划给 Beeline——**与本地编号�
 4. 记录：供应商、掩码前缀、猜运营商、`sent_code` 类型、波次 UTC 时间戳。  
 5. 失败 cancel；安全线同第一轮。
 
+### 5.9 第二轮实测（2026-09-02 13:16–15:47Z）摘要
+
+完整数字见 [COUNTRY_PASSRATE_50_ROUND2_RESULTS.md](./COUNTRY_PASSRATE_50_ROUND2_RESULTS.md)。要点：
+
+- 租号 **51**；sendCode **12** 全是 **App**；**0 SMS / 0 成功 / 0 Payment**。  
+- 填满间隔拉开后，**越南填满波仍有 App×4**（R1 填满波 0 App）——节奏能延长 App 窗，不能把 App 变成 SMS。  
+- **等 35 分钟、再等 35 分钟补探针：0 App。** SMSCode「5–15 分钟间隔」不够打开第二扇窗。  
+- 有 App 的前缀：ph **0955 Globe**；vn **Viettel 037/097/098、Mobifone 090/076/077、Vietnamobile 052**；id **Indosat 0857/0858**。没有前缀打出 SMS。  
+- kz 仍 getNumber 失败；in/iq 对照无号。
+
 对照文献仍压过营销：本仓库硬事实（Payment / App / FLOOD）> Expert 方向 > SMSCode 百分比。
