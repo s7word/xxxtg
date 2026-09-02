@@ -227,9 +227,22 @@ class TestGrizzlySmsClient(unittest.IsolatedAsyncioTestCase):
 
     async def test_wait_for_code_timeout(self):
         self.svc.client.get.return_value = DummyResponse("STATUS_WAIT_CODE")
+        logs = []
+
+        async def _log(msg):
+            logs.append(msg)
+
         with patch("backend.app.services.grizzlysms.asyncio.sleep", new=AsyncMock()):
-            with self.assertRaises(TimeoutError):
-                await self.svc.wait_for_code("1", max_attempts=2, interval=0.0, notify_ready=False)
+            with self.assertRaises(TimeoutError) as ctx:
+                await self.svc.wait_for_code(
+                    "1",
+                    max_attempts=2,
+                    interval=0.0,
+                    notify_ready=False,
+                    log_callback=_log,
+                )
+        self.assertIn("last_getStatus=", str(ctx.exception))
+        self.assertTrue(any("getStatus raw=" in line for line in logs))
 
     async def test_finish_uses_status_6(self):
         self.svc.client.get.return_value = DummyResponse("ACCESS_ACTIVATION")

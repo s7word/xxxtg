@@ -42,6 +42,10 @@ from backend.app.services.code_delivery import (
     resolve_code_delivery_plan,
 )
 from backend.app.services.device_profile import DeviceProfileManager
+from backend.app.services.init_connection import (
+    apply_init_connection_overrides,
+    describe_init_connection,
+)
 from backend.app.services.phone_precheck import PhonePrecheckService
 from backend.app.services.proxyseller import infer_country_from_phone
 from backend.app.services.recaptcha_check import RecaptchaChallengeError, parse_recaptcha_check
@@ -664,6 +668,14 @@ class ManualRegistrationOrchestrator:
                 lang_code=profile.get("lang_code"),
                 system_lang_code=profile.get("system_lang_code"),
             )
+            init_snap = apply_init_connection_overrides(client, profile, config)
+            if init_snap.get("blocked"):
+                await manager.append_log(
+                    task_id,
+                    f"InitConnection 指纹未写入: {init_snap.get('blocked')}",
+                )
+            else:
+                await manager.append_log(task_id, describe_init_connection(client))
             connected = await RegistrationOrchestrator._connect_mtproto(
                 client, task_id, manager, None, None, timeout=CONNECT_TIMEOUT_SECONDS
             )
