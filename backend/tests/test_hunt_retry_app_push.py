@@ -40,7 +40,7 @@ class FakeSms:
         self.cancel_calls.append(act_id)
         return {"success": True, "status": "cancel"}
 
-    async def wait_for_code(self, act_id, max_attempts=30, log_callback=None):
+    async def wait_for_code(self, act_id, max_attempts=30, log_callback=None, interval=4.0, **_kwargs):
         self.poll_attempts.append(max_attempts)
         if log_callback:
             await log_callback(f"fake otp for {act_id}")
@@ -57,7 +57,7 @@ class FakeSms:
 class TimeoutSms(FakeSms):
     """进入 OTP 阶段后直接超时，便于断言真正下发的轮询次数。"""
 
-    async def wait_for_code(self, act_id, max_attempts=30, log_callback=None):
+    async def wait_for_code(self, act_id, max_attempts=30, log_callback=None, interval=4.0, **_kwargs):
         self.poll_attempts.append(max_attempts)
         raise TimeoutError("no code")
 

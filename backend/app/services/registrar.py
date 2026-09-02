@@ -1509,6 +1509,15 @@ class RegistrationOrchestrator:
             return "-"
         return raw
 
+    @staticmethod
+    def _phone_code_hash_for_log(sent_code: Any) -> str:
+        raw = str(getattr(sent_code, "phone_code_hash", None) or "").strip()
+        if not raw:
+            return "empty"
+        if len(raw) <= 10:
+            return raw
+        return f"{raw[:8]}…len={len(raw)}"
+
     @classmethod
     def _published_flood_error_message(
         cls,
@@ -1733,29 +1742,39 @@ class RegistrationOrchestrator:
         wait_timeout: Optional[float] = None,
     ) -> Tuple[Optional[Any], Optional[Exception]]:
         """等待 next_type 冷却窗口后调用 auth.resendCode，尝试强制切换到短信通道。"""
-        timeout = wait_timeout if wait_timeout is not None else getattr(sent_code, "timeout", None)
+        explicit = wait_timeout is not None
+        timeout = wait_timeout if explicit else getattr(sent_code, "timeout", None)
         wait_secs = 0.0
         if timeout is not None:
             try:
-                wait_secs = min(max(float(timeout), 0.0), MAX_RESEND_WAIT_SECONDS)
+                cap = 180.0 if explicit else MAX_RESEND_WAIT_SECONDS
+                wait_secs = min(max(float(timeout), 0.0), cap)
             except (TypeError, ValueError):
                 wait_secs = 0.0
 
         next_name = cls._tl_type_name(getattr(sent_code, "next_type", None)) or "None"
+        hash_log = cls._phone_code_hash_for_log(sent_code)
         if wait_secs > 0:
             await manager.append_log(
                 task_id,
                 f"检测到 next_type={next_name}，将等待服务端冷却窗口 {wait_secs:.0f}s "
-                "后调用 auth.resendCode 强制切换短信通道..."
+                f"后调用 auth.resendCode（hash={hash_log}）..."
             )
             await asyncio.sleep(wait_secs)
         else:
             await manager.append_log(
                 task_id,
-                f"next_type={next_name} 且无有效 timeout，立即尝试 auth.resendCode 探测短信通道..."
+                f"next_type={next_name} 且无有效 timeout，立即尝试 auth.resendCode "
+                f"（hash={hash_log}）..."
             )
 
         phone_code_hash = getattr(sent_code, "phone_code_hash", None)
+        if not phone_code_hash:
+            await manager.append_log(
+                task_id,
+                "⚠️ auth.resendCode 跳过：当前 sent_code 缺少 phone_code_hash",
+            )
+            return None, ValueError("missing phone_code_hash")
         try:
             resent = await client(functions.auth.ResendCodeRequest(
                 phone_number=phone,
@@ -1769,12 +1788,51 @@ class RegistrationOrchestrator:
             )
             return None, exc
 
-        new_type = cls._tl_type_name(getattr(resent, "type", None)) or "Unknown"
+        new_type = cls._sent_code_type_name(resent) or "Unknown"
         await manager.append_log(
             task_id,
-            f"auth.resendCode 已返回，新分发通道类型: {new_type} ({cls._describe_sent_code(resent)})"
+            f"auth.resendCode 已返回，新分发通道类型: {new_type} "
+            f"({cls._describe_sent_code(resent)}) "
+            f"phone_code_hash={cls._phone_code_hash_for_log(resent)}"
         )
         return resent, None
+
+    @classmethod
+    async def _maybe_report_missing_code(
+        cls,
+        client,
+        phone: str,
+        sent_code: Any,
+        profile: Optional[Dict[str, Any]],
+        task_id: str,
+        manager: RegistrationTaskManager,
+    ) -> None:
+        """官方缺信上报。虚拟号没有真实 SIM MNC，失败只记日志。"""
+        profile = profile or {}
+        mnc = str(
+            profile.get("mnc")
+            or profile.get("operator_mnc")
+            or profile.get("sim_mnc")
+            or "99"
+        )
+        phone_code_hash = getattr(sent_code, "phone_code_hash", None)
+        await manager.append_log(
+            task_id,
+            f"[SMS_WAIT] 调用 auth.reportMissingCode mnc={mnc} "
+            f"hash={cls._phone_code_hash_for_log(sent_code)}",
+        )
+        try:
+            ok = await client(functions.auth.ReportMissingCodeRequest(
+                phone_number=phone,
+                phone_code_hash=phone_code_hash,
+                mnc=mnc,
+            ))
+            await manager.append_log(task_id, f"[SMS_WAIT] auth.reportMissingCode 返回 {ok}")
+        except Exception as exc:
+            await manager.append_log(
+                task_id,
+                f"[SMS_WAIT] auth.reportMissingCode 失败（继续 resend）: {exc}",
+            )
 
     @classmethod
     async def _probe_assign_play_market(
@@ -2057,6 +2115,10 @@ class RegistrationOrchestrator:
         force_resend_on_app: bool = False,
         payment_required_probe: str = "off",
         _payment_probe_depth: int = 0,
+        payment_resend_max: int = 1,
+        payment_resend_wait_seconds: float = 0.0,
+        resend_before_email_verify: bool = False,
+        report_missing_sms_code: bool = False,
     ) -> Tuple[Any, int]:
         """解析 sendCode 分发通道。
 
@@ -2066,6 +2128,18 @@ class RegistrationOrchestrator:
         - PaymentRequired：可选 resend / Play Market 探测后快退
         - FirebaseSms：Play Integrity + requestFirebaseSms 后按短信轮询
         """
+        recurse_kw = dict(
+            wait_timeout=wait_timeout,
+            bypass_svc=bypass_svc,
+            profile=profile,
+            emulation_label=emulation_label,
+            force_resend_on_app=force_resend_on_app,
+            payment_required_probe=payment_required_probe,
+            payment_resend_max=payment_resend_max,
+            payment_resend_wait_seconds=payment_resend_wait_seconds,
+            resend_before_email_verify=resend_before_email_verify,
+            report_missing_sms_code=report_missing_sms_code,
+        )
         delivery_name = cls._sent_code_type_name(sent_code)
         await manager.append_log(
             task_id,
@@ -2084,38 +2158,64 @@ class RegistrationOrchestrator:
             )
             probe = str(payment_required_probe or "off").strip().lower()
             if _payment_probe_depth < 1 and probe in {"resend", "both"}:
+                try:
+                    max_n = max(1, min(int(payment_resend_max or 1), 3))
+                except (TypeError, ValueError):
+                    max_n = 1
+                try:
+                    wait_first = max(0.0, float(payment_resend_wait_seconds or 0.0))
+                except (TypeError, ValueError):
+                    wait_first = 0.0
                 await manager.append_log(
                     task_id,
-                    "[PAYMENT_PROBE] PaymentRequired 后尝试 auth.resendCode",
+                    f"[PAYMENT_PROBE] PaymentRequired 后尝试 auth.resendCode "
+                    f"max={max_n} first_wait={wait_first:.0f}s "
+                    f"hash={cls._phone_code_hash_for_log(sent_code)}",
                 )
-                resent, resend_err = await cls._maybe_resend_to_sms(
-                    client=client,
-                    phone=phone,
-                    sent_code=sent_code,
-                    task_id=task_id,
-                    manager=manager,
-                    wait_timeout=0,
-                )
-                if resent is not None and not cls._is_payment_required(resent):
+                current = sent_code
+                flipped = None
+                last_err: Optional[Exception] = None
+                for i in range(max_n):
+                    if i > 0 and report_missing_sms_code and flipped is not None:
+                        await cls._maybe_report_missing_code(
+                            client, phone, flipped, profile, task_id, manager,
+                        )
+                    wait = wait_first if i == 0 else 0.0
+                    resent, resend_err = await cls._maybe_resend_to_sms(
+                        client=client,
+                        phone=phone,
+                        sent_code=current,
+                        task_id=task_id,
+                        manager=manager,
+                        wait_timeout=wait,
+                    )
+                    last_err = resend_err
+                    if resent is None:
+                        break
+                    current = resent
+                    if not cls._is_payment_required(resent):
+                        flipped = resent
+                    else:
+                        await manager.append_log(
+                            task_id,
+                            f"[PAYMENT_PROBE] 第 {i + 1} 次 resend 仍为 PaymentRequired",
+                        )
+                        break
+                if flipped is not None:
                     return await cls.resolve_sent_code_channel(
                         client,
                         phone,
-                        resent,
+                        flipped,
                         task_id,
                         manager,
-                        wait_timeout=wait_timeout,
-                        bypass_svc=bypass_svc,
-                        profile=profile,
-                        emulation_label=emulation_label,
                         _email_depth=_email_depth,
-                        force_resend_on_app=force_resend_on_app,
-                        payment_required_probe=payment_required_probe,
                         _payment_probe_depth=_payment_probe_depth + 1,
+                        **recurse_kw,
                     )
-                if resend_err is not None:
+                if last_err is not None:
                     await manager.append_log(
                         task_id,
-                        f"[PAYMENT_PROBE] resendCode 失败: {resend_err}",
+                        f"[PAYMENT_PROBE] resendCode 失败: {last_err}",
                     )
             if _payment_probe_depth < 1 and probe in {"play_market", "both"}:
                 await cls._probe_assign_play_market(
@@ -2135,6 +2235,41 @@ class RegistrationOrchestrator:
                     "SetUpEmailRequired 嵌套超过上限",
                     reason="EMAIL_SETUP_FAILED",
                 )
+            if resend_before_email_verify:
+                await manager.append_log(
+                    task_id,
+                    "[EMAIL_PROBE] SetUpEmailRequired 先 auth.resendCode（尚未 verifyEmail）"
+                    f" hash={cls._phone_code_hash_for_log(sent_code)}",
+                )
+                pre_resent, pre_err = await cls._maybe_resend_to_sms(
+                    client=client,
+                    phone=phone,
+                    sent_code=sent_code,
+                    task_id=task_id,
+                    manager=manager,
+                    wait_timeout=None,
+                )
+                if pre_resent is not None and not cls._is_email_setup(pre_resent):
+                    await manager.append_log(
+                        task_id,
+                        "[EMAIL_PROBE] email 验证前 resend 已离开 SetUpEmailRequired → "
+                        f"{cls._sent_code_type_name(pre_resent)}",
+                    )
+                    return await cls.resolve_sent_code_channel(
+                        client,
+                        phone,
+                        pre_resent,
+                        task_id,
+                        manager,
+                        _email_depth=_email_depth + 1,
+                        _payment_probe_depth=_payment_probe_depth,
+                        **recurse_kw,
+                    )
+                if pre_err is not None:
+                    await manager.append_log(
+                        task_id,
+                        f"[EMAIL_PROBE] email 前 resend 失败，继续 verifyEmail: {pre_err}",
+                    )
             next_sent = await cls._complete_setup_email(
                 client=client,
                 phone=phone,
@@ -2151,14 +2286,9 @@ class RegistrationOrchestrator:
                 next_sent,
                 task_id,
                 manager,
-                wait_timeout=wait_timeout,
-                bypass_svc=bypass_svc,
-                profile=profile,
-                emulation_label=emulation_label,
                 _email_depth=_email_depth + 1,
-                force_resend_on_app=force_resend_on_app,
-                payment_required_probe=payment_required_probe,
                 _payment_probe_depth=_payment_probe_depth,
+                **recurse_kw,
             )
 
         if cls._is_email_code(sent_code):
@@ -2189,7 +2319,12 @@ class RegistrationOrchestrator:
 
         if not cls._is_app_delivery(sent_code):
             if cls._is_sms_delivery(sent_code):
-                await manager.append_log(task_id, "分发通道为运营商短信，带外遥测网关可正常接收")
+                await manager.append_log(
+                    task_id,
+                    "分发通道为运营商短信，带外遥测网关可正常接收"
+                    f"（hash={cls._phone_code_hash_for_log(sent_code)}；"
+                    "constructor=SentCodeTypeSms，不调用 auth.requestFirebaseSms）",
+                )
             else:
                 await manager.append_log(
                     task_id,
@@ -2550,6 +2685,10 @@ class RegistrationOrchestrator:
             emulation_label=getattr(plan, "emulation_label", "balanced"),
             force_resend_on_app=bool(getattr(plan, "force_resend_on_app", False)),
             payment_required_probe=str(getattr(plan, "payment_required_probe", "off") or "off"),
+            payment_resend_max=int(getattr(plan, "payment_resend_max", 1) or 1),
+            payment_resend_wait_seconds=float(getattr(plan, "payment_resend_wait_seconds", 0) or 0),
+            resend_before_email_verify=bool(getattr(plan, "resend_before_email_verify", False)),
+            report_missing_sms_code=bool(getattr(plan, "report_missing_sms_code", False)),
         )
         return sent_code, sms_poll_attempts, push_token, push_task_id, push_provider, push_token_obtained_at, plan
 
@@ -2858,6 +2997,7 @@ class RegistrationOrchestrator:
         meta_path = None
         phone_code_hash = None
         sms_poll_attempts = DEFAULT_SMS_POLL_ATTEMPTS
+        sms_poll_interval = SMS_POLL_INTERVAL_SECONDS
         proxy_send_uses = 0
         device_send_uses = 0
         # 猎号收尾统计与交接标记：
@@ -3505,12 +3645,35 @@ class RegistrationOrchestrator:
 
                 # 猎号收码保底：宁可放弃这枚 Token 的退款，也不能把真 SMS 号的
                 # OTP 窗口截到收不到码（上面已在进轮前轮换过老 Token，这里只兜底）
-                capped_attempts = cls._sms_poll_attempts_for_push_window(
-                    sms_poll_attempts,
-                    push_provider,
-                    push_token_obtained_at,
-                    min_attempts=HUNT_MIN_SMS_POLL_ATTEMPTS if hunt_enabled else 1,
-                )
+                try:
+                    cfg_attempts = int(getattr(config, "sms_poll_attempts", 0) or 0)
+                except (TypeError, ValueError):
+                    cfg_attempts = 0
+                if cfg_attempts > 0:
+                    sms_poll_attempts = max(int(sms_poll_attempts or 1), cfg_attempts)
+                try:
+                    sms_poll_interval = float(
+                        getattr(config, "sms_poll_interval_seconds", None)
+                        or SMS_POLL_INTERVAL_SECONDS
+                    )
+                except (TypeError, ValueError):
+                    sms_poll_interval = SMS_POLL_INTERVAL_SECONDS
+                sms_poll_interval = min(max(sms_poll_interval, 1.0), 15.0)
+                bypass_push_cap = bool(getattr(config, "sms_poll_bypass_push_window", False))
+                if bypass_push_cap:
+                    capped_attempts = sms_poll_attempts
+                    await manager.append_log(
+                        task_id,
+                        f"[SMS_WAIT] 跳过 REGHelp 退款窗口截断，保留 {capped_attempts} 次轮询"
+                    )
+                else:
+                    capped_attempts = cls._sms_poll_attempts_for_push_window(
+                        sms_poll_attempts,
+                        push_provider,
+                        push_token_obtained_at,
+                        interval=sms_poll_interval,
+                        min_attempts=HUNT_MIN_SMS_POLL_ATTEMPTS if hunt_enabled else 1,
+                    )
                 if capped_attempts < sms_poll_attempts:
                     elapsed = (
                         time.monotonic() - push_token_obtained_at
@@ -3553,11 +3716,45 @@ class RegistrationOrchestrator:
                 return
 
             # 7. 异步等待带外挑战证明
+            planned_wait = float(sms_poll_attempts) * float(sms_poll_interval)
+            next_name = cls._tl_type_name(getattr(sent_code, "next_type", None)) or "None"
+            timeout_val = getattr(sent_code, "timeout", None)
+            await manager.append_log(
+                task_id,
+                f"[SMS_WAIT] constructor={cls._sent_code_type_name(sent_code)} "
+                f"next_type={next_name} timeout={timeout_val} "
+                f"phone_code_hash={cls._phone_code_hash_for_log(sent_code)} "
+                f"poll={sms_poll_attempts}x{sms_poll_interval:.1f}s≈{planned_wait:.0f}s "
+                f"provider={resolved_sms_provider}"
+            )
             await manager.append_log(task_id, "正在等待带外遥测通道下发瞬时挑战证明 (OTP)...")
-            sms_code = await sms_svc.wait_for_code(
-                act_id,
-                max_attempts=sms_poll_attempts,
-                log_callback=lambda msg: manager.append_log(task_id, msg)
+            sms_wait_started = time.monotonic()
+            try:
+                try:
+                    sms_code = await sms_svc.wait_for_code(
+                        act_id,
+                        max_attempts=sms_poll_attempts,
+                        interval=sms_poll_interval,
+                        log_callback=lambda msg: manager.append_log(task_id, msg)
+                    )
+                except TypeError:
+                    sms_code = await sms_svc.wait_for_code(
+                        act_id,
+                        max_attempts=sms_poll_attempts,
+                        log_callback=lambda msg: manager.append_log(task_id, msg)
+                    )
+            except TimeoutError as wait_exc:
+                elapsed_wait = time.monotonic() - sms_wait_started
+                await manager.append_log(
+                    task_id,
+                    f"[SMS_WAIT] 结束 elapsed={elapsed_wait:.0f}s final=NO_CODE "
+                    f"err={wait_exc}"
+                )
+                raise
+            elapsed_wait = time.monotonic() - sms_wait_started
+            await manager.append_log(
+                task_id,
+                f"[SMS_WAIT] 结束 elapsed={elapsed_wait:.0f}s final=STATUS_OK code_len={len(str(sms_code) or '')}"
             )
             await manager.append_log(task_id, f"带外挑战证明获取成功: {sms_code}")
 
