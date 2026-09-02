@@ -408,22 +408,22 @@ class AppConfigModel(BaseModel):
     flood_window_scope: str = Field(
         default="process",
         description=(
-            "SendCode FLOOD 门闩作用域: process（默认：同进程其它任务跳过新租号/发码，"
-            "不 cancel 已开跑任务）/ task（仅记录；兄弟任务可继续，供并发探测）。"
+            "SendCode FLOOD 门闩作用域: process（进程内共享冷却记录）/ "
+            "task（仅记录；与默认「不拦新测试」等价，供显式并发探测标注）。"
         ),
     )
     flood_block_new_sends: bool = Field(
-        default=True,
+        default=False,
         description=(
-            "process 作用域下，冷却窗内是否跳过新的租号/auth.sendCode。"
-            "关掉后仍会打警告日志；同窗续发 published api_id 通常仍 FLOOD。"
+            "省钱硬停（opt-in，默认关）：冷却窗内跳过新的租号/auth.sendCode。"
+            "默认 false：API_ID_PUBLISHED_FLOOD 只结束本号/本任务，不拦后续新测试。"
         ),
     )
     ignore_published_flood_window: bool = Field(
         default=False,
         description=(
-            "测试开关：忽略 API_ID_PUBLISHED_FLOOD 进程门闩，允许 10 并发等探测继续发码。"
-            "日志会警告同窗续发通常仍 FLOOD 且烧钱。生产默认关。"
+            "忽略 API_ID_PUBLISHED_FLOOD 进程硬门闩（与默认不拦新测试叠加时几乎无额外效果；"
+            "在 flood_block_new_sends=true 时用于临时放开并发探测）。"
         ),
     )
     published_flood_hold_seconds: float = Field(
@@ -718,7 +718,6 @@ class AppConfigModel(BaseModel):
         true_defaults = {
             "app_delivery_fast_drop",
             "flood_rotate_push_token",
-            "flood_block_new_sends",
             "proxy_require_country_match",
             "code_settings_allow_firebase",
             "code_settings_unknown_number",

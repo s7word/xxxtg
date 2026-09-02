@@ -593,25 +593,24 @@
         <div>
           <label class="ce-label">FLOOD 门闩作用域</label>
           <select v-model="config.flood_window_scope" class="ce-select">
-            <option value="process">process（默认：同进程跳过新租号/发码，不 cancel 已开跑）</option>
-            <option value="task">task（仅记录；兄弟任务可继续，供并发探测）</option>
+            <option value="process">process（进程内共享冷却记录）</option>
+            <option value="task">task（仅记录；兄弟任务可继续）</option>
           </select>
         </div>
         <label class="ce-check">
           <input type="checkbox" v-model="config.flood_block_new_sends" />
-          冷却窗内跳过新租号 / sendCode（避免填窗烧钱）
+          省钱硬停：冷却窗内跳过新租号 / sendCode（默认关；PUBLISHED_FLOOD 不拦新测试）
         </label>
         <label class="ce-check">
           <input type="checkbox" v-model="config.ignore_published_flood_window" />
-          忽略 API_ID_PUBLISHED_FLOOD 门闩（10 并发探测；同窗续发通常仍 FLOOD）
+          忽略 API_ID_PUBLISHED_FLOOD 硬门闩（硬停开启时用于临时放开并发探测）
         </label>
         <div>
           <label class="ce-label">PUBLISHED_FLOOD 冷却秒数</label>
           <input v-model.number="config.published_flood_hold_seconds" type="number" min="30" max="3600" class="ce-input mono w-sm" />
           <p class="ce-tiny ce-muted" style="margin-top:6px">
-            默认 120。进程门闩只拦<strong>尚未租号/发码</strong>的任务；不是把整批 asyncio cancel。
-            要 10 并发测 api_id=4：开 <code>ignore_published_flood_window</code> 或
-            <code>flood_window_scope=task</code>（会烧号/烧钱）。
+            默认：本号 <code>API_ID_PUBLISHED_FLOOD</code> 只结束本任务，<strong>不阻止</strong>后续新测试 / 其它并发租号。
+            若要省钱硬停，勾选 <code>flood_block_new_sends</code>（可选再设冷却秒数，默认 120）。
           </p>
         </div>
         <label class="ce-check">
