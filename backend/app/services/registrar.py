@@ -151,6 +151,10 @@ SYNTHETIC_IDENTITY_POOLS = {
         "first": ["Aarav", "Vivaan", "Aditya", "Ananya", "Diya", "Ishaan", "Kiara", "Rohan", "Priya", "Arjun"],
         "last": ["Sharma", "Patel", "Singh", "Kumar", "Gupta", "Reddy", "Nair", "Mehta", "Joshi", "Iyer"]
     },
+    "pk": {
+        "first": ["Ahmed", "Hassan", "Ali", "Fatima", "Ayesha", "Omar", "Sara", "Bilal", "Zainab", "Usman"],
+        "last": ["Khan", "Malik", "Hussain", "Ahmed", "Sheikh", "Raza", "Iqbal", "Butt", "Chaudhry", "Mirza"]
+    },
     "kz": {
         "first": ["Alikhan", "Nurasyl", "Aisulu", "Amina", "Dias", "Tomiris", "Alina", "Bekzat", "Madina", "Nurlan"],
         "last": ["Nurzhanov", "Suleimenov", "Omarov", "Abdullayev", "Kim", "Ivanov", "Serikova", "Tulegenov"]

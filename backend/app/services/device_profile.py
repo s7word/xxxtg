@@ -44,6 +44,7 @@ COUNTRY_LANG_MAP = {
     "ke": {"lang_code": "en", "system_lang_code": "en-ke", "tz_offset": 10800, "dial": "254"},
     # 亚太
     "in": {"lang_code": "en", "system_lang_code": "en-in", "tz_offset": 19800, "dial": "91"},
+    "pk": {"lang_code": "en", "system_lang_code": "en-pk", "tz_offset": 18000, "dial": "92"},
     "id": {"lang_code": "id", "system_lang_code": "id-id", "tz_offset": 25200, "dial": "62"},
     "jp": {"lang_code": "ja", "system_lang_code": "ja-jp", "tz_offset": 32400, "dial": "81"},
     "kr": {"lang_code": "ko", "system_lang_code": "ko-kr", "tz_offset": 32400, "dial": "82"},
