@@ -179,11 +179,29 @@ def bid_for(country: str, listed: Optional[float], floor: float) -> float:
     return min(bumped, cap)
 
 
+PUSH_FAIL_MARKERS = (
+    "未返回可用凭证",
+    "Push Token 申请失败",
+    "Attestation Push Token 未返回",
+)
+
+
 def is_actual_flood_row(row: Dict[str, Any]) -> bool:
     err = str(row.get("error") or "")
     excerpt = "\n".join(str(x) for x in (row.get("log_excerpt") or []))
     blob = err + "\n" + excerpt
     return any(m in blob for m in ACTUAL_FLOOD_MARKERS)
+
+
+def is_push_fail_row(row: Dict[str, Any]) -> bool:
+    if is_actual_flood_row(row):
+        return False
+    err = str(row.get("error") or "")
+    excerpt = "\n".join(str(x) for x in (row.get("log_excerpt") or []))
+    blob = err + "\n" + excerpt
+    if any(m in blob for m in PUSH_FAIL_MARKERS):
+        return True
+    return row.get("no_sendcode_reason") == "ATTESTATION_FAILED"
 
 
 def sent_sms_count(result: Dict[str, Any]) -> int:
@@ -205,11 +223,7 @@ def annotate_result(result: Dict[str, Any]) -> Dict[str, Any]:
         for r in rows
         if "noNumber" in str(r.get("error") or "") or (r.get("no_sendcode_reason") == "NO_NUMBERS")
     )
-    push_fail = sum(
-        1
-        for r in rows
-        if "Push Token" in str(r.get("error") or "") or (r.get("no_sendcode_reason") == "ATTESTATION_FAILED")
-    )
+    push_fail = sum(1 for r in rows if is_push_fail_row(r))
     types = (result.get("analysis") or {}).get("sent_code_types") or {}
     app = int(types.get("SentCodeTypeApp") or types.get("auth.sentCodeTypeApp") or 0)
     result["actual_flood_tasks"] = actual_flood
@@ -472,6 +486,7 @@ def main() -> int:
             in_target = min(args.b_count, remaining_cap())
             in_leased = 0
             wave = 0
+            # 5SIM 仅 25 RUB，IN 单价若按卢布还能跑；仍列入轮换，失败则回退
             preferred = [args.sms_provider, "grizzlysms", "fivesim"]
             preferred = list(dict.fromkeys([p for p in preferred if p]))
             wave_providers = preferred[:]  # 每波换供应商，模拟号池窗口
