@@ -1658,10 +1658,10 @@ class RegistrationOrchestrator:
         profile: Optional[Dict[str, Any]],
         emulation_label: str,
     ) -> Any:
-        """官方流程：SetUpEmailRequired → REGHelp 临时邮箱 → verifyEmail → 新 sent_code。"""
+        """官方流程：SetUpEmailRequired → 临时邮箱提供源 → verifyEmail → 新 sent_code。"""
         if bypass_svc is None or not hasattr(bypass_svc, "get_login_email"):
             raise SentCodeAppDeliveryError(
-                "SentCodeTypeSetUpEmailRequired：无 REGHelp Email 客户端，无法完成登录邮箱绑定",
+                "SentCodeTypeSetUpEmailRequired：无 Email 提供源客户端，无法完成登录邮箱绑定",
                 reason="EMAIL_SETUP_FAILED",
             )
         profile = profile or {}
@@ -1674,7 +1674,7 @@ class RegistrationOrchestrator:
         await manager.append_log(
             task_id,
             f"[{emulation_label}] 官方流程 SetUpEmailRequired：account.sendVerifyEmailCode "
-            f"(purpose=EmailVerifyPurposeLoginSetup) + REGHelp /email/getEmail",
+            f"(purpose=EmailVerifyPurposeLoginSetup) + 临时邮箱提供源",
         )
         markers = str(profile.get("app_device") or "").lower()
         preferred = "icloud" if "ios" in markers else "gmail"
@@ -1694,11 +1694,11 @@ class RegistrationOrchestrator:
                     break
             except Exception as exc:
                 last_err = exc
-                await manager.append_log(task_id, f"⚠️ REGHelp Email type={email_type} 失败: {exc}")
+                await manager.append_log(task_id, f"⚠️ Email type={email_type} 失败: {exc}")
                 inbox = None
         if not inbox or not getattr(inbox, "email", None):
             raise SentCodeAppDeliveryError(
-                f"REGHelp 未能提供临时邮箱: {last_err}",
+                f"未能提供临时邮箱: {last_err}",
                 reason=cls._email_setup_failure_reason(last_err),
             )
         await manager.append_log(task_id, f"[{emulation_label}] 临时邮箱已就绪: {inbox.email}")
@@ -1726,12 +1726,12 @@ class RegistrationOrchestrator:
                 )
             except Exception as exc:
                 raise SentCodeAppDeliveryError(
-                    f"REGHelp Email 验证码超时/失败: {exc}",
+                    f"Email 验证码超时/失败: {exc}",
                     reason="EMAIL_SETUP_FAILED",
                 ) from exc
         if not code:
             raise SentCodeAppDeliveryError(
-                "REGHelp Email 未返回验证码",
+                "Email 未返回验证码",
                 reason="EMAIL_SETUP_FAILED",
             )
         await manager.append_log(

@@ -270,6 +270,22 @@ class AppConfigModel(BaseModel):
             "reghelp_only (仅使用 REGHelp) / antisafety_only (仅使用 AntiSafety)"
         )
     )
+    email_provider_mode: str = Field(
+        default="reghelp_primary",
+        description=(
+            "SetUpEmailRequired 临时邮箱调度策略: "
+            "reghelp_primary (REGHelp 优先，SMS Bower 备选，默认) / "
+            "smsbower_primary (SMS Bower 优先，REGHelp 备选) / "
+            "smsbower_only (仅 SMS Bower)"
+        ),
+    )
+    email_smsbower_fallback_enabled: bool = Field(
+        default=True,
+        description=(
+            "reghelp_primary / smsbower_primary 模式下，主源失败"
+            "（SERVICE_DISABLED、超时、错误）时是否自动切换候补提供源"
+        ),
+    )
     push_token_reuse_enabled: bool = Field(
         default=False,
         description=(
