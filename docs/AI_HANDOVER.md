@@ -148,7 +148,7 @@ backend/app/
 
 失败时：SMS `cancel` +（若 REGHelp）`setStatus` 退款（#26 已实现，需 `ref=task_id`）。预检已注册 / `SENT_CODE_TYPE_APP` / `PHONE_NUMBER_BANNED` 会写入本地黑名单，防止平台二次下发。
 
-**严格设备对齐**（`device_alignment_mode`，默认 `loose`；Settings 可开 `strict`）：详见 [STRICT_DEVICE_AND_PUSH.md](./STRICT_DEVICE_AND_PUSH.md)。开启后钉死 api_id=4、InitConnection 写 `lang_pack=android` + 号国 tz、vault 机型/12.7.3、缺字段拒绝发码、App-only 快丢号、FLOOD 换 Token。
+**严格设备对齐**（`device_alignment_mode`，默认 `loose`；Settings 可开 `strict`）：详见 [STRICT_DEVICE_AND_PUSH.md](./STRICT_DEVICE_AND_PUSH.md)。开启后钉死 api_id=4、InitConnection 写 `lang_pack=android` + 号国 tz、vault 机型/12.7.3、缺字段拒绝发码、App-only 快丢号、FLOOD 换 Token。Push 日志槽位是 `CodeSettings.token(android_fcm_in_ios_doc_slot)`（Android FCM 塞进文档标为 iOS 的字段，**不是** iOS 客户端）。`API_ID_PUBLISHED_FLOOD` 进程门闩默认跳过后续租号/发码（不 cancel 已开跑任务）；10 并发探测开 `ignore_published_flood_window` 或 `flood_window_scope=task`。
 
 **验证码通道策略**（`code_delivery_mode`，默认 `balanced`）：
 - `balanced`：非泄露 effective api_id（如已配置 custom）→ 不申请/不 attach Push Token，提高 SMS 概率

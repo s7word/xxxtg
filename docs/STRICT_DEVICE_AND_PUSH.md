@@ -13,7 +13,7 @@
 | `lang_pack=android` | Telethon InitConnection 空串；事后 `getLanguages` 改不了握手 | `connect()` **前**写入 `InitConnection.lang_pack` |
 | 号国 `tz_offset` / lang | 只打日志；自动适配包可能掺 `en-us` | 写入 `InitConnection.params.tz_offset`；号国 overlay；自动合成包不再保留掺入的 en-us |
 | 一号一代理 | `hunt_proxy_max_uses` 默认 5 | 严格模式强制 1 |
-| Push / SafetyNet | REGHelp FCM 塞进 **iOS** `CodeSettings.token` | 仅在计划需要时 attach；校验 token 形态；日志标明 `push_slot=CodeSettings.token(iOS-semantic)`；不合格 / FLOOD 冷却换发 |
+| Push / SafetyNet | REGHelp FCM 塞进 **文档标为 iOS** 的 `CodeSettings.token` | 仅在计划需要时 attach；校验 token 形态；日志标明 `push_slot=CodeSettings.token(android_fcm_in_ios_doc_slot)`；不合格 / FLOOD 冷却换发 |
 | `SentCodeTypeApp` 且无 `next_type` | 有 timeout 时可能空等再 resend | **快丢号**（`app_delivery_fast_drop`，默认开） |
 | `device_secret` | JSON 有、代码不消费 | 扫描元数据进 profile；可选 sidecar；默认 **不**注入 sendCode（见下） |
 
@@ -40,12 +40,34 @@ Settings →「严格设备对齐（vault 成功样本 + Telegram Expert）」�
 
 ## Push 槽位说明
 
-官方文档：`CodeSettings.token` / `app_sandbox` **仅官方 iOS Firebase**。本仓库仍把 REGHelp FCM 放进该槽以过 published-id 闸（历史对照：无 token 裸发 4/6 必 FLOOD）。这不是 Play Integrity，也不是官方 Android sendCode 的做法。
+官方文档：`CodeSettings.token` / `app_sandbox` **仅官方 iOS Firebase**。本仓库仍把 REGHelp **Android FCM** 放进该 MTProto 字段以过 published-id 闸（历史对照：无 token 裸发 4/6 必 FLOOD）。
 
-日志关键字：
+这**不是**在跑 iOS 客户端：指纹仍是 Android（`lang_pack=android`、api_id=4）。`iOS` 只出现在「官方文档给这个字段的语义」里；旧日志里的 `iOS-semantic` 容易误导，已改为：
 
-- `sendCode 凭证核对: ... attach_token=是 ... push_slot=CodeSettings.token(iOS-semantic) token_kind=...`
+- `push_slot=CodeSettings.token(android_fcm_in_ios_doc_slot) token_kind=fcm_legacy ...`
 - `InitConnection 指纹: lang_pack=android tz_offset=25200`（vn）/ `28800`（ph）
+
+## FLOOD 门闩与并发探测
+
+`API_ID_PUBLISHED_FLOOD` 会拉起**进程级**冷却窗（默认约 120s）：后续任务在租号/sendCode 前看到门闩会**跳过发码**，避免同 published `api_id` 继续填窗烧钱。
+
+要点：
+
+- **不会**把已开跑的其它 asyncio 任务 cancel 掉；看起来像「全部停止」，其实是还没过门闩的兄弟任务被跳过。
+- 日志会写「同 published api_id 冷却中…跳过租号/发码」，不再写吓人的「停止本任务以免继续填满窗口」。
+- 默认要拦新发码（省钱）。若你要 **api_id=4 × 10 并发探测**，在 Settings 打开其一：
+  - `ignore_published_flood_window=true`，或
+  - `flood_window_scope=task`
+- 放宽后日志会警告：同窗续发通常仍 FLOOD，会烧号/烧钱。
+
+```json
+{
+  "flood_window_scope": "process",
+  "flood_block_new_sends": true,
+  "ignore_published_flood_window": false,
+  "published_flood_hold_seconds": 120
+}
+```
 
 ## `device_secret` 为何默认不用
 
