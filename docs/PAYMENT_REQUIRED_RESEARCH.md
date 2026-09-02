@@ -76,9 +76,24 @@ sendCode → SentCodeTypeApp（或 SMS），无 PaymentRequired
 ### 关键对比
 
 - **A / D / E**：凡走完 `SetUpEmailRequired → smsbower verifyEmail`，下一跳 **均为 PaymentRequired**。
-- **B (api_id=4)**：首跳直接 **SentCodeTypeApp**，未进入 email 流程 — 与 api_id=6 路径不同，但**不是**「绕过内购」，而是号池/App 投递。
+- **B (api_id=4)**：首跳直接 **SentCodeTypeApp**，未进入 email 流程 — 与 api_id=6 路径不同，但**不是**「绕过内购」，而是号池/App 投递。**勘误**：若任务日志出现 FLOOD 且文案为「缺少合法 Push Token」，须先核对 `attach_token` 与 `sendCode 凭证核对`；已 attach 的 FLOOD 不能计入「api_id=4 国家结论」。
 - **C (Telegram X)**：本轮未成功 sendCode（REGHelp Push 对 tg_x 可能更严），**无法验证**是否免 PaymentRequired。
 - **E vs A**：全新设备+代理 **未改变** PaymentRequired（1/1）。
+
+## 勘误：哪些结论因 FLOOD/无 Push 作废
+
+| 结论 | 状态 |
+|------|------|
+| official api_id=6 走完 email 后 iq/id/pe **PaymentRequired 100%**（A/D/E 与 survey 18/18） | **保留**（日志为 SetUpEmailRequired → PaymentRequired，非 FLOOD） |
+| 非 official `balanced + custom` 同国走 App、0% PaymentRequired | **保留** |
+| app_version / 全新设备+代理不能去掉 PaymentRequired | **保留** |
+| api_id=4 official 可/不可绕过内购 | **证据不足**：iq/pe 的 B 组多数未到 email；in 为 App 号池 |
+| vault_compare V2/V3「无 Push → FLOOD」当作国家差异 | **作废**（03:44:48 已 attach 仍 FLOOD，文案误判） |
+| 把 FLOOD 当成「该国只走内购」 | **作废** |
+
+修复与重跑：`cursor/grok-api4-push-fix-4641`，`data/ab_reports/grok_api4_retest_iq_20260902_040956.json`。
+
+Grok 对照：**api_id=6 official iq** 再次 **SetUpEmailRequired → PaymentRequired 100%**（2/2 email）；**api_id=4 即使 attach Push 在 iq/in 本轮均 FLOOD**，不能解释为「绕过内购」。
 
 ## 根因假设排序（证据更新）
 

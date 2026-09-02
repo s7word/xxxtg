@@ -33,7 +33,7 @@
 |------|------|------|----------|----------|---------------|
 | **V1** | api_id=4 official **in** | 4 | 4 | **SentCodeTypeApp ×4** | 0（未到 email） |
 | **V2** | api_id=4 official **iq** | 2 | 0 | **API_ID_PUBLISHED_FLOOD**（Push 失败） | — |
-| **V3** | vault replay：custom api_id=4 balanced **in** | 2 | 0 | **API_ID_PUBLISHED_FLOOD**（无 Push） | — |
+| **V3** | vault replay：custom api_id=4 balanced **in** | 2 | 0 | **API_ID_PUBLISHED_FLOOD**（**已 attach Push**，文案误判为无 Token） | — |
 | **V4** | api_id=6 official **in** | 4 | 4 | **SentCodeTypeApp ×4** | 0（未到 email） |
 
 ### 与历史 payment survey 对比
@@ -47,7 +47,7 @@
 
 - **in 号池当前质量**：official 4/6 均走 **App 推送**，与 iq 历史 Payment 墙不同；无法在本轮验证「api_id=4 能否绕过 PaymentRequired」。
 - **api_id=4 vs 6（in）**：两者 sent_code **行为一致**（均 App），差异不在 invalid。
-- **vault 成功路径 replay（V3）**：仅 custom api_id=4 + balanced **不足以复现**；缺 Push Token 即 FLOOD，与 vault JSON 中 `device_token` 必备一致。
+- **vault 成功路径 replay（V3）**：custom api_id=4 + balanced **plan 已 attach Push 仍 FLOOD**；旧报告写成「无 Push」是错误文案，见第 6 节。Vault JSON 里 `device_token` 仍说明历史成功账号带了 Push，但不能把 03:44:48 当成「没申请 Token」。
 
 ## 4. 拓展思路：是否应模仿成功账号而非纯 official 6？
 
@@ -57,9 +57,59 @@
 | **目标 = official 链路研究** | api_id=6 与 4 在 in 当前号池表现相同（App）；iq 等国仍 **100% PaymentRequired**（见 `PAYMENT_REQUIRED_RESEARCH.md`） |
 | **勿做** | 把 api_id=4 的 hash 换成 api_id=6 的；使用错误的 telegram_x hash；无 Push 硬发 api_id=4/6 |
 
-## 5. 代码变更摘要
+## 6. 勘误（2026-09-02 Grok 4.6 复查）
 
-- `backend/app/services/device_profile.py`：`OFFICIAL_API_CREDENTIALS`、hash 纠正、telegram_x hash 修复、`telegram_android_public` 继承指纹库 api_id=4 行
-- `backend/app/services/registrar.py`：hash 纠正时写任务日志
-- `backend/tests/test_official_api_credentials.py`：回归测试
+> 分支 `cursor/grok-api4-push-fix-4641`。03:44:48 用户报错经任务日志核对。
+
+### 03:44:48 任务实际状态（V3 `b3e4a03f`）
+
+| 项 | 日志事实 |
+|----|----------|
+| plan | `attach_token=是`，`申请Push=是`，`通道策略=push_required` |
+| 凭证 | `api_id=4` custom + hash `014b35b6184100b085b0d0572f9b5103` |
+| Push | 计划与凭证裁决之间隔约 13s，**未出现**「无有效 Push Token」高风险警告 → **已拿到 Token** |
+| 结果 | `API_ID_PUBLISHED_FLOOD` |
+| 文案 | 仍写「在缺少合法 Push Token 的情况下」→ **误判** |
+
+V2 iq official 同文案：plan 也是 `attach_token=是`。把这两条当成「无 Push / 国家结论」**作废**。
+
+V1/V4 in official 4/6 走到 `SentCodeTypeApp` 且 `attach_token=是`，**保留**为号池 App 投递观察，不是 FLOOD 污染。
+
+### 旧逻辑缺口（已修）
+
+1. `api_credential_mode=official` + 泄露 api_id 会被猎号连续 App 强制 `sms_first`（`attach_token=否`）。
+2. Push 申请失败后仍裸发 sendCode，FLOOD 被记成「国家/内购」样本。
+3. 已 attach 仍 FLOOD 时错误文案永远说「缺少合法 Push Token」。
+
+`apply_official_api_id(4)` 的 hash **确认为** `014b35b6184100b085b0d0572f9b5103`。
+
+对照重跑见 `data/ab_reports/grok_api4_retest_iq_20260902_040956.json` 与第 8 节。
+
+## 8. Grok 4.6 对照重跑（每变体 2 任务，smsbower）
+
+日志均校验：`attach_token` / `api_id` / `api_hash=014b35…`（变体 1/4）或故意不 attach（变体 3）。
+
+| 变体 | 配置 | 国家 | 租号 | sendCode | 日志核对 | 结果 |
+|------|------|------|------|----------|----------|------|
+| **G1** | official + api_id=4 + **已 attach** Push | iq | 2 | 0 | `attach_token=是` `api_id=4` `014b35…` `code_settings.token=有` | **仍 FLOOD**（文案已改为「已 attach 仍被拒」） |
+| **G2** | official + api_id=6 对照 | iq | 4 | 4 | `attach_token=是` `api_id=6` | **SetUpEmailRequired ×4** → email 后 **PaymentRequired ×2** |
+| **G3** | api_id=4 + **故意不 attach** | iq | 2 | 0 | `attach_token=否` `push_token=无` | **FLOOD**（文案「缺少合法 Push Token」此次正确） |
+| **G4** | vault 同款 api_id=4 + hash + attach（9 条 +91 meta 可读） | in | 2 | 0 | 同 G1 | **仍 FLOOD**（与当日 03:41 V1 in App 不同，窗口不稳定） |
+
+**相对修复前：**
+
+- 修复前 V3 03:44:48：已 attach 却写成「缺少 Push」→ 现 G1/G4 文案正确。
+- 修复前无法区分「没带 Token」与「带了仍被拒」→ G3 vs G1 对照证明：**无 Token 必 FLOOD；有 Token 在 api_id=4 上仍可能 FLOOD**。
+- 预期「G1 应到 SetUpEmailRequired」**未成立**：iq 上 api_id=4 即使 attach 合法 REGHelp Token 仍被服务端拒绝；api_id=6 才能进入 email/Payment 墙。
+- 因此 api_id=4 **不能**当作绕过 iq PaymentRequired 的路径；G2 再次确认 official api_id=6 email 后 100% PaymentRequired。
+
+Vault +91 成功 JSON（9 条）共性仍成立：`app_id=4` + `014b35…` + `12.7.3` + `device_token`。本轮未能用 REGHelp 新签发 Token 复现其 sendCode 成功。
+
+## 7. 代码变更摘要
+
+- `backend/app/services/device_profile.py`：`OFFICIAL_API_CREDENTIALS`、hash 纠正、telegram_x hash 修复、`telegram_android_public` 继承指纹库 api_id=4 行；新增 `apply_official_api_id()`
+- `backend/app/services/code_delivery.py`：official / 泄露 api_id 猎号不得跳过 Push；`force_skip_push_attach` 对照开关
+- `backend/app/services/registrar.py`：缺必填 Push 时 fail-fast；FLOOD 文案区分已 attach / 未拿到 Token；`sendCode 凭证核对` 日志含 api_id/api_hash
+- `backend/tests/test_official_api_credentials.py` / `test_code_delivery.py`：回归测试
 - `backend/scripts/run_vault_compare_ab.py`：本对照实验脚本
+- `backend/scripts/run_grok_api4_retest.py`：Grok 4.6 四变体重跑
