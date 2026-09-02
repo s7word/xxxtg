@@ -34,6 +34,19 @@ def normalize_proxy_mode(value: Any) -> str:
     return token if token in PROXY_MODES else "custom_pool"
 
 
+def coerce_bool(value: Any, default: bool = False) -> bool:
+    """配置开关：兼容 true/yes/on/1 与 false/no/off/0 字符串。"""
+    if value is None:
+        return default
+    if isinstance(value, str):
+        token = value.strip().lower()
+        if token in {"1", "true", "yes", "on"}:
+            return True
+        if token in {"0", "false", "no", "off", ""}:
+            return False
+    return bool(value)
+
+
 def normalize_sms_max_price(value: Any) -> Optional[float]:
     """把配置/任务级最高出价规范化为任意正浮点数。
 
@@ -332,6 +345,51 @@ class AppConfigModel(BaseModel):
             "生产路径必须保持 false。"
         ),
     )
+    code_settings_allow_firebase: bool = Field(
+        default=True,
+        description=(
+            "auth.sendCode CodeSettings.allow_firebase。"
+            "官方 Android 客户端为 true，可能触发 SentCodeTypeFirebaseSms；"
+            "历史实验未打开此位。iOS 指纹仍应保持 false。"
+        ),
+    )
+    code_settings_unknown_number: bool = Field(
+        default=True,
+        description=(
+            "CodeSettings.unknown_number：号码不是本机 SIM 时设 true。"
+            "接码平台号码符合此语义，可能降低「当作已登录设备」的 App 投递。"
+        ),
+    )
+    code_settings_allow_flashcall: bool = Field(
+        default=False,
+        description="CodeSettings.allow_flashcall；接码网关通常收不到闪信，默认关闭。",
+    )
+    code_settings_allow_missed_call: bool = Field(
+        default=False,
+        description="CodeSettings.allow_missed_call；实验开关，默认关闭。",
+    )
+    force_resend_on_app: bool = Field(
+        default=True,
+        description=(
+            "SentCodeTypeApp 即使 next_type/timeout 为空也调用 auth.resendCode 探测短信通道。"
+            "关闭则保持旧行为：无 next_type 时立即 SENT_CODE_TYPE_APP 快退。"
+        ),
+    )
+    payment_required_probe: str = Field(
+        default="off",
+        description=(
+            "收到 auth.SentCodePaymentRequired 后的探测：off / resend / play_market / both。"
+            "play_market 使用明显无效的 Play 收据调用 payments.assignPlayMarketTransaction，"
+            "只记录 RPC 错误，不伪造真实内购。"
+        ),
+    )
+    pin_app_version_substr: str = Field(
+        default="",
+        description=(
+            "设备指纹抽样时优先匹配 app_version 包含该子串的样本（如 12.7.3）。"
+            "空字符串表示不钉死版本。"
+        ),
+    )
     hunt_sms_first_after_app_streak: int = Field(
         default=2,
         ge=0,
@@ -572,13 +630,34 @@ class AppConfigModel(BaseModel):
     @field_validator("force_skip_push_attach", mode="before")
     @classmethod
     def _normalize_force_skip_push_attach(cls, value):
-        if isinstance(value, str):
-            token = value.strip().lower()
-            if token in {"1", "true", "yes", "on"}:
-                return True
-            if token in {"0", "false", "no", "off", ""}:
-                return False
-        return bool(value)
+        return coerce_bool(value, default=False)
+
+    @field_validator(
+        "code_settings_allow_firebase",
+        "code_settings_unknown_number",
+        "code_settings_allow_flashcall",
+        "code_settings_allow_missed_call",
+        "force_resend_on_app",
+        mode="before",
+    )
+    @classmethod
+    def _normalize_code_settings_flags(cls, value):
+        return coerce_bool(value, default=False)
+
+    @field_validator("payment_required_probe", mode="before")
+    @classmethod
+    def _normalize_payment_required_probe(cls, value):
+        token = str(value or "off").strip().lower()
+        if token in {"off", "resend", "play_market", "both"}:
+            return token
+        if token in {"1", "true", "yes", "on"}:
+            return "both"
+        return "off"
+
+    @field_validator("pin_app_version_substr", mode="before")
+    @classmethod
+    def _normalize_pin_app_version_substr(cls, value):
+        return str(value or "").strip()
 
 
 class DeviceProfileSchema(BaseModel):

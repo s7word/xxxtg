@@ -100,6 +100,12 @@ class TestOfficialEmulationConfig(unittest.TestCase):
         self.assertFalse(AppConfigModel(official_client_emulation="off").official_client_emulation)
         self.assertFalse(AppConfigModel().force_skip_push_attach)
         self.assertTrue(AppConfigModel(force_skip_push_attach="true").force_skip_push_attach)
+        self.assertTrue(cfg.code_settings_allow_firebase)
+        self.assertTrue(cfg.code_settings_unknown_number)
+        self.assertTrue(cfg.force_resend_on_app)
+        self.assertEqual(cfg.payment_required_probe, "off")
+        self.assertEqual(AppConfigModel(payment_required_probe="BOTH").payment_required_probe, "both")
+        self.assertEqual(AppConfigModel(pin_app_version_substr=" 12.7.3 ").pin_app_version_substr, "12.7.3")
 
     def test_credentials_forced_to_official_template(self):
         profile = _android_profile()
@@ -190,6 +196,34 @@ class TestResolveNewSentCodeTypes(unittest.IsolatedAsyncioTestCase):
         self.assertIn("SentCodePaymentRequired", logs)
         self.assertIn("[模式=official]", logs)
         self.assertIn("需官方 App 内购", logs)
+
+    async def test_payment_play_market_probe_records_rpc_error(self):
+        client = FakeClient(error=RuntimeError("PURCHASE_RECEIPT_INVALID"))
+        with self.assertRaises(SentCodeAppDeliveryError) as ctx:
+            await RegistrationOrchestrator.resolve_sent_code_channel(
+                client, "+96411112222", make_payment_required(),
+                self.task_id, self.manager, emulation_label="official",
+                payment_required_probe="play_market",
+            )
+        self.assertEqual(ctx.exception.reason, "PAYMENT_REQUIRED_OFFICIAL_ONLY")
+        self.assertEqual(len(client.calls), 1)
+        self.assertEqual(type(client.calls[0]).__name__, "AssignPlayMarketTransactionRequest")
+        logs = self._logs()
+        self.assertIn("[PAYMENT_PROBE]", logs)
+        self.assertIn("PURCHASE_RECEIPT_INVALID", logs)
+
+    async def test_payment_resend_probe_can_flip_to_sms(self):
+        sms_sent = make_sent_code("SentCodeTypeSms", code_hash="hash-after-pay")
+        client = FakeClient(result=sms_sent)
+        result, attempts = await RegistrationOrchestrator.resolve_sent_code_channel(
+            client, "+96411112222", make_payment_required(),
+            self.task_id, self.manager, emulation_label="official",
+            payment_required_probe="resend",
+        )
+        self.assertEqual(result.phone_code_hash, "hash-after-pay")
+        self.assertEqual(attempts, DEFAULT_SMS_POLL_ATTEMPTS)
+        logs = self._logs()
+        self.assertIn("[PAYMENT_PROBE] PaymentRequired 后尝试 auth.resendCode", logs)
 
     async def test_email_code_fails_fast(self):
         sent = make_sent_code("SentCodeTypeEmailCode")

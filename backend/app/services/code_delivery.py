@@ -73,6 +73,12 @@ class CodeDeliveryPlan:
     forced_sms: bool = False
     official_client_emulation: bool = False
     emulation_label: str = "balanced"
+    allow_firebase: bool = False
+    unknown_number: bool = False
+    allow_flashcall: bool = False
+    allow_missed_call: bool = False
+    force_resend_on_app: bool = False
+    payment_required_probe: str = "off"
     notes: tuple[str, ...] = field(default_factory=tuple)
 
     def summary_for_log(self) -> str:
@@ -81,6 +87,8 @@ class CodeDeliveryPlan:
             f"申请Push={'是' if self.should_request_push_token else '否'}",
             f"attach_token={'是' if self.attach_push_token else '否'}",
             f"allow_app_hash={'是' if self.allow_app_hash else '否'}",
+            f"firebase={'是' if self.allow_firebase else '否'}",
+            f"unknown_number={'是' if self.unknown_number else '否'}",
             f"模式标签={self.emulation_label}",
         ]
         if self.official_client_emulation:
@@ -131,6 +139,22 @@ def push_is_mandatory(config: Any, predicted_api_id: int) -> bool:
 def force_skip_push_attach(config: Any) -> bool:
     """A/B 对照开关：故意不申请/不 attach Push（用于证明无 Token → FLOOD）。"""
     return bool(getattr(config, "force_skip_push_attach", False))
+
+
+def _config_bool(config: Any, name: str, default: bool = False) -> bool:
+    if config is None:
+        return default
+    val = getattr(config, name, default)
+    if val is None:
+        return default
+    return bool(val)
+
+
+def _payment_probe_mode(config: Any) -> str:
+    token = str(getattr(config, "payment_required_probe", "off") or "off").strip().lower()
+    if token in {"off", "resend", "play_market", "both"}:
+        return token
+    return "off"
 
 
 def emulation_label_for(config: Any, base_mode: Optional[str] = None) -> str:
@@ -256,6 +280,25 @@ def resolve_code_delivery_plan(
 
     # allow_app_hash 只跟设备平台走：它协商短信正文里的 app hash，不选择投递通道
     allow_app_hash = profile_allows_app_hash(profile)
+    android_like = allow_app_hash
+    allow_firebase = android_like and _config_bool(config, "code_settings_allow_firebase", True)
+    unknown_number = _config_bool(config, "code_settings_unknown_number", True)
+    allow_flashcall = _config_bool(config, "code_settings_allow_flashcall", False)
+    allow_missed_call = _config_bool(config, "code_settings_allow_missed_call", False)
+    force_resend = _config_bool(config, "force_resend_on_app", True)
+    payment_probe = _payment_probe_mode(config)
+    if allow_firebase:
+        notes.append("CodeSettings.allow_firebase=true（官方 Android 同位，可能走 FirebaseSms）")
+    if unknown_number:
+        notes.append("CodeSettings.unknown_number=true（号码非本机 SIM）")
+    if allow_flashcall or allow_missed_call:
+        notes.append(
+            f"CodeSettings flashcall={allow_flashcall} missed_call={allow_missed_call}"
+        )
+    if force_resend:
+        notes.append("SentCodeTypeApp 无 next_type 时仍探测 auth.resendCode")
+    if payment_probe != "off":
+        notes.append(f"PaymentRequired 探测={payment_probe}")
 
     if skip_attach:
         should_request = False
@@ -289,6 +332,12 @@ def resolve_code_delivery_plan(
         forced_sms=forced_sms,
         official_client_emulation=official_emu,
         emulation_label=label,
+        allow_firebase=allow_firebase,
+        unknown_number=unknown_number,
+        allow_flashcall=allow_flashcall,
+        allow_missed_call=allow_missed_call,
+        force_resend_on_app=force_resend,
+        payment_required_probe=payment_probe,
         notes=tuple(notes),
     )
 
@@ -307,5 +356,11 @@ def escalation_plan_after_published_flood(plan: CodeDeliveryPlan) -> CodeDeliver
         forced_sms=plan.forced_sms,
         official_client_emulation=plan.official_client_emulation,
         emulation_label=plan.emulation_label,
+        allow_firebase=plan.allow_firebase,
+        unknown_number=plan.unknown_number,
+        allow_flashcall=plan.allow_flashcall,
+        allow_missed_call=plan.allow_missed_call,
+        force_resend_on_app=plan.force_resend_on_app,
+        payment_required_probe=plan.payment_required_probe,
         notes=plan.notes + ("API_ID_PUBLISHED_FLOOD → escalate 至 push_required",),
     )

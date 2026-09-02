@@ -32,6 +32,9 @@ COUNTRY_LANG_MAP = {
     "ae": {"lang_code": "ar", "system_lang_code": "ar-ae", "tz_offset": 14400, "dial": "971"},
     "sa": {"lang_code": "ar", "system_lang_code": "ar-sa", "tz_offset": 10800, "dial": "966"},
     "eg": {"lang_code": "ar", "system_lang_code": "ar-eg", "tz_offset": 7200, "dial": "20"},
+    "iq": {"lang_code": "ar", "system_lang_code": "ar-iq", "tz_offset": 10800, "dial": "964"},
+    "jo": {"lang_code": "ar", "system_lang_code": "ar-jo", "tz_offset": 10800, "dial": "962"},
+    "ma": {"lang_code": "ar", "system_lang_code": "ar-ma", "tz_offset": 3600, "dial": "212"},
     "af": {"lang_code": "en", "system_lang_code": "en-af", "tz_offset": 16200, "dial": "93"},
     # 非洲
     "za": {"lang_code": "en", "system_lang_code": "en-za", "tz_offset": 7200, "dial": "27"},
@@ -135,9 +138,9 @@ DEFAULT_PROFILES = {
         "app_device": "Android",
         "device_model": "Samsung Galaxy S23 Ultra",
         "system_version": "SDK 33",
-        "app_version": "12.9.1 (69792)",
-        "app_version_pure": "12.9.1",
-        "app_build": "69792",
+        "app_version": "12.7.3 (67509)",
+        "app_version_pure": "12.7.3",
+        "app_build": "67509",
         "lang_pack": "android"
     },
     "telegram_x": {
@@ -369,6 +372,26 @@ class DeviceProfileManager:
         profile["device_pack_auto"] = False
 
         selection = cls._manager().select_sample(country)
+        pin = str(getattr(config, "pin_app_version_substr", "") or "").strip()
+        if pin and selection:
+            ver0 = str((selection.get("row") or {}).get("app_version") or "")
+            if pin in ver0:
+                profile["app_version_pinned"] = True
+            else:
+                matched = None
+                for _ in range(16):
+                    cand = cls._manager().select_sample(country)
+                    if not cand:
+                        break
+                    ver = str((cand.get("row") or {}).get("app_version") or "")
+                    if pin in ver:
+                        matched = cand
+                        break
+                if matched:
+                    selection = matched
+                    profile["app_version_pinned"] = True
+                else:
+                    profile["app_version_pinned"] = False
         sampled_dev = None
         match = "none"
         if selection:

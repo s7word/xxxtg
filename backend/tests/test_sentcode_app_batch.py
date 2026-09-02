@@ -105,6 +105,21 @@ class TestResolveSentCodeChannel(unittest.IsolatedAsyncioTestCase):
         self.assertIn("已有设备客户端", logs)
         self.assertIn("SentCodeTypeApp", logs)
 
+    async def test_app_force_resend_without_next_type(self):
+        resent = make_sent_code("SentCodeTypeSms", code_hash="hash-forced")
+        client = FakeClient(result=resent)
+        sent = make_sent_code("SentCodeTypeApp")
+        result, attempts = await RegistrationOrchestrator.resolve_sent_code_channel(
+            client, "+56911112222", sent, self.task_id, self.manager,
+            force_resend_on_app=True,
+        )
+        self.assertEqual(result.phone_code_hash, "hash-forced")
+        self.assertEqual(attempts, DEFAULT_SMS_POLL_ATTEMPTS)
+        self.assertEqual(len(client.calls), 1)
+        logs = "\n".join(self.manager.get_task(self.task_id)["logs"])
+        self.assertIn("force_resend_on_app", logs)
+        self.assertIn("已成功将挑战通道降级/切换为短信分发", logs)
+
     async def test_app_resend_to_sms_succeeds(self):
         resent = make_sent_code("SentCodeTypeSms", code_hash="hash-sms")
         client = FakeClient(result=resent)

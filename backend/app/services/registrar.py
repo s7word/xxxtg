@@ -187,6 +187,18 @@ SYNTHETIC_IDENTITY_POOLS = {
         "first": ["Ahmad", "Omar", "Fatima", "Zahra", "Hassan", "Maryam", "Karim", "Laila", "Farid", "Soraya"],
         "last": ["Ahmadi", "Rahimi", "Mohammadi", "Karimi", "Hosseini", "Nazari", "Sadat", "Stanikzai"]
     },
+    "iq": {
+        "first": ["Ahmed", "Ali", "Omar", "Hassan", "Mustafa", "Fatima", "Zahra", "Layla", "Yusuf", "Noor"],
+        "last": ["Al-Saadi", "Hussein", "Kadhim", "Abbas", "Jassim", "Mohammed", "Ibrahim", "Al-Maliki"]
+    },
+    "jo": {
+        "first": ["Omar", "Layla", "Hassan", "Noor", "Yousef", "Sara", "Khaled", "Rania", "Ahmad", "Maha"],
+        "last": ["Al-Hasan", "Abdullah", "Nasser", "Saleh", "Haddad", "Khatib", "Qasim", "Majali"]
+    },
+    "ma": {
+        "first": ["Youssef", "Amina", "Mehdi", "Fatima", "Omar", "Sara", "Anas", "Khadija", "Hamza", "Imane"],
+        "last": ["El Amrani", "Benali", "Alaoui", "Idrissi", "Tazi", "Bennani", "Cherkaoui", "Mansouri"]
+    },
     "default": {
         "first": ["James", "Alex", "David", "Elena", "Marcus", "Lucas", "Sophie", "Michael", "Daniel"],
         "last": ["Smith", "Brown", "Wilson", "Taylor", "Anderson", "White", "Miller", "Davis"]
@@ -1460,6 +1472,10 @@ class RegistrationOrchestrator:
         *,
         allow_app_hash: bool = True,
         attach_push_token: bool = True,
+        allow_firebase: bool = False,
+        unknown_number: bool = False,
+        allow_flashcall: bool = False,
+        allow_missed_call: bool = False,
     ) -> types.CodeSettings:
         """构造 auth.sendCode 的 CodeSettings。
 
@@ -1471,13 +1487,17 @@ class RegistrationOrchestrator:
         SMS 优先策略靠 attach_push_token=False 生效：token/app_sandbox 是 iOS APNS
         推送凭证，带上就等于给服务端一条推送通道。allow_app_hash 只协商短信正文里的
         Android SMS Retriever hash，应跟随设备平台而非投递模式。
+        allow_firebase / unknown_number 由配置注入，对应官方 Android 的 Firebase
+        通道协商与「号码非本机 SIM」标志。
         """
         token = push_token if (attach_push_token and push_token) else None
         return types.CodeSettings(
-            allow_flashcall=False,
+            allow_flashcall=bool(allow_flashcall) or None,
             current_number=False,
             allow_app_hash=allow_app_hash,
-            allow_missed_call=False,
+            allow_missed_call=bool(allow_missed_call) or None,
+            allow_firebase=bool(allow_firebase) or None,
+            unknown_number=bool(unknown_number) or None,
             token=token,
             app_sandbox=False if token else None,
         )
@@ -1527,6 +1547,10 @@ class RegistrationOrchestrator:
             push_token,
             allow_app_hash=plan.allow_app_hash,
             attach_push_token=plan.attach_push_token,
+            allow_firebase=bool(getattr(plan, "allow_firebase", False)),
+            unknown_number=bool(getattr(plan, "unknown_number", False)),
+            allow_flashcall=bool(getattr(plan, "allow_flashcall", False)),
+            allow_missed_call=bool(getattr(plan, "allow_missed_call", False)),
         )
 
     @staticmethod
@@ -1753,6 +1777,61 @@ class RegistrationOrchestrator:
         return resent, None
 
     @classmethod
+    async def _probe_assign_play_market(
+        cls,
+        client,
+        phone: str,
+        sent_code: Any,
+        pay_info: Optional[Dict[str, Any]],
+        task_id: str,
+        manager: RegistrationTaskManager,
+    ) -> None:
+        """探测 payments.assignPlayMarketTransaction。
+
+        没有真实 Play Store 收据；构造明显无效的 JSON 只为记录 Telegram RPC 错误码。
+        这不是内购绕过，成功属于意外（应继续记日志而不是当注册成功）。
+        """
+        info = pay_info or {}
+        await manager.append_log(
+            task_id,
+            "[PAYMENT_PROBE] 调用 payments.assignPlayMarketTransaction"
+            "（无真实 Play 收据，预期失败，仅记录 RPC）",
+        )
+        try:
+            purpose = types.InputStorePaymentAuthCode(
+                phone_number=phone,
+                phone_code_hash=str(
+                    getattr(sent_code, "phone_code_hash", None)
+                    or info.get("phone_code_hash")
+                    or ""
+                ),
+                premium_days=int(info.get("premium_days") or 7),
+                currency=str(info.get("currency") or "USD"),
+                amount=int(info.get("amount") or 100),
+            )
+            receipt = types.DataJSON(data=json.dumps({
+                "orderId": "GROK_PROBE_NOT_A_PURCHASE",
+                "packageName": "org.telegram.messenger",
+                "productId": info.get("store_product") or "telegram_premium.one_week.auth",
+                "purchaseToken": "probe-invalid-not-a-real-play-token",
+                "acknowledged": False,
+            }))
+            result = await client(functions.payments.AssignPlayMarketTransactionRequest(
+                receipt=receipt,
+                purpose=purpose,
+            ))
+            await manager.append_log(
+                task_id,
+                f"[PAYMENT_PROBE] assignPlayMarketTransaction 意外返回 {cls._tl_type_name(result)}"
+                f"（无真实收据，不视为注册成功）",
+            )
+        except Exception as exc:
+            await manager.append_log(
+                task_id,
+                f"[PAYMENT_PROBE] assignPlayMarketTransaction 失败（符合预期）: {exc}",
+            )
+
+    @classmethod
     def _play_integrity_nonce(cls, code_type: Any) -> Optional[str]:
         raw = getattr(code_type, "play_integrity_nonce", None)
         if raw is None:
@@ -1975,13 +2054,16 @@ class RegistrationOrchestrator:
         profile: Optional[Dict[str, Any]] = None,
         emulation_label: str = "balanced",
         _email_depth: int = 0,
+        force_resend_on_app: bool = False,
+        payment_required_probe: str = "off",
+        _payment_probe_depth: int = 0,
     ) -> Tuple[Any, int]:
         """解析 sendCode 分发通道。
 
         - SentCodeTypeApp：尝试 ResendCode 降级到短信，失败则快退
         - SetUpEmailRequired：SMS Bower 临时邮箱 + account.verifyEmail 后继续
         - EmailCode：无对应邮箱时快退，不空等 SMS
-        - PaymentRequired：标记需官方 App 内购，快退
+        - PaymentRequired：可选 resend / Play Market 探测后快退
         - FirebaseSms：Play Integrity + requestFirebaseSms 后按短信轮询
         """
         delivery_name = cls._sent_code_type_name(sent_code)
@@ -1998,9 +2080,49 @@ class RegistrationOrchestrator:
             await manager.append_log(
                 task_id,
                 f"[{emulation_label}] PaymentRequired: {pay_summary} — "
-                "需官方 App 内购，自动化不可完成，快退以免空等 SMS",
+                "需官方 App 内购，自动化默认不可完成",
             )
+            probe = str(payment_required_probe or "off").strip().lower()
+            if _payment_probe_depth < 1 and probe in {"resend", "both"}:
+                await manager.append_log(
+                    task_id,
+                    "[PAYMENT_PROBE] PaymentRequired 后尝试 auth.resendCode",
+                )
+                resent, resend_err = await cls._maybe_resend_to_sms(
+                    client=client,
+                    phone=phone,
+                    sent_code=sent_code,
+                    task_id=task_id,
+                    manager=manager,
+                    wait_timeout=0,
+                )
+                if resent is not None and not cls._is_payment_required(resent):
+                    return await cls.resolve_sent_code_channel(
+                        client,
+                        phone,
+                        resent,
+                        task_id,
+                        manager,
+                        wait_timeout=wait_timeout,
+                        bypass_svc=bypass_svc,
+                        profile=profile,
+                        emulation_label=emulation_label,
+                        _email_depth=_email_depth,
+                        force_resend_on_app=force_resend_on_app,
+                        payment_required_probe=payment_required_probe,
+                        _payment_probe_depth=_payment_probe_depth + 1,
+                    )
+                if resend_err is not None:
+                    await manager.append_log(
+                        task_id,
+                        f"[PAYMENT_PROBE] resendCode 失败: {resend_err}",
+                    )
+            if _payment_probe_depth < 1 and probe in {"play_market", "both"}:
+                await cls._probe_assign_play_market(
+                    client, phone, sent_code, pay_info, task_id, manager,
+                )
             product = (pay_info or {}).get("store_product")
+            _ = product
             raise SentCodeAppDeliveryError(
                 f"auth.SentCodePaymentRequired {pay_summary}，需官方 App 内购",
                 reason="PAYMENT_REQUIRED_OFFICIAL_ONLY",
@@ -2034,6 +2156,9 @@ class RegistrationOrchestrator:
                 profile=profile,
                 emulation_label=emulation_label,
                 _email_depth=_email_depth + 1,
+                force_resend_on_app=force_resend_on_app,
+                payment_required_probe=payment_required_probe,
+                _payment_probe_depth=_payment_probe_depth,
             )
 
         if cls._is_email_code(sent_code):
@@ -2080,12 +2205,22 @@ class RegistrationOrchestrator:
 
         next_name = cls._tl_type_name(getattr(sent_code, "next_type", None))
         has_timeout = getattr(sent_code, "timeout", None) is not None
-        can_probe_resend = bool(next_name) or has_timeout or wait_timeout is not None
+        can_probe_resend = (
+            bool(next_name)
+            or has_timeout
+            or wait_timeout is not None
+            or bool(force_resend_on_app)
+        )
         if not can_probe_resend:
             raise SentCodeAppDeliveryError(
                 "服务端仅通过站内信下发验证码且未提供 next_type/SMS 降级窗口，"
                 "带外短信网关无法接收，已快速退订换号以免空等 120 秒",
                 reason="SENT_CODE_TYPE_APP",
+            )
+        if force_resend_on_app and not next_name and not has_timeout:
+            await manager.append_log(
+                task_id,
+                "force_resend_on_app：SentCodeTypeApp 无 next_type/timeout，仍探测 auth.resendCode",
             )
 
         if next_name and not cls._next_type_is_sms(sent_code):
@@ -2332,7 +2467,11 @@ class RegistrationOrchestrator:
             f"api_hash={cls._api_hash_for_log(profile)} "
             f"attach_token={'是' if (plan.attach_push_token and push_token) else '否'} "
             f"push_token={'有' if push_token else '无'} "
-            f"code_settings.token={'有' if code_settings.token else '无'}"
+            f"code_settings.token={'有' if code_settings.token else '无'} "
+            f"firebase={'是' if code_settings.allow_firebase else '否'} "
+            f"unknown={'是' if code_settings.unknown_number else '否'} "
+            f"flashcall={'是' if code_settings.allow_flashcall else '否'} "
+            f"missed={'是' if code_settings.allow_missed_call else '否'}"
         )
         await manager.append_log(task_id, "调用 auth.sendCode 触发服务端瞬时握手挑战分发...")
         try:
@@ -2384,7 +2523,11 @@ class RegistrationOrchestrator:
                 f"api_hash={cls._api_hash_for_log(profile)} "
                 f"attach_token={'是' if (plan.attach_push_token and push_token) else '否'} "
                 f"push_token={'有' if push_token else '无'} "
-                f"code_settings.token={'有' if code_settings.token else '无'}"
+                f"code_settings.token={'有' if code_settings.token else '无'} "
+                f"firebase={'是' if code_settings.allow_firebase else '否'} "
+                f"unknown={'是' if code_settings.unknown_number else '否'} "
+                f"flashcall={'是' if code_settings.allow_flashcall else '否'} "
+                f"missed={'是' if code_settings.allow_missed_call else '否'}"
             )
             sent_code = await cls._send_code_with_recaptcha(
                 client=client,
@@ -2405,6 +2548,8 @@ class RegistrationOrchestrator:
             bypass_svc=bypass_svc,
             profile=profile,
             emulation_label=getattr(plan, "emulation_label", "balanced"),
+            force_resend_on_app=bool(getattr(plan, "force_resend_on_app", False)),
+            payment_required_probe=str(getattr(plan, "payment_required_probe", "off") or "off"),
         )
         return sent_code, sms_poll_attempts, push_token, push_task_id, push_provider, push_token_obtained_at, plan
 

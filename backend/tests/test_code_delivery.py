@@ -214,6 +214,28 @@ class TestBuildCodeSettings(unittest.TestCase):
         self.assertEqual(cs.token, "FCM_TOKEN")
         self.assertFalse(cs.app_sandbox)
 
+    def test_firebase_and_unknown_number_flags(self):
+        cs = RegistrationOrchestrator._build_code_settings(
+            "FCM_TOKEN",
+            allow_app_hash=True,
+            attach_push_token=True,
+            allow_firebase=True,
+            unknown_number=True,
+        )
+        self.assertTrue(cs.allow_firebase)
+        self.assertTrue(cs.unknown_number)
+        payload = cs._bytes()
+        self.assertGreater(len(payload), 0)
+
+    def test_plan_android_enables_firebase_by_default(self):
+        plan = resolve_code_delivery_plan(
+            _config(code_delivery_mode=CODE_DELIVERY_PUSH_REQUIRED),
+            _profile(api_id=4),
+        )
+        self.assertTrue(plan.allow_firebase)
+        self.assertTrue(plan.unknown_number)
+        self.assertTrue(plan.force_resend_on_app)
+
 
 class TestSendCodeRespectingDeliveryPlan(unittest.IsolatedAsyncioTestCase):
     """sendCode 包装层必须原样带回 Push Token 的退款元数据。
