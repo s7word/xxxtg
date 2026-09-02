@@ -47,7 +47,11 @@ from backend.app.services.vault_attestation import take_injected_device_secret
 from backend.app.services.vaksms import NoNumberAvailableError, VakSmsService, format_no_number_message
 from backend.app.services.grizzlysms import GrizzlySmsService, PROVIDER_LABEL as GRIZZLY_PROVIDER_LABEL
 from backend.app.services.smsbower import SmsBowerService, PROVIDER_LABEL as SMSBOWER_PROVIDER_LABEL
-from backend.app.services.smscode import SmsCodeService, PROVIDER_LABEL as SMSCODE_PROVIDER_LABEL
+from backend.app.services.smscode import (
+    SmsCodeService,
+    PROVIDER_LABEL as SMSCODE_PROVIDER_LABEL,
+    DEFAULT_CANCEL_RETRY_AFTER_SECONDS as SMSCODE_CANCEL_RETRY_AFTER,
+)
 from backend.app.services.fivesim import FiveSimService, PROVIDER_LABEL as FIVESIM_PROVIDER_LABEL
 from backend.app.services.attestation_gateway import AttestationGatewayService
 from backend.app.services.reghelp import PUSH_REFUND_MIN_SECONDS, PUSH_REFUND_WINDOW_SECONDS
@@ -75,6 +79,16 @@ from backend.app.services.recaptcha_check import (
 )
 
 logger = logging.getLogger("NodeProvisioningOrchestrator")
+
+# 延迟退订后台任务引用，避免被 GC 提前回收
+_DEFERRED_SMS_CANCEL_TASKS: set = set()
+
+
+def _track_background_task(task: "asyncio.Task"):
+    _DEFERRED_SMS_CANCEL_TASKS.add(task)
+    task.add_done_callback(_DEFERRED_SMS_CANCEL_TASKS.discard)
+    return task
+
 
 SYNTHETIC_IDENTITY_POOLS = {
     "cl": {
@@ -798,6 +812,44 @@ class RegistrationOrchestrator:
         return SMS_PROVIDER_LABELS.get(cls.normalize_sms_provider(name), SMS_PROVIDER_LABELS["fivesim"])
 
     @classmethod
+    async def _deferred_smscode_cancel(
+        cls,
+        api_key: str,
+        act_id: str,
+        wait_seconds: float,
+        task_id: str,
+        manager: RegistrationTaskManager,
+        reason: str,
+    ) -> None:
+        """SMSCode CANCEL_TOO_EARLY：等冷却后再 cancel，避免订单挂着扣余额。"""
+        delay = max(1.0, float(wait_seconds or SMSCODE_CANCEL_RETRY_AFTER) + 1.0)
+        try:
+            await asyncio.sleep(delay)
+            async with SmsCodeService(api_key=api_key) as svc:
+                result = await svc.cancel(act_id, wait_if_too_early=True, max_wait=90.0)
+            if result.get("success"):
+                await manager.append_log(
+                    task_id,
+                    f"[后台延迟退订完成] SMSCode act_id={act_id} "
+                    f"(等 {delay:.0f}s 后成功，原因: {reason})",
+                )
+            else:
+                await manager.append_log(
+                    task_id,
+                    f"⚠️ [后台延迟退订仍失败] SMSCode act_id={act_id}: "
+                    f"{result.get('error') or result.get('status')}",
+                )
+        except Exception as exc:
+            logger.warning("SMSCode 后台延迟退订异常 act_id=%s: %s", act_id, exc)
+            try:
+                await manager.append_log(
+                    task_id,
+                    f"⚠️ [后台延迟退订异常] SMSCode act_id={act_id}: {exc}",
+                )
+            except Exception:
+                pass
+
+    @classmethod
     async def _refund_and_revoke_channel(
         cls,
         sms_svc,
@@ -820,6 +872,24 @@ class RegistrationOrchestrator:
                 f"[自动退订/撤销信道句柄完成] act_id={act_id} ({provider_label} status={status}, 原因: {reason})"
             )
             return
+
+        too_early = bool(result.get("early_cancel") or result.get("status") == "CANCEL_TOO_EARLY")
+        api_key = str(getattr(sms_svc, "api_key", "") or "").strip()
+        if too_early and api_key and isinstance(sms_svc, SmsCodeService):
+            wait_s = float(result.get("retry_after") or SMSCODE_CANCEL_RETRY_AFTER)
+            await manager.append_log(
+                task_id,
+                f"⚠️ SMSCode 取消过早 (CANCEL_TOO_EARLY，约需再等 {wait_s:.0f}s)；"
+                f"已安排后台延迟退订 act_id={act_id}（原因: {reason}），本任务继续换号",
+            )
+            task = asyncio.create_task(
+                cls._deferred_smscode_cancel(
+                    api_key, str(act_id), wait_s, task_id, manager, reason
+                )
+            )
+            _track_background_task(task)
+            return
+
         detail = result.get("error") or result.get("data") or "unknown"
         await manager.append_log(
             task_id,

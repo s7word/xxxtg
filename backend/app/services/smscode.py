@@ -41,6 +41,12 @@ NO_OFFER_CODES = frozenset({"NO_OFFER_AVAILABLE", "NO_NUMBERS", "NO_NUMBER"})
 NO_BALANCE_CODES = frozenset({"INSUFFICIENT_BALANCE"})
 BAD_KEY_CODES = frozenset({"UNAUTHORIZED", "FORBIDDEN"})
 CANCEL_TOO_EARLY_CODES = frozenset({"CANCEL_TOO_EARLY"})
+# 官方：租号后通常需等待约 120s 才允许 /orders/cancel；过早取消返回 409 CANCEL_TOO_EARLY
+DEFAULT_CANCEL_RETRY_AFTER_SECONDS = 120.0
+CANCEL_RETRY_AFTER_RE = re.compile(
+    r"(?:wait|waiting|请再?等待?|需等待?)\s*(\d+)\s*(?:more\s+)?(?:seconds?|secs?|秒)",
+    re.IGNORECASE,
+)
 TERMINAL_FAIL_STATUSES = frozenset({"CANCELED", "CANCELLED", "EXPIRED", "FAILED"})
 PROVIDER_NO_NUMBER_CAUSES = frozenset({
     "no_numbers",
@@ -75,6 +81,25 @@ def mask_api_key(key: Any) -> str:
     if len(raw) <= 12:
         return f"{raw[:2]}***{raw[-2:]}" if len(raw) >= 4 else "***"
     return f"{raw[:6]}...{raw[-4:]}"
+
+
+def parse_cancel_retry_after(message: Any, default: float = DEFAULT_CANCEL_RETRY_AFTER_SECONDS) -> float:
+    """从 CANCEL_TOO_EARLY 文案解析还需等待的秒数。"""
+    text = str(message or "")
+    match = CANCEL_RETRY_AFTER_RE.search(text)
+    if match:
+        try:
+            return max(1.0, float(match.group(1)))
+        except (TypeError, ValueError):
+            pass
+    # 兜底：文案里单独的「120 seconds / 120s」
+    loose = re.search(r"(\d+)\s*(?:more\s+)?(?:seconds?|secs?|秒)", text, re.IGNORECASE)
+    if loose:
+        try:
+            return max(1.0, float(loose.group(1)))
+        except (TypeError, ValueError):
+            pass
+    return float(default)
 
 
 def parse_money_usd(value: Any) -> Optional[float]:
@@ -795,7 +820,13 @@ class SmsCodeService:
         except SmsCodeError as exc:
             code = str(getattr(exc, "code", "") or "").upper()
             if action == "cancel" and code in CANCEL_TOO_EARLY_CODES:
-                logger.warning("SMSCode 取消过早 act_id=%s: %s", act_id, exc)
+                retry_after = parse_cancel_retry_after(exc)
+                logger.warning(
+                    "SMSCode 取消过早 act_id=%s retry_after=%.0fs: %s",
+                    act_id,
+                    retry_after,
+                    exc,
+                )
                 return {
                     "success": False,
                     "skipped": False,
@@ -804,6 +835,7 @@ class SmsCodeService:
                     "action": action,
                     "error": str(exc),
                     "early_cancel": True,
+                    "retry_after": retry_after,
                 }
             logger.warning("SMSCode %s 失败 act_id=%s: %s", action, act_id, exc)
             return {
@@ -830,8 +862,45 @@ class SmsCodeService:
 
     finalize_channel_binding = finish
 
-    async def cancel(self, act_id: str) -> Dict[str, Any]:
-        return await self._order_action("cancel", act_id)
+    async def cancel(
+        self,
+        act_id: str,
+        *,
+        wait_if_too_early: bool = False,
+        max_wait: float = 180.0,
+    ) -> Dict[str, Any]:
+        """取消订单并退款。
+
+        SMSCode 租号后约 120s 内 cancel 会 409 CANCEL_TOO_EARLY。
+        wait_if_too_early=True 时按 retry_after 等待后最多再试几次（会阻塞调用方）。
+        编排层默认用后台延迟退订，避免猎号被卡住。
+        """
+        result = await self._order_action("cancel", act_id)
+        too_early = bool(result.get("early_cancel"))
+        if wait_if_too_early and not result.get("success") and too_early:
+            waited = 0.0
+            attempts = 0
+            while attempts < 4 and waited < max_wait:
+                retry_after = float(result.get("retry_after") or DEFAULT_CANCEL_RETRY_AFTER_SECONDS)
+                sleep_for = min(max(1.0, retry_after + 1.0), max_wait - waited)
+                if sleep_for <= 0:
+                    break
+                logger.info(
+                    "SMSCode cancel 过早，等待 %.0fs 后重试 act_id=%s (attempt=%s)",
+                    sleep_for,
+                    act_id,
+                    attempts + 1,
+                )
+                await asyncio.sleep(sleep_for)
+                waited += sleep_for
+                attempts += 1
+                result = await self._order_action("cancel", act_id)
+                too_early = bool(result.get("early_cancel"))
+                if result.get("success") or not too_early:
+                    break
+            result["deferred_wait_seconds"] = waited
+            result["deferred_attempts"] = attempts
+        return result
 
     revoke_channel_binding = cancel
 

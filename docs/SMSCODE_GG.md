@@ -41,4 +41,4 @@ export SMSCODE_TOKEN="你的 token"
 | 取消退款 | POST | `/v2/orders/cancel` |
 | 完结 | POST | `/v2/orders/finish` |
 
-错误映射：`UNAUTHORIZED` → Key 无效；`INSUFFICIENT_BALANCE` → 余额不足；`NO_OFFER_AVAILABLE` / 上游 `no_numbers` → 无号；`CANCEL_TOO_EARLY` → 取消过早（不抛死，返回失败供编排重试）。日志里 Token 只打前后缀。
+错误映射：`UNAUTHORIZED` → Key 无效；`INSUFFICIENT_BALANCE` → 余额不足；`NO_OFFER_AVAILABLE` / 上游 `no_numbers` → 无号；`CANCEL_TOO_EARLY` → 取消过早（租号后约 120s 内不能退订）。客户端会解析剩余秒数；编排层默认**后台延迟重试 cancel**，不阻塞换号。日志里 Token 只打前后缀。
