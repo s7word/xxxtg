@@ -24,6 +24,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
 from backend.scripts.run_code_delivery_ab import ApiClient, utc_now, wait_batch  # noqa: E402
 from backend.scripts.run_payment_bypass_ab import (  # noqa: E402
     analyze_round,
