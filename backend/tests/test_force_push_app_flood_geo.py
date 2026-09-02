@@ -192,9 +192,13 @@ class TestFloodWindowGate(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIsNone(stop)
         logs = "\n".join(manager.get_task(tid)["logs"])
-        self.assertIn("不拦新测试", logs)
+        self.assertIn("不拦本任务", logs)
+        self.assertIn("继续租号", logs)
         self.assertNotIn("停止本任务以免继续填满窗口", logs)
         self.assertNotIn("填满窗口", logs)
+        # 残留硬闩应被清掉，后续新任务不再踩坑
+        self.assertFalse(SendCodeFloodWindow.get().is_hard_stop())
+        self.assertEqual(SendCodeFloodWindow.get().remaining(), 0.0)
 
     async def test_default_trip_does_not_hard_latch(self):
         """默认 trip PUBLISHED_FLOOD 不设进程硬门闩。"""
@@ -264,7 +268,8 @@ class TestFloodWindowGate(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIsNone(stop)
         logs = "\n".join(manager.get_task(tid)["logs"])
-        self.assertIn("ignore_published_flood_window=开", logs)
+        self.assertIn("不拦本任务", logs)
+        self.assertIn("继续租号", logs)
 
     async def test_task_scope_allows_sibling(self):
         SendCodeFloodWindow.get().trip(
@@ -284,7 +289,8 @@ class TestFloodWindowGate(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIsNone(stop)
         logs = "\n".join(manager.get_task(tid)["logs"])
-        self.assertIn("flood_window_scope=task", logs)
+        self.assertIn("不拦本任务", logs)
+        self.assertIn("继续租号", logs)
 
     def test_trip_with_task_scope_does_not_hard_latch(self):
         cfg = SimpleNamespace(

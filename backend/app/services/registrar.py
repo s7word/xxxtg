@@ -331,8 +331,8 @@ HUNT_REFUND_REASON_ALIASES = {
 
 # 猎号中「换个号就可能好」的 sendCode 异常：cancel + 按规则拉黑后继续下一轮，
 # 不能因为一个坏号就把剩余取号预算整体作废。
-# 反例（保持终止）：API_ID_PUBLISHED_FLOOD 与解不掉的 RECAPTCHA_CHECK 是凭证/风控层面的
-# 全局问题，换号后每一轮都会重复触发，继续扫只是等价地烧钱。
+# API_ID_PUBLISHED_FLOOD：默认只表示「本号/本轮失败」；猎号继续租下一号以便排查。
+# 省钱硬停（不再开新租号）需显式 flood_block_new_sends=true。
 HUNT_SWAPPABLE_SEND_ERROR_REASONS = {
     PhoneNumberInvalidError: "PHONE_NUMBER_INVALID",
 }
@@ -390,6 +390,14 @@ class SendCodeFloodWindow:
         self._reason = None
         self._hard = False
         self._api_id = None
+
+    def clear_published_flood(self) -> bool:
+        """清掉 API_ID_PUBLISHED_FLOOD 残留闩（不碰普通 FLOOD_WAIT 软窗）。"""
+        reason = str(self._reason or "").upper()
+        if reason != "API_ID_PUBLISHED_FLOOD":
+            return False
+        self.reset()
+        return True
 
     def remaining(self) -> float:
         return max(0.0, self._until - time.monotonic())
@@ -1219,31 +1227,20 @@ class RegistrationOrchestrator:
         api_hint = f" api_id={api_id}" if api_id is not None else ""
         reason_u = str(reason).upper()
 
-        if gate.is_hard_stop() and reason_u == "API_ID_PUBLISHED_FLOOD":
-            if policy["ignore_published"]:
-                await manager.append_log(
-                    task_id,
-                    f"⚠️ [FLOOD窗] ignore_published_flood_window=开：不拦本任务租号/发码"
-                    f"（{reason}{api_hint}）。同窗续发通常仍 FLOOD。",
-                )
-                return None
-            if policy["scope"] == "task":
-                await manager.append_log(
-                    task_id,
-                    f"⚠️ [FLOOD窗] flood_window_scope=task：进程内已有 {reason}{api_hint}，"
-                    f"本任务仍继续（不阻止后续新测试）。",
-                )
-                return None
-            if not policy["block_new_sends"]:
-                left = gate.remaining()
-                await manager.append_log(
-                    task_id,
-                    f"[FLOOD窗] 本号/兄弟任务曾触发 {reason}{api_hint}；"
-                    f"默认不拦新测试，本任务继续租号/发码"
-                    f"（剩余记录冷却 {left:.0f}s；省钱硬停请开 flood_block_new_sends）。",
-                )
+        # PUBLISHED_FLOOD：默认只是「某号失败」的记录，绝不拦新任务/新租号。
+        if reason_u == "API_ID_PUBLISHED_FLOOD":
+            if policy["ignore_published"] or policy["scope"] == "task" or not policy["block_new_sends"]:
+                if gate.remaining() > 0 or gate._hard:
+                    await manager.append_log(
+                        task_id,
+                        f"[FLOOD窗] 历史 {reason}{api_hint} 仅表示曾有号码失败；"
+                        f"默认不拦本任务，继续租号/发码（省钱硬停请开 flood_block_new_sends）。",
+                    )
+                    gate.clear_published_flood()
                 return None
             left = gate.remaining()
+            if left <= 0 and not gate.is_hard_stop():
+                return None
             await manager.append_log(
                 task_id,
                 f"⛔ [FLOOD窗] flood_block_new_sends=开：同 published api_id 冷却中"
@@ -2935,6 +2932,14 @@ class RegistrationOrchestrator:
         manager.update_task_status(task_id, "running")
 
         config = ConfigManager.get_instance().config
+        # 新任务默认不受历史 API_ID_PUBLISHED_FLOOD 门闩影响（否则会「启动都启动不了」）
+        flood_policy = cls._flood_gate_policy(config)
+        if not flood_policy.get("block_new_sends"):
+            if SendCodeFloodWindow.get().clear_published_flood():
+                await manager.append_log(
+                    task_id,
+                    "[FLOOD窗] 已清除历史 API_ID_PUBLISHED_FLOOD 门闩，本任务照常租号测试",
+                )
         target_country = (country or config.target_country).lower()
         active_app = app_type or config.active_app_type
 
@@ -3577,12 +3582,6 @@ class RegistrationOrchestrator:
                     meta_path = None
                     last_failure_reason = "API_ID_PUBLISHED_FLOOD"
                     hunt_app_streak = 0
-                    await manager.append_log(
-                        task_id,
-                        f"[Expert] 本号 API_ID_PUBLISHED_FLOOD api_id={profile.get('api_id')} "
-                        f"{cls._log_push_token_slot(push_token, delivery_plan)} → 本任务结束；"
-                        "不阻止后续新测试 / 其它并发租号（省钱硬停需 flood_block_new_sends=true）"
-                    )
                     if push_token or push_task_id:
                         await cls._refund_push_token(
                             bypass_svc, push_task_id, push_provider, push_token_obtained_at,
@@ -3592,6 +3591,25 @@ class RegistrationOrchestrator:
                         push_task_id = None
                         push_provider = None
                         push_token_obtained_at = None
+                    # 默认：本号失败即可；猎号换下一号继续测。省钱硬停才整任务收束。
+                    block_new = bool(cls._flood_gate_policy(config).get("block_new_sends"))
+                    if hunt_enabled and not block_new:
+                        proxy_send_uses += 1
+                        device_send_uses += 1
+                        await manager.append_log(
+                            task_id,
+                            f"[Expert] 本号 API_ID_PUBLISHED_FLOOD api_id={profile.get('api_id')} "
+                            f"{cls._log_push_token_slot(push_token, delivery_plan)} → 丢本号换号继续 "
+                            f"({attempt_idx}/{max_attempts})；不拦后续新测试",
+                        )
+                        manager.update_task_status(task_id, "running")
+                        continue
+                    await manager.append_log(
+                        task_id,
+                        f"[Expert] 本号 API_ID_PUBLISHED_FLOOD api_id={profile.get('api_id')} "
+                        f"{cls._log_push_token_slot(push_token, delivery_plan)} → 本任务结束；"
+                        "不阻止后续新测试 / 其它并发租号（省钱硬停需 flood_block_new_sends=true）",
+                    )
                     raise
                 except RequiredPushTokenMissingError as push_ex:
                     await cls._refund_and_revoke_channel(
