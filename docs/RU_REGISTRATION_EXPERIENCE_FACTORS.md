@@ -3,7 +3,7 @@
 > 时间：2026-09-02  
 > 方法：外网俄语手册 / 新闻 / 论坛 / 接码站营销文 + 对照本仓已有 vault 样本与实验报告。  
 > **本轮未租号。** 实验数字一律引用既有报告，不以本轮新测为准。  
-> 对照：[RU_COUNTRY_PASSRATE_RESEARCH.md](./RU_COUNTRY_PASSRATE_RESEARCH.md)、[RU_DOLLAR_WALL_RESEARCH.md](./RU_DOLLAR_WALL_RESEARCH.md)、[VAULT_SUCCESS_VS_OFFICIAL_ANALYSIS.md](./VAULT_SUCCESS_VS_OFFICIAL_ANALYSIS.md)、[API_ID_PUBLISHED_FLOOD_CAUSES.md](./API_ID_PUBLISHED_FLOOD_CAUSES.md)、[COUNTRY_PASSRATE_50_RESULTS.md](./COUNTRY_PASSRATE_50_RESULTS.md)、[COUNTRY_PASSRATE_50_ROUND2_RESULTS.md](./COUNTRY_PASSRATE_50_ROUND2_RESULTS.md)。  
+> 对照：[RU_COUNTRY_PASSRATE_RESEARCH.md](./RU_COUNTRY_PASSRATE_RESEARCH.md)、[RU_DOLLAR_WALL_RESEARCH.md](./RU_DOLLAR_WALL_RESEARCH.md)、[VAULT_SUCCESS_VS_OFFICIAL_ANALYSIS.md](./VAULT_SUCCESS_VS_OFFICIAL_ANALYSIS.md)、[API_ID_PUBLISHED_FLOOD_CAUSES.md](./API_ID_PUBLISHED_FLOOD_CAUSES.md)、[COUNTRY_PASSRATE_50_RESULTS.md](./COUNTRY_PASSRATE_50_RESULTS.md)、[COUNTRY_PASSRATE_50_ROUND2_RESULTS.md](./COUNTRY_PASSRATE_50_ROUND2_RESULTS.md)、[PROXY_AND_DEVICE_FITNESS.md](./PROXY_AND_DEVICE_FITNESS.md)（移动 vs 住宅 **未系统测过**；设备字段达标/缺口表）。  
 > 注：上述对照文档可能在其它分支；本文自洽，不依赖它们才能读懂。
 
 **先读结论：** 俄语农场并不相信「换一个公开 api_id」或「付 1 美元就能过」。他们押的是一套**身份栈**：用泄露的官方 Android **api_id=4** 冒充移动端 → 用 AntiSafety 的 **Push + SafetyNet** 当「真机证明」→ **SIM-based 新号**（扔掉会把码打进 App 的回收号）→ **号国住宅/移动代理 + 时区/语言/机型对齐**。Desktop（api_id=2040）明确不能建新号；api_id=6 被当成「像现网官方、于是进付费税区」的路径，能躲就躲。这与本仓策略（**4 主攻、6 后备、暂不 Payment**）同向。他们和我们的分歧不在方向，而在：**Push 被他们写成「SMS 不来时的收码通道」；本仓实测 Push 主要只决定能不能过 `API_ID_PUBLISHED_FLOOD`，过了之后仍是 `SentCodeTypeApp`，没有 SMS。**
