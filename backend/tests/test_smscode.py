@@ -33,6 +33,7 @@ from backend.app.services.smscode import (  # noqa: E402
     SmsCodeError,
     SmsCodeService,
     mask_api_key,
+    parse_cancel_retry_after,
     parse_money_usd,
     parse_smscode_products_payload,
 )
@@ -289,12 +290,46 @@ class TestSmsCodeClient(unittest.IsolatedAsyncioTestCase):
 
     async def test_cancel_too_early(self):
         self.svc.client.request.return_value = DummyResponse(
-            {"success": False, "error": {"code": "CANCEL_TOO_EARLY", "message": "wait 2 minutes"}},
+            {
+                "success": False,
+                "error": {
+                    "code": "CANCEL_TOO_EARLY",
+                    "message": "Please wait 120 more seconds before canceling",
+                },
+            },
             status_code=409,
         )
         result = await self.svc.cancel("1002")
         self.assertFalse(result["success"])
         self.assertTrue(result.get("early_cancel"))
+        self.assertEqual(result.get("retry_after"), 120.0)
+
+    def test_parse_cancel_retry_after(self):
+        self.assertEqual(
+            parse_cancel_retry_after("Please wait 98 more seconds before canceling"),
+            98.0,
+        )
+        self.assertEqual(parse_cancel_retry_after("wait 2 minutes"), 120.0)
+
+    async def test_cancel_wait_if_too_early_retries(self):
+        responses = [
+            DummyResponse(
+                {
+                    "success": False,
+                    "error": {
+                        "code": "CANCEL_TOO_EARLY",
+                        "message": "Please wait 2 more seconds before canceling",
+                    },
+                },
+                status_code=409,
+            ),
+            DummyResponse({"success": True, "data": {"id": 1002, "status": "CANCELED"}}),
+        ]
+        self.svc.client.request.side_effect = responses
+        with patch("backend.app.services.smscode.asyncio.sleep", new=AsyncMock()):
+            result = await self.svc.cancel("1002", wait_if_too_early=True, max_wait=30.0)
+        self.assertTrue(result["success"])
+        self.assertGreaterEqual(result.get("deferred_attempts", 0), 1)
 
     async def test_get_code_single_fetch(self):
         self.svc.client.request.return_value = DummyResponse(
