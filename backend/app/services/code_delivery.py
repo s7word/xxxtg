@@ -40,6 +40,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
+from backend.app.services.device_alignment import (
+    VAULT_STRICT_API_ID,
+    is_strict_alignment,
+)
 from backend.app.services.device_profile import PUBLISHED_API_ID_BLOCKLIST
 
 CODE_DELIVERY_SMS_FIRST = "sms_first"
@@ -125,6 +129,8 @@ def emulation_label_for(config: Any, base_mode: Optional[str] = None) -> str:
 
 def _predict_effective_api_id(profile: Dict[str, Any], config: Any) -> int:
     """在尚未申请 Push Token 时预测 sendCode 将使用的 api_id。"""
+    if is_strict_alignment(config):
+        return VAULT_STRICT_API_ID
     template_id = int(profile.get("api_id") or 0)
     if is_official_client_emulation(config):
         return template_id
@@ -174,8 +180,11 @@ def resolve_code_delivery_plan(
 ) -> CodeDeliveryPlan:
     """根据全局配置、预测 api_id 与猎号状态生成本轮 sendCode 通道计划。"""
     official_emu = is_official_client_emulation(config)
+    strict = is_strict_alignment(config)
     base_mode = _normalize_mode(getattr(config, "code_delivery_mode", None))
-    if official_emu:
+    # 严格对齐钉死 api_id=4（泄露 ID）：非 emu 必须 attach FCM 到 CodeSettings.token。
+    # 官方模拟同样始终 attach。两者都不受猎号连续 App → SMS 覆盖。
+    if official_emu or strict:
         base_mode = CODE_DELIVERY_PUSH_REQUIRED
     predicted_api_id = _predict_effective_api_id(profile, config)
     published = is_published_api_id(predicted_api_id)
@@ -189,9 +198,10 @@ def resolve_code_delivery_plan(
     except (TypeError, ValueError):
         streak_threshold = DEFAULT_HUNT_SMS_FIRST_AFTER_APP_STREAK
 
-    # 官方客户端模拟始终 attach Push，不被猎号连续 App 强制 SMS 覆盖
+    # 官方客户端模拟 / 严格设备对齐始终 attach Push，不被猎号连续 App 强制 SMS 覆盖
     forced_sms = bool(
         not official_emu
+        and not strict
         and (
             force_sms_after_app
             or (hunt_app_streak >= streak_threshold > 0)
@@ -202,6 +212,10 @@ def resolve_code_delivery_plan(
     if official_emu:
         notes.append(
             f"official_client_emulation：强制官方 api_id={predicted_api_id} + push_required"
+        )
+    if strict:
+        notes.append(
+            "严格设备对齐：非 emu 强制 attach Push（CodeSettings.token / FCM）"
         )
 
     if forced_sms and base_mode != CODE_DELIVERY_PUSH_REQUIRED:

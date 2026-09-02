@@ -274,6 +274,28 @@ def match_assigned_country(item: Dict[str, Any], country: Optional[str]) -> bool
     return match_proxy_country({"country_code": assigned, "country": assigned}, country)
 
 
+def proxy_has_country_label(item: Optional[Dict[str, Any]]) -> bool:
+    """节点是否带有可匹配的国家画像（含 assigned / egress）。无标签视为全球通用。"""
+    view = item or {}
+    return bool(
+        _norm(view.get("country_code"))
+        or _norm(view.get("country"))
+        or _norm(view.get("country_alpha3"))
+        or _norm(view.get("assigned_country"))
+        or _norm(view.get("egress_country_code"))
+        or _norm(view.get("egress_country"))
+    )
+
+
+def proxy_is_labeled_foreign(item: Optional[Dict[str, Any]], country: Optional[str]) -> bool:
+    """True：节点已标注国家，且与号国不一致。未标注不算异国。"""
+    if not item or not country:
+        return False
+    if not proxy_has_country_label(item):
+        return False
+    return not custom_proxy_eligible_for_country(item, country)
+
+
 def custom_proxy_eligible_for_country(item: Dict[str, Any], country: Optional[str]) -> bool:
     """自建节点是否可用于目标国。
 

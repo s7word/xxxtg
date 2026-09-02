@@ -308,9 +308,12 @@ HUNT_MIN_SMS_POLL_ATTEMPTS = 8
 DEFAULT_HUNT_APP_BLACKLIST_TTL_HOURS = 48.0
 # 连续 N 轮都只投 App 说明是系统性失败模式（凭证/Push/指纹），继续扫号只是把预算烧光
 DEFAULT_HUNT_APP_DELIVERY_FUSE = 5
-# 猎号 FLOOD_WAIT：短等待就地退避（上限 30s），≥该秒数直接终止整个猎号任务。
+# 猎号 FLOOD_WAIT：≥该秒数直接终止整个猎号任务。未达阈值时等待完整窗口
+# （不再用 30s 上限短退避后再发，否则等于把 Telegram 的 FLOOD 窗填满）。
 HUNT_FLOOD_ABORT_SECONDS = 3600
-HUNT_FLOOD_BACKOFF_CAP_SECONDS = 30.0
+HUNT_FLOOD_BACKOFF_CAP_SECONDS = 30.0  # 仅作日志/兼容；实际等待不再截断到此值
+# 无 seconds 的 API_ID_PUBLISHED_FLOOD 也要挡住并发兄弟任务
+DEFAULT_PUBLISHED_FLOOD_PAUSE_SECONDS = 120.0
 # 猎号专用的内部原因标识 → REGHelp 已支持的规范原因。
 # 主动轮换/扫尽的共同事实是「这枚 Token 始终没等到短信」，与 NO_CODE 同类（setStatus=NOSMS）；
 # 被频控打死则按 FLOOD_WAIT 上报。收敛在这里，避免为猎号私有标识改动对外映射表。
@@ -322,6 +325,8 @@ HUNT_REFUND_REASON_ALIASES = {
     "HUNT_APP_FUSE": "NO_CODE",
     "HUNT_FLOOD_ABORT": "FLOOD_WAIT",
     "HUNT_FLOOD_NO_PROXY": "FLOOD_WAIT",
+    "HUNT_FLOOD_WINDOW": "FLOOD_WAIT",
+    "PROXY_COUNTRY_MISMATCH": "NO_CODE",
 }
 
 # 猎号中「换个号就可能好」的 sendCode 异常：cancel + 按规则拉黑后继续下一轮，
@@ -349,6 +354,67 @@ class RequiredPushTokenMissingError(Exception):
         super().__init__(message)
         self.api_id = api_id
         self.reason = "PUSH_TOKEN_MISSING"
+
+
+class ProxyCountryMismatchError(Exception):
+    """代理 geo 与号码国家不一致，拒绝租号/发码。"""
+
+    def __init__(self, message: str):
+        super().__init__(message)
+        self.reason = "PROXY_COUNTRY_MISMATCH"
+
+
+class SendCodeFloodWindow:
+    """进程级 FLOOD 窗：任一任务撞闸后，其它并发任务不得继续填满窗口。"""
+
+    _instance: Optional["SendCodeFloodWindow"] = None
+
+    def __init__(self) -> None:
+        self._until = 0.0
+        self._reason: Optional[str] = None
+        self._hard = False
+
+    @classmethod
+    def get(cls) -> "SendCodeFloodWindow":
+        if cls._instance is None:
+            cls._instance = cls()
+        return cls._instance
+
+    def reset(self) -> None:
+        self._until = 0.0
+        self._reason = None
+        self._hard = False
+
+    def remaining(self) -> float:
+        return max(0.0, self._until - time.monotonic())
+
+    def reason(self) -> Optional[str]:
+        if self.remaining() <= 0 and not self._hard:
+            return None
+        return self._reason
+
+    def is_hard_stop(self) -> bool:
+        """API_ID_PUBLISHED_FLOOD / 小时级 FLOOD：兄弟任务应直接停，不要再租号。"""
+        return bool(self._hard) and self.remaining() > 0
+
+    def trip(self, *, reason: str, seconds: float = 0.0, hard: bool = False) -> float:
+        wait = max(float(seconds or 0.0), 0.0)
+        if wait <= 0:
+            wait = float(HUNT_FLOOD_ABORT_SECONDS) if hard else float(DEFAULT_PUBLISHED_FLOOD_PAUSE_SECONDS)
+        wait = min(wait, float(HUNT_FLOOD_ABORT_SECONDS))
+        until = time.monotonic() + wait
+        if until > self._until:
+            self._until = until
+            self._reason = reason
+        elif not self._reason:
+            self._reason = reason
+        if hard:
+            self._hard = True
+            # 硬停至少挡住整个中止阈值，避免兄弟任务在短暂停后继续狂发
+            hard_until = time.monotonic() + float(HUNT_FLOOD_ABORT_SECONDS)
+            if hard_until > self._until:
+                self._until = hard_until
+        return wait
 
 
 class RegistrationTaskManager:
@@ -1037,6 +1103,76 @@ class RegistrationOrchestrator:
         return True
 
     @classmethod
+    def _should_enforce_proxy_country(cls, config, *, pinned: bool) -> bool:
+        if pinned:
+            return False
+        if is_strict_alignment(config):
+            return True
+        return bool(getattr(config, "proxy_require_country_match", True))
+
+    @classmethod
+    def _reject_foreign_proxy(
+        cls,
+        proxy: Optional[Dict[str, Any]],
+        target_country: str,
+        config,
+        *,
+        pinned: bool,
+    ) -> None:
+        """已标注异国的出口不得用于该号国。未标注全球节点放行。"""
+        if not cls._should_enforce_proxy_country(config, pinned=pinned):
+            return
+        from backend.app.services.proxy_manager import proxy_is_labeled_foreign
+        from backend.app.services.proxyseller import format_proxy_endpoint
+
+        if proxy_is_labeled_foreign(proxy, target_country):
+            endpoint = format_proxy_endpoint(proxy or {})
+            label = (
+                (proxy or {}).get("assigned_country")
+                or (proxy or {}).get("country_code")
+                or (proxy or {}).get("egress_country_code")
+                or (proxy or {}).get("country")
+                or "?"
+            )
+            raise ProxyCountryMismatchError(
+                f"PROXY_COUNTRY_MISMATCH: 出口 {endpoint} 标注为 {label}，"
+                f"与号国 {str(target_country or '').upper()} 不一致，拒绝租号/发码"
+            )
+
+    @classmethod
+    async def _respect_flood_window(
+        cls,
+        task_id: str,
+        manager: RegistrationTaskManager,
+    ) -> Optional[str]:
+        """FLOOD 窗未结束则暂停；硬停（published / 小时级）返回终止码。"""
+        gate = SendCodeFloodWindow.get()
+        if gate.is_hard_stop():
+            await manager.append_log(
+                task_id,
+                f"❌ [FLOOD窗] 已触发 {gate.reason() or 'FLOOD'}，停止本任务以免继续填满窗口",
+            )
+            return "HUNT_FLOOD_WINDOW"
+        left = gate.remaining()
+        if left > 0:
+            await manager.append_log(
+                task_id,
+                f"[FLOOD窗] 窗口未结束，暂停租号/发码 {left:.0f}s（reason={gate.reason()}）",
+            )
+            await asyncio.sleep(left)
+            if gate.is_hard_stop():
+                await manager.append_log(
+                    task_id,
+                    f"❌ [FLOOD窗] 暂停后仍处于硬停（{gate.reason()}），终止以免填满窗口",
+                )
+                return "HUNT_FLOOD_WINDOW"
+        return None
+
+    @classmethod
+    def _trip_flood_window(cls, *, reason: str, seconds: float = 0.0, hard: bool = False) -> float:
+        return SendCodeFloodWindow.get().trip(reason=reason, seconds=seconds, hard=hard)
+
+    @classmethod
     async def resolve_active_proxy(
         cls,
         config,
@@ -1072,11 +1208,13 @@ class RegistrationOrchestrator:
 
         # 使用者决定配对关系：explicit 100% 遵从指定节点，不施加隐式国家约束
         active_proxy = None
+        user_pinned = False
         if not active_proxy and (proxy_id or mode == "explicit"):
             if proxy_id:
                 found = find_custom_proxy(proxy_id=proxy_id)
                 if found:
                     active_proxy = found
+                    user_pinned = True
                     await manager.append_log(
                         task_id,
                         f"[代理配对] 100% 遵从用户指定节点 {format_proxy_endpoint(found)}，"
@@ -1137,6 +1275,9 @@ class RegistrationOrchestrator:
                 f"{active_proxy.get('addr')}:{active_proxy.get('port')}"
                 + (f"（策略={mode}）" if mode == "fallback" else "")
             )
+        cls._reject_foreign_proxy(
+            active_proxy, target_country, config, pinned=user_pinned,
+        )
         return active_proxy
 
     @classmethod
@@ -2030,7 +2171,7 @@ class RegistrationOrchestrator:
         next_name = cls._tl_type_name(getattr(sent_code, "next_type", None))
         has_timeout = getattr(sent_code, "timeout", None) is not None
         config = ConfigManager.get_instance().config
-        fast_drop = bool(getattr(config, "app_delivery_fast_drop", True))
+        fast_drop = bool(getattr(config, "app_delivery_fast_drop", True)) or is_strict_alignment(config)
         if not next_name and fast_drop:
             await manager.append_log(
                 task_id,
@@ -2661,15 +2802,20 @@ class RegistrationOrchestrator:
         hunt_enabled = max_attempts > 1
         hunt_limits = cls._resolve_hunt_limits(config, no_number_retries=no_number_retries)
 
-        active_proxy = await cls.resolve_active_proxy(
-            config=config,
-            target_country=target_country,
-            task_id=task_id,
-            manager=manager,
-            proxy_override=proxy_override,
-            proxy_id=proxy_id,
-            proxy_mode=proxy_mode,
-        )
+        try:
+            active_proxy = await cls.resolve_active_proxy(
+                config=config,
+                target_country=target_country,
+                task_id=task_id,
+                manager=manager,
+                proxy_override=proxy_override,
+                proxy_id=proxy_id,
+                proxy_mode=proxy_mode,
+            )
+        except ProxyCountryMismatchError as geo_err:
+            await manager.append_log(task_id, f"❌ {geo_err}")
+            manager.update_task_status(task_id, "failed", error=str(geo_err))
+            return
 
         # 统一 Attestation / Push 凭证高可用网关：按 config.attestation_provider_mode 策略
         # 在 REGHelp 与 AntiSafety 两个独立提供源之间自动选择主备顺序并容灾切换
@@ -2806,6 +2952,15 @@ class RegistrationOrchestrator:
                     await manager.append_log(
                         task_id, f"[猎号] 收到取消请求，在第 {attempt_idx} 轮开始前停止扫号"
                     )
+                    break
+
+                flood_stop = await cls._respect_flood_window(task_id, manager)
+                if flood_stop:
+                    hunt_stop_reason = flood_stop
+                    last_failure_reason = flood_stop
+                    if not hunt_enabled:
+                        manager.update_task_status(task_id, "failed", error=flood_stop)
+                        return
                     break
 
                 # 出口/设备轮换：sendCode 次数达到上限后降低 FLOOD 风险
@@ -3063,6 +3218,20 @@ class RegistrationOrchestrator:
                             f"（hash={cls._api_hash_for_log(profile)}），禁止漂到 6/Payment"
                         )
 
+                if is_strict_alignment(config) and delivery_plan.attach_push_token:
+                    try:
+                        validate_strict_device_profile(
+                            profile, config, has_push_token=bool(push_token)
+                        )
+                    except DeviceAlignmentError as align_err:
+                        await manager.append_log(task_id, f"❌ {align_err}")
+                        hunt_stop_reason = "DEVICE_ALIGNMENT_REJECTED"
+                        last_failure_reason = "DEVICE_ALIGNMENT_REJECTED"
+                        if not hunt_enabled:
+                            manager.update_task_status(task_id, "failed", error=str(align_err))
+                            return
+                        break
+
                 # 4. 初始化 MTProto 会话
                 clean_phone = phone.replace("+", "").strip()
                 session_filename = f"node_{target_country}_{clean_phone}"
@@ -3238,6 +3407,11 @@ class RegistrationOrchestrator:
                         continue
                     raise
                 except ApiIdPublishedFloodError:
+                    cls._trip_flood_window(
+                        reason="API_ID_PUBLISHED_FLOOD",
+                        seconds=HUNT_FLOOD_ABORT_SECONDS,
+                        hard=True,
+                    )
                     await cls._refund_and_revoke_channel(
                         sms_svc, act_id, task_id, manager, "API_ID_PUBLISHED_FLOOD"
                     )
@@ -3286,6 +3460,11 @@ class RegistrationOrchestrator:
                     continue
                 except (PhoneNumberFloodError, FloodWaitError) as flood_ex:
                     sec = int(getattr(flood_ex, "seconds", 0) or 0)
+                    cls._trip_flood_window(
+                        reason="FLOOD_WAIT",
+                        seconds=sec,
+                        hard=sec >= HUNT_FLOOD_ABORT_SECONDS,
+                    )
                     await cls._refund_and_revoke_channel(sms_svc, act_id, task_id, manager, "FLOOD_WAIT")
                     act_id = None
                     await cls._disconnect_client_quiet(client)
@@ -3341,11 +3520,12 @@ class RegistrationOrchestrator:
                         )
                         break
                     proxy_send_uses = 0
-                    backoff = min(float(sec), HUNT_FLOOD_BACKOFF_CAP_SECONDS)
+                    # 等待完整 FLOOD 窗，禁止 30s 短退避后再发（那会把窗口填满）
+                    backoff = max(float(sec), 0.0)
                     if backoff > 0:
                         await manager.append_log(
                             task_id,
-                            f"[猎号] FLOOD_WAIT {sec}s，换出口后退避 {backoff:.0f}s 再换号继续 "
+                            f"[猎号] FLOOD_WAIT {sec}s，换出口后等待完整窗口 {backoff:.0f}s 再换号 "
                             f"({attempt_idx}/{max_attempts})"
                         )
                         await asyncio.sleep(backoff)
@@ -3667,6 +3847,11 @@ class RegistrationOrchestrator:
             if check_id: await bypass_svc.report_result(check_id, aid, "BANNED")
             manager.update_task_status(task_id, "failed", error=err)
         except ApiIdPublishedFloodError:
+            cls._trip_flood_window(
+                reason="API_ID_PUBLISHED_FLOOD",
+                seconds=HUNT_FLOOD_ABORT_SECONDS,
+                hard=True,
+            )
             attached = bool(push_token)
             err = (
                 f"当前 api_id={profile.get('api_id')} 已被 Telegram 判定为公开泄露 ID，"
@@ -3703,6 +3888,11 @@ class RegistrationOrchestrator:
             manager.update_task_status(task_id, "failed", error=err)
         except (PhoneNumberFloodError, FloodWaitError) as e:
             sec = getattr(e, 'seconds', 0)
+            cls._trip_flood_window(
+                reason="FLOOD_WAIT",
+                seconds=float(sec or 0),
+                hard=int(sec or 0) >= HUNT_FLOOD_ABORT_SECONDS,
+            )
             err = f"触发协议频控与退避限流，需等待 {sec} 秒 (FLOOD_WAIT)"
             await manager.append_log(task_id, f"❌ {err}")
             await cls._refund_and_revoke_channel(sms_svc, act_id, task_id, manager, "FLOOD_WAIT")
@@ -3855,6 +4045,12 @@ class RegistrationOrchestrator:
                     await manager.append_log(tid, "[取消] 取得槽位后发现批次已取消，立即释放")
                     manager.update_task_status(
                         tid, "canceled", error="HUNT_CANCELED: 批次取消，未消耗号码与 Push Token"
+                    )
+                    return
+                flood_stop = await cls._respect_flood_window(tid, manager)
+                if flood_stop:
+                    manager.update_task_status(
+                        tid, "failed", error=f"{flood_stop}: 批次内已触发 FLOOD，停止填满窗口"
                     )
                     return
                 await manager.append_log(

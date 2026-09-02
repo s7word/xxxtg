@@ -122,6 +122,23 @@ class TestCodeDeliveryPlan(unittest.TestCase):
         self.assertFalse(plan.forced_sms)
         self.assertIn("official", plan.summary_for_log())
 
+    def test_strict_alignment_forces_push_and_ignores_hunt_streak(self):
+        plan = resolve_code_delivery_plan(
+            _config(
+                device_alignment_mode="strict",
+                strict_vault_device_alignment=True,
+                api_credential_mode="custom",
+                code_delivery_mode=CODE_DELIVERY_BALANCED,
+            ),
+            _profile(api_id=35337905),
+            hunt_app_streak=9,
+        )
+        self.assertEqual(plan.effective_mode, CODE_DELIVERY_PUSH_REQUIRED)
+        self.assertTrue(plan.should_request_push_token)
+        self.assertTrue(plan.attach_push_token)
+        self.assertFalse(plan.forced_sms)
+        self.assertIn("严格设备对齐", " ".join(plan.notes))
+
     def test_balanced_label_without_emulation(self):
         plan = resolve_code_delivery_plan(_config(), _profile(api_id=35337905))
         self.assertEqual(plan.emulation_label, "balanced")

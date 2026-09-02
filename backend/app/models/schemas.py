@@ -448,6 +448,14 @@ class AppConfigModel(BaseModel):
         le=50,
         description="同一出口代理在猎号任务内最多用于 auth.sendCode 的次数，达到后轮换代理（保留设备与 Push）",
     )
+    proxy_require_country_match: bool = Field(
+        default=True,
+        description=(
+            "猎号/租号强制代理 geo 与号码国家一致。已标注异国的节点（含 fallback）拒绝使用；"
+            "未标注国家的全球节点仍可用。显式指定 proxy_id / 槽位绑定除外。"
+            "严格设备对齐开启时同样强制。"
+        ),
+    )
     hunt_device_max_uses: int = Field(
         default=8,
         ge=1,
@@ -669,6 +677,7 @@ class AppConfigModel(BaseModel):
         "vault_attestation_persist_secrets",
         "app_delivery_fast_drop",
         "flood_rotate_push_token",
+        "proxy_require_country_match",
         "code_settings_allow_firebase",
         "code_settings_unknown_number",
         "code_settings_allow_flashcall",
@@ -680,6 +689,7 @@ class AppConfigModel(BaseModel):
         true_defaults = {
             "app_delivery_fast_drop",
             "flood_rotate_push_token",
+            "proxy_require_country_match",
             "code_settings_allow_firebase",
             "code_settings_unknown_number",
         }

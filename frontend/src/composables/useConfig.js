@@ -79,6 +79,7 @@ const config = reactive({
   hunt_no_number_retries: 20,
   hunt_no_number_retry_delay_sec: 2.0,
   hunt_proxy_max_uses: 5,
+  proxy_require_country_match: true,
   hunt_device_max_uses: 8,
   hunt_default_max_attempts: 100,
   hunt_max_total_leases: 200,
