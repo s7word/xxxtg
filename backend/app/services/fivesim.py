@@ -944,24 +944,40 @@ class FiveSimService:
     ) -> str:
         if not act_id:
             raise FiveSimError("缺少 order_id，无法轮询验证码")
+        last_status = ""
         for attempt in range(1, max_attempts + 1):
             await asyncio.sleep(interval)
-            if log_callback:
-                await log_callback(f"正在异步轮询 5SIM 挑战凭证 (第 {attempt}/{max_attempts} 次)...")
             try:
                 data = await self.check(act_id)
             except Exception as exc:
                 logger.warning("轮询 5SIM 验证码异常: %s", exc)
+                last_status = f"EXC:{exc}"
+                if log_callback:
+                    await log_callback(
+                        f"[接码轮询] 5SIM check 异常={exc} "
+                        f"elapsed={attempt * interval:.0f}s attempt={attempt}/{max_attempts}"
+                    )
                 continue
             status = str(data.get("status") or "").upper()
+            last_status = status
+            sms_count = len(data.get("sms") or []) if isinstance(data.get("sms"), list) else 0
             code = extract_sms_code(data)
+            if log_callback and (
+                attempt == 1 or attempt == max_attempts or attempt % 5 == 0 or bool(code)
+            ):
+                await log_callback(
+                    f"[接码轮询] 5SIM status={status} sms_count={sms_count} "
+                    f"elapsed={attempt * interval:.0f}s attempt={attempt}/{max_attempts}"
+                )
             if code and (status in {"RECEIVED", "FINISHED", "PENDING", ""} or data.get("sms")):
                 return code
             if status == "RECEIVED" and code:
                 return code
             if status in TERMINAL_FAIL_STATUSES:
                 raise FiveSimError(f"5SIM 订单已终止 ({status}): {data}")
-        raise TimeoutError("等待 5SIM 带外挑战证明超时 (已达最大重试轮次)")
+        raise TimeoutError(
+            f"等待 5SIM 带外挑战证明超时 (已达最大重试轮次, last_status={last_status})"
+        )
 
     poll_ephemeral_challenge_proof = wait_for_code
 

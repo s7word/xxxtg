@@ -1,0 +1,41 @@
+{
+  "applied": {
+    "force_skip_push_attach": false,
+    "code_delivery_mode": "push_required",
+    "email_provider_mode": "smsbower_only",
+    "code_settings_allow_firebase": true,
+    "code_settings_unknown_number": true,
+    "code_settings_allow_flashcall": false,
+    "code_settings_allow_missed_call": false,
+    "force_resend_on_app": true,
+    "payment_required_probe": "play_market",
+    "pin_app_version_substr": "",
+    "hunt_device_max_uses": 1,
+    "hunt_proxy_max_uses": 1,
+    "official_client_emulation": true,
+    "api_credential_mode": "official",
+    "active_app_type": "telegram_android",
+    "custom_api_id": 6,
+    "custom_api_hash": "eb06d4abfb49dc3eeb1aeb98ae0f581e"
+  },
+  "tasks": [
+    {
+      "task_id": "8cadf449",
+      "status": "failed",
+      "error": "RECAPTCHA_CHECK 人机挑战未能突破: REGHelp RecaptchaMobile 解题失败: 连接 REGHelp RecaptchaMobile 失败 (已尝试 https://api.reghelp.net): 所有 REGHelp 候选网关均不可达 (https://api.reghelp.net -> Proxy Server co",
+      "probe_lines": []
+    },
+    {
+      "task_id": "37399671",
+      "status": "failed",
+      "error": "需官方 App 内购，自动化不可完成 (PAYMENT_REQUIRED_OFFICIAL_ONLY): auth.SentCodePaymentRequired USD $1.00 product=telegram_premium.one_week.auth premium_days=7，需官方 App 内购",
+      "probe_lines": [
+        "[05:17:37] [official] EmailVerifiedLogin 完成，继续处理新 sent_code SentCodePaymentRequired (type=SentCodePaymentRequired next_type=None timeout=None store_product=telegram_premium.one_week.auth currency=USD amount=100 premium_days=7 amount_display=USD $1.00)",
+        "[05:17:37] 挑战已由服务端下发! 分发通道类型: SentCodePaymentRequired (type=SentCodePaymentRequired next_type=None timeout=None store_product=telegram_premium.one_week.auth currency=USD amount=100 premium_days=7 amount_display=USD $1.00) [模式=official]",
+        "[05:17:37] [PAYMENT_PROBE] 调用 payments.assignPlayMarketTransaction（无真实 Play 收据，预期失败，仅记录 RPC）",
+        "[05:17:38] [PAYMENT_PROBE] assignPlayMarketTransaction 失败（符合预期）: RPCError 400: PLAYMARKET_RECEIPT_INVALID (caused by AssignPlayMarketTransactionRequest)",
+        "[05:17:41] ❌ 需官方 App 内购，自动化不可完成 (PAYMENT_REQUIRED_OFFICIAL_ONLY): auth.SentCodePaymentRequired USD $1.00 product=telegram_premium.one_week.auth premium_days=7，需官方 App 内购"
+      ]
+    }
+  ]
+}
