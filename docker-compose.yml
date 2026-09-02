@@ -10,6 +10,7 @@ services:
     volumes:
       - ./data:/app/data
       - ./lod_user:/app/lod_user
+      - ./backend:/app/backend
     environment:
       - DATA_DIR=/app/data
       - DEVICE_DBS_DIR=/app/data/device_dbs
