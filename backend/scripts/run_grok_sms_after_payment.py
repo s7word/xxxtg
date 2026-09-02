@@ -68,7 +68,7 @@ def _hypotheses() -> Dict[str, Dict[str, Any]]:
             "count": 3,
             "threads": 3,
             "max_attempts": 2,
-            "max_price": 0.85,
+            "max_price": 1.2,
             "sms_provider": "smsbower",
             "verify": "official_api6",
             "apply": {
@@ -86,7 +86,7 @@ def _hypotheses() -> Dict[str, Dict[str, Any]]:
             "count": 3,
             "threads": 3,
             "max_attempts": 2,
-            "max_price": 0.85,
+            "max_price": 1.2,
             "sms_provider": "smsbower",
             "verify": "official_api6",
             "apply": {
@@ -105,7 +105,7 @@ def _hypotheses() -> Dict[str, Dict[str, Any]]:
             "count": 3,
             "threads": 3,
             "max_attempts": 2,
-            "max_price": 0.85,
+            "max_price": 1.2,
             "sms_provider": "grizzlysms",
             "verify": "official_api6",
             "apply": {
@@ -122,7 +122,7 @@ def _hypotheses() -> Dict[str, Dict[str, Any]]:
             "count": 2,
             "threads": 2,
             "max_attempts": 2,
-            "max_price": 0.8,
+            "max_price": 1.8,
             "sms_provider": "smsbower",
             "verify": "vault_api4",
             "apply": {
@@ -141,7 +141,7 @@ def _hypotheses() -> Dict[str, Dict[str, Any]]:
             "count": 3,
             "threads": 3,
             "max_attempts": 2,
-            "max_price": 0.8,
+            "max_price": 1.8,
             "sms_provider": "smsbower",
             "verify": "official_api6",
             "apply": {
@@ -158,7 +158,7 @@ def _hypotheses() -> Dict[str, Dict[str, Any]]:
             "count": 3,
             "threads": 3,
             "max_attempts": 2,
-            "max_price": 0.85,
+            "max_price": 1.2,
             "sms_provider": "smsbower",
             "verify": "official_api6",
             "apply": {
@@ -218,7 +218,7 @@ def country_stock(client: ApiClient, provider: str, country: str) -> Dict[str, A
             break
     count = 0
     if hit:
-        for key in ("count", "qty", "stock", "available"):
+        for key in ("stock", "qty", "available", "count"):
             if hit.get(key) is not None:
                 try:
                     count = int(hit.get(key) or 0)
