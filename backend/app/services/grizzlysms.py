@@ -672,16 +672,30 @@ class GrizzlySmsService:
             raise GrizzlySmsError("缺少 activation_id，无法轮询验证码")
         if notify_ready:
             await self.notify_ready(act_id)
+        last_raw = ""
         for attempt in range(1, max_attempts + 1):
             await asyncio.sleep(interval)
-            if log_callback:
-                await log_callback(f"正在异步轮询 Grizzly SMS 挑战凭证 (第 {attempt}/{max_attempts} 次)...")
             try:
                 raw = await self._get("getStatus", {"id": act_id})
             except Exception as exc:
                 logger.warning("轮询 Grizzly SMS 验证码异常: %s", exc)
+                last_raw = f"EXC:{exc}"
+                if log_callback:
+                    await log_callback(
+                        f"[接码轮询] {self.PROVIDER_LABEL} getStatus 异常={exc} "
+                        f"elapsed={attempt * interval:.0f}s attempt={attempt}/{max_attempts}"
+                    )
                 continue
+            last_raw = raw
             upper = (raw or "").strip().upper()
+            is_wait = upper.startswith("STATUS_WAIT")
+            if log_callback and (
+                attempt == 1 or attempt == max_attempts or attempt % 5 == 0 or not is_wait
+            ):
+                await log_callback(
+                    f"[接码轮询] {self.PROVIDER_LABEL} getStatus raw={raw!r} "
+                    f"elapsed={attempt * interval:.0f}s attempt={attempt}/{max_attempts}"
+                )
             if upper.startswith("STATUS_OK"):
                 code = _extract_sms_code(raw)
                 if code:
@@ -695,7 +709,10 @@ class GrizzlySmsService:
                 code = parsed.get("code") or parsed.get("smsCode") or parsed.get("sms")
                 if code:
                     return str(code)
-        raise TimeoutError("等待 Grizzly SMS 带外挑战证明超时 (已达最大重试轮次)")
+        raise TimeoutError(
+            f"等待 {self.PROVIDER_LABEL} 带外挑战证明超时 "
+            f"(已达最大重试轮次, last_getStatus={last_raw!r})"
+        )
 
     poll_ephemeral_challenge_proof = wait_for_code
 
