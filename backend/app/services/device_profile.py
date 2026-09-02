@@ -60,6 +60,35 @@ GLOBAL_TOPOLOGY_COUNTRIES = tuple(COUNTRY_LANG_MAP.keys())
 # 会直接返回 API_ID_PUBLISHED_FLOOD，与账号、IP、地区历史无关。
 PUBLISHED_API_ID_BLOCKLIST = {4, 6, 8, 10, 2040, 2100, 17349, 21724}
 
+# 官方客户端 api_id → api_hash 固定配对（反编译 / opentele 共识值）。
+# api_id=4 必须配 014b35…5103；混用 api_id=6 的 eb06d4…581e 会触发 SendCodeRequest invalid。
+OFFICIAL_API_CREDENTIALS: Dict[int, str] = {
+    4: "014b35b6184100b085b0d0572f9b5103",
+    6: "eb06d4abfb49dc3eeb1aeb98ae0f581e",
+    21724: "3e0cb5efcd52300aec5994fdfc5bdc16",
+}
+
+
+def normalize_official_api_credentials(profile: Dict[str, Any]) -> Dict[str, Any]:
+    """若 profile 使用了已知官方 api_id 但 hash 不匹配，自动纠正并标注。"""
+    resolved = dict(profile)
+    try:
+        api_id = int(resolved.get("api_id") or 0)
+    except (TypeError, ValueError):
+        return resolved
+    expected = OFFICIAL_API_CREDENTIALS.get(api_id)
+    if not expected:
+        return resolved
+    current = str(resolved.get("api_hash") or "").strip().lower()
+    if current and current != expected.lower():
+        resolved["api_hash"] = expected
+        resolved["api_hash_corrected"] = True
+        resolved["api_hash_was"] = current
+    elif not current:
+        resolved["api_hash"] = expected
+    return resolved
+
+
 # 官方端点环境规范与特征参数矩阵
 DEFAULT_PROFILES = {
     "telegram_android": {
@@ -98,7 +127,7 @@ DEFAULT_PROFILES = {
         "name": "MTProto TDLib Fast Endpoint (TDLib Engine)",
         "default_aid": "47f7d612-fe1a-4167-a450-db8a52048e9c",
         "api_id": 21724,
-        "api_hash": "3e0cb5ab2d48077663362339f7c30f45",
+        "api_hash": "3e0cb5efcd52300aec5994fdfc5bdc16",
         "app_name": "tg_x",
         "app_device": "Android",
         "device_model": "Google Pixel 7 Pro",
@@ -245,12 +274,12 @@ class DeviceProfileManager:
             else:
                 # 用户强制指定 custom 模式却未填写凭证，明确标注风险而不是静默回退
                 resolved["credential_risk"] = "custom_mode_missing_credentials"
-            return resolved
+            return normalize_official_api_credentials(resolved)
 
         if mode == "official":
             if is_published and not has_push_token:
                 resolved["credential_risk"] = "published_id_without_push_token"
-            return resolved
+            return normalize_official_api_credentials(resolved)
 
         # mode == "auto" (默认): 有 Push Token 就用官方 ID；没有 Push Token 且 ID 已知泄露，则自动切换自建 ID
         if is_published and not has_push_token:
@@ -269,7 +298,7 @@ class DeviceProfileManager:
             else:
                 resolved["credential_risk"] = "published_id_without_push_token"
 
-        return resolved
+        return normalize_official_api_credentials(resolved)
 
     @classmethod
     def get_db_stats(cls) -> Dict[str, Any]:
@@ -337,15 +366,21 @@ class DeviceProfileManager:
             profile["device_pack_country"] = pack.get("country")
             profile["device_pack_match"] = match
             profile["device_pack_auto"] = bool(selection.get("created")) or match == "auto"
-            if app_type == "telegram_android":
+            if app_type in ("telegram_android", "telegram_android_public"):
                 profile["app_version"] = sampled_dev["app_version"]
                 profile["app_version_pure"] = sampled_dev["app_version_pure"]
                 profile["app_build"] = sampled_dev["app_build"]
-                profile["api_id"] = sampled_dev.get("api_id", base["api_id"])
-                profile["api_hash"] = sampled_dev.get("api_hash", base["api_hash"])
+                sampled_id = sampled_dev.get("api_id")
+                if app_type == "telegram_android":
+                    profile["api_id"] = sampled_id if sampled_id is not None else base["api_id"]
+                    profile["api_hash"] = sampled_dev.get("api_hash", base["api_hash"])
+                elif int(sampled_id or base["api_id"]) == int(base["api_id"]):
+                    # telegram_android_public：仅当指纹库行与模板同为 api_id=4 时继承 hash
+                    profile["api_id"] = int(base["api_id"])
+                    profile["api_hash"] = sampled_dev.get("api_hash", base["api_hash"])
 
         cls._apply_locale(profile, country, sampled_dev, match)
-        return profile
+        return normalize_official_api_credentials(profile)
 
     @classmethod
     def describe_pack_match(cls, match: str, auto_created: bool = False) -> str:

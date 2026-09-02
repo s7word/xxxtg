@@ -2953,6 +2953,14 @@ class RegistrationOrchestrator:
                             f"[official] 官方客户端模拟生效：api_id={profile['api_id']} "
                             f"credential_source={profile.get('credential_source')}"
                         )
+                    if profile.get("api_hash_corrected"):
+                        await manager.append_log(
+                            task_id,
+                            f"⚠️ api_id={profile['api_id']} 的 api_hash 与官方配对不符"
+                            f"（原值 {str(profile.get('api_hash_was', ''))[:8]}…），"
+                            f"已自动纠正为 OFFICIAL_API_CREDENTIALS 中的正确 hash，"
+                            f"避免 SendCodeRequest invalid"
+                        )
                     if profile["credential_source"] == "custom":
                         await manager.append_log(task_id, f"API 凭证策略: 强制使用自建开发者凭证 (api_id={profile['api_id']})")
                     elif profile["credential_source"] == "custom_auto_fallback":
