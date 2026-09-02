@@ -264,6 +264,7 @@ CHANNEL_FAIL_NOTES = {
     "SENT_CODE_TYPE_APP": "auth.sendCode 仅下发站内 App 推送（未必已注册）",
     "PAYMENT_REQUIRED_OFFICIAL_ONLY": "需官方 App 内购，自动化不可完成",
     "EMAIL_SETUP_FAILED": "SetUpEmailRequired 流程失败",
+    "EMAIL_SERVICE_DISABLED": "REGHelp Email 服务暂不可用 (SERVICE_DISABLED，平台侧关闭)",
     "EMAIL_CODE_UNAVAILABLE": "SentCodeTypeEmailCode 无法接收该邮箱验证码",
 }
 
@@ -313,12 +314,33 @@ HUNT_SWAPPABLE_SEND_ERROR_REASONS = {
 HUNT_SWAPPABLE_SEND_ERRORS = tuple(HUNT_SWAPPABLE_SEND_ERROR_REASONS)
 
 
+# ISO 4217 常见币种小数位（Telegram amount 为最小货币单位整数）
+_CURRENCY_DECIMALS: Dict[str, int] = {
+    "USD": 2, "EUR": 2, "GBP": 2, "RUB": 2, "UAH": 2, "BYN": 2,
+    "JPY": 0, "KRW": 0, "VND": 0,
+}
+
+
 class SentCodeAppDeliveryError(Exception):
     """服务端将验证码下发到已登录官方客户端，带外短信网关无法接收。"""
 
-    def __init__(self, message: str, reason: str = "SENT_CODE_TYPE_APP"):
+    def __init__(
+        self,
+        message: str,
+        reason: str = "SENT_CODE_TYPE_APP",
+        payment_required: Optional[Dict[str, Any]] = None,
+    ):
         super().__init__(message)
         self.reason = reason
+        self.payment_required = payment_required
+
+
+class RequiredPushTokenMissingError(Exception):
+    """通道计划要求 attach Push，但 Attestation 网关未返回可用 Token。"""
+
+    def __init__(self, message: str, api_id: Optional[int] = None):
+        super().__init__(message)
+        self.api_id = api_id
 
 
 class RegistrationTaskManager:
@@ -1460,6 +1482,41 @@ class RegistrationOrchestrator:
             app_sandbox=False if token else None,
         )
 
+    @staticmethod
+    def _api_hash_for_log(profile: Dict[str, Any]) -> str:
+        raw = str(profile.get("api_hash") or "").strip()
+        if not raw:
+            return "-"
+        return raw
+
+    @classmethod
+    def _published_flood_error_message(
+        cls,
+        profile: Dict[str, Any],
+        push_token: Optional[str],
+        plan,
+    ) -> str:
+        api_id = profile.get("api_id")
+        api_hash = cls._api_hash_for_log(profile)
+        attached = bool(getattr(plan, "attach_push_token", False) and push_token)
+        if attached:
+            return (
+                f"当前 api_id={api_id} api_hash={api_hash} 已被 Telegram 判定为公开泄露 ID，"
+                f"本次已 attach REGHelp Push Token（len={len(push_token)}），"
+                "服务端仍返回 API_ID_PUBLISHED_FLOOD。"
+                "这不是「未申请 Push」：Token 未被接受为合法平台签署凭证"
+                "（网关签发无效、指纹/api_id 不匹配或 Token 过期）。"
+                "请检查 Attestation 网关连通性与设备指纹后重试，或改用自建非泄露 api_id"
+            )
+        return (
+            f"当前 api_id={api_id} api_hash={api_hash} 已被 Telegram 判定为公开泄露 ID，"
+            "在缺少合法 Push Token 的情况下触发 API_ID_PUBLISHED_FLOOD (SendCodeRequest)。"
+            "请在「🔐 凭证库 / 开发者 API」用已有账号申请专属 api_id/api_hash，"
+            "或在「全局参数拓扑」填入自建 custom_api_id / custom_api_hash "
+            "并将 api_credential_mode 设为 auto 或 custom，"
+            "或修复 Attestation 网关连通性以获取合法 Push Token 后重试"
+        )
+
     @classmethod
     def _build_code_settings_from_plan(
         cls,
@@ -1504,6 +1561,82 @@ class RegistrationOrchestrator:
         return cls._sent_code_type_name(sent_code) in PAYMENT_REQUIRED_TYPE_NAMES
 
     @classmethod
+    def _format_payment_amount(cls, currency: Optional[str], amount: Any) -> Optional[str]:
+        """将 Telegram 最小货币单位 amount 格式化为可读主金额（如 USD $1.00）。"""
+        if amount is None:
+            return None
+        try:
+            minor = int(amount)
+        except (TypeError, ValueError):
+            return None
+        code = (currency or "USD").strip().upper() or "USD"
+        decimals = _CURRENCY_DECIMALS.get(code, 2)
+        if decimals <= 0:
+            major = minor
+            formatted = f"{major}"
+        else:
+            major = minor / (10 ** decimals)
+            formatted = f"{major:.{decimals}f}"
+        if code == "USD":
+            return f"USD ${formatted}"
+        return f"{code} {formatted}"
+
+    @classmethod
+    def extract_payment_required_info(cls, sent_code: Any) -> Optional[Dict[str, Any]]:
+        """从 auth.SentCodePaymentRequired 提取结构化内购字段。"""
+        if not cls._is_payment_required(sent_code):
+            return None
+        currency = getattr(sent_code, "currency", None)
+        amount_raw = getattr(sent_code, "amount", None)
+        info: Dict[str, Any] = {
+            "store_product": getattr(sent_code, "store_product", None),
+            "currency": currency,
+            "amount": amount_raw,
+            "amount_display": cls._format_payment_amount(currency, amount_raw),
+            "premium_days": getattr(sent_code, "premium_days", None),
+            "support_email_address": getattr(sent_code, "support_email_address", None),
+            "support_email_subject": getattr(sent_code, "support_email_subject", None),
+            "phone_code_hash": getattr(sent_code, "phone_code_hash", None),
+        }
+        return info
+
+    @classmethod
+    def _format_payment_required_log(cls, info: Optional[Dict[str, Any]]) -> str:
+        if not info:
+            return "内购信息不可用"
+        parts: List[str] = []
+        display = info.get("amount_display")
+        if display:
+            parts.append(str(display))
+        elif info.get("currency") and info.get("amount") is not None:
+            parts.append(f"{info['currency']} {info['amount']}")
+        product = info.get("store_product")
+        if product:
+            parts.append(f"product={product}")
+        days = info.get("premium_days")
+        if days is not None:
+            parts.append(f"premium_days={days}")
+        return " ".join(parts) if parts else "内购信息不可用"
+
+    @classmethod
+    def _attach_payment_required_to_task(
+        cls,
+        task_id: str,
+        manager: "RegistrationTaskManager",
+        info: Optional[Dict[str, Any]],
+    ) -> None:
+        if not info:
+            return
+        task = manager.get_task(task_id) or {}
+        status = task.get("status") or "running"
+        manager.update_task_status(
+            task_id,
+            status,
+            payment_required=info,
+            delivery_type="SentCodePaymentRequired",
+        )
+
+    @classmethod
     def _is_email_setup(cls, sent_code: Any) -> bool:
         return cls._sent_code_type_name(sent_code) in EMAIL_SETUP_TYPE_NAMES
 
@@ -1544,6 +1677,15 @@ class RegistrationOrchestrator:
             extras.append(f"store_product={getattr(sent_code, 'store_product', None)}")
             extras.append(f"currency={getattr(sent_code, 'currency', None)}")
             extras.append(f"amount={getattr(sent_code, 'amount', None)}")
+            premium_days = getattr(sent_code, "premium_days", None)
+            if premium_days is not None:
+                extras.append(f"premium_days={premium_days}")
+            display = cls._format_payment_amount(
+                getattr(sent_code, "currency", None),
+                getattr(sent_code, "amount", None),
+            )
+            if display:
+                extras.append(f"amount_display={display}")
         code_type = getattr(sent_code, "type", None)
         pattern = getattr(code_type, "email_pattern", None) if code_type is not None else None
         if pattern:
@@ -1639,6 +1781,13 @@ class RegistrationOrchestrator:
         return 0
 
     @classmethod
+    def _email_setup_failure_reason(cls, exc: Optional[Exception]) -> str:
+        text = str(exc or "").upper()
+        if "SERVICE_DISABLED" in text:
+            return "EMAIL_SERVICE_DISABLED"
+        return "EMAIL_SETUP_FAILED"
+
+    @classmethod
     async def _complete_setup_email(
         cls,
         client,
@@ -1650,10 +1799,10 @@ class RegistrationOrchestrator:
         profile: Optional[Dict[str, Any]],
         emulation_label: str,
     ) -> Any:
-        """官方流程：SetUpEmailRequired → REGHelp 临时邮箱 → verifyEmail → 新 sent_code。"""
+        """官方流程：SetUpEmailRequired → 临时邮箱提供源 → verifyEmail → 新 sent_code。"""
         if bypass_svc is None or not hasattr(bypass_svc, "get_login_email"):
             raise SentCodeAppDeliveryError(
-                "SentCodeTypeSetUpEmailRequired：无 REGHelp Email 客户端，无法完成登录邮箱绑定",
+                "SentCodeTypeSetUpEmailRequired：无 Email 提供源客户端，无法完成登录邮箱绑定",
                 reason="EMAIL_SETUP_FAILED",
             )
         profile = profile or {}
@@ -1666,7 +1815,7 @@ class RegistrationOrchestrator:
         await manager.append_log(
             task_id,
             f"[{emulation_label}] 官方流程 SetUpEmailRequired：account.sendVerifyEmailCode "
-            f"(purpose=EmailVerifyPurposeLoginSetup) + REGHelp /email/getEmail",
+            f"(purpose=EmailVerifyPurposeLoginSetup) + 临时邮箱提供源",
         )
         markers = str(profile.get("app_device") or "").lower()
         preferred = "icloud" if "ios" in markers else "gmail"
@@ -1686,12 +1835,12 @@ class RegistrationOrchestrator:
                     break
             except Exception as exc:
                 last_err = exc
-                await manager.append_log(task_id, f"⚠️ REGHelp Email type={email_type} 失败: {exc}")
+                await manager.append_log(task_id, f"⚠️ Email type={email_type} 失败: {exc}")
                 inbox = None
         if not inbox or not getattr(inbox, "email", None):
             raise SentCodeAppDeliveryError(
-                f"REGHelp 未能提供临时邮箱: {last_err}",
-                reason="EMAIL_SETUP_FAILED",
+                f"未能提供临时邮箱: {last_err}",
+                reason=cls._email_setup_failure_reason(last_err),
             )
         await manager.append_log(task_id, f"[{emulation_label}] 临时邮箱已就绪: {inbox.email}")
         purpose = types.EmailVerifyPurposeLoginSetup(
@@ -1718,12 +1867,12 @@ class RegistrationOrchestrator:
                 )
             except Exception as exc:
                 raise SentCodeAppDeliveryError(
-                    f"REGHelp Email 验证码超时/失败: {exc}",
+                    f"Email 验证码超时/失败: {exc}",
                     reason="EMAIL_SETUP_FAILED",
                 ) from exc
         if not code:
             raise SentCodeAppDeliveryError(
-                "REGHelp Email 未返回验证码",
+                "Email 未返回验证码",
                 reason="EMAIL_SETUP_FAILED",
             )
         await manager.append_log(
@@ -1830,7 +1979,7 @@ class RegistrationOrchestrator:
         """解析 sendCode 分发通道。
 
         - SentCodeTypeApp：尝试 ResendCode 降级到短信，失败则快退
-        - SetUpEmailRequired：REGHelp Email + account.verifyEmail 后继续
+        - SetUpEmailRequired：SMS Bower 临时邮箱 + account.verifyEmail 后继续
         - EmailCode：无对应邮箱时快退，不空等 SMS
         - PaymentRequired：标记需官方 App 内购，快退
         - FirebaseSms：Play Integrity + requestFirebaseSms 后按短信轮询
@@ -1843,15 +1992,19 @@ class RegistrationOrchestrator:
         )
 
         if cls._is_payment_required(sent_code):
-            product = getattr(sent_code, "store_product", None)
+            pay_info = cls.extract_payment_required_info(sent_code)
+            cls._attach_payment_required_to_task(task_id, manager, pay_info)
+            pay_summary = cls._format_payment_required_log(pay_info)
             await manager.append_log(
                 task_id,
-                f"[{emulation_label}] PaymentRequired：需官方 App 内购 "
-                f"(store_product={product})，自动化不可完成，快退以免空等 SMS"
+                f"[{emulation_label}] PaymentRequired: {pay_summary} — "
+                "需官方 App 内购，自动化不可完成，快退以免空等 SMS",
             )
+            product = (pay_info or {}).get("store_product")
             raise SentCodeAppDeliveryError(
-                f"auth.SentCodePaymentRequired store_product={product}，需官方 App 内购",
+                f"auth.SentCodePaymentRequired {pay_summary}，需官方 App 内购",
                 reason="PAYMENT_REQUIRED_OFFICIAL_ONLY",
+                payment_required=pay_info,
             )
 
         if cls._is_email_setup(sent_code):
@@ -2162,7 +2315,25 @@ class RegistrationOrchestrator:
         push_token_obtained_at, delivery_plan_for_refund)。
         """
         plan = delivery_plan
+        if plan.attach_push_token and not push_token:
+            api_id = profile.get("api_id")
+            api_hash = cls._api_hash_for_log(profile)
+            raise RequiredPushTokenMissingError(
+                f"通道计划要求 attach Push Token，但 Attestation 网关未返回可用凭证；"
+                f"拒绝以 api_id={api_id} api_hash={api_hash} 裸发 sendCode"
+                f"（否则会误报成 API_ID_PUBLISHED_FLOOD / 国家结论）",
+                api_id=api_id if isinstance(api_id, int) else None,
+            )
         code_settings = cls._build_code_settings_from_plan(push_token, plan)
+        await manager.append_log(
+            task_id,
+            "sendCode 凭证核对: "
+            f"api_id={profile.get('api_id')} "
+            f"api_hash={cls._api_hash_for_log(profile)} "
+            f"attach_token={'是' if (plan.attach_push_token and push_token) else '否'} "
+            f"push_token={'有' if push_token else '无'} "
+            f"code_settings.token={'有' if code_settings.token else '无'}"
+        )
         await manager.append_log(task_id, "调用 auth.sendCode 触发服务端瞬时握手挑战分发...")
         try:
             sent_code = await cls._send_code_with_recaptcha(
@@ -2199,7 +2370,22 @@ class RegistrationOrchestrator:
                 hunt_enabled=hunt_enabled,
             )
             plan = escalated
+            if plan.attach_push_token and not push_token:
+                api_id = profile.get("api_id")
+                raise RequiredPushTokenMissingError(
+                    f"FLOOD escalate 后仍未拿到 Push Token，拒绝以 api_id={api_id} 再次裸发 sendCode",
+                    api_id=api_id if isinstance(api_id, int) else None,
+                )
             code_settings = cls._build_code_settings_from_plan(push_token, plan)
+            await manager.append_log(
+                task_id,
+                "sendCode 凭证核对: "
+                f"api_id={profile.get('api_id')} "
+                f"api_hash={cls._api_hash_for_log(profile)} "
+                f"attach_token={'是' if (plan.attach_push_token and push_token) else '否'} "
+                f"push_token={'有' if push_token else '无'} "
+                f"code_settings.token={'有' if code_settings.token else '无'}"
+            )
             sent_code = await cls._send_code_with_recaptcha(
                 client=client,
                 phone=phone,
@@ -2522,6 +2708,7 @@ class RegistrationOrchestrator:
         push_provider = None
         push_token_obtained_at = None
         credentials_resolved = False
+        delivery_plan = None
         session_path = None
         meta_path = None
         phone_code_hash = None
@@ -2841,7 +3028,17 @@ class RegistrationOrchestrator:
                         await manager.append_log(
                             task_id,
                             f"[official] 官方客户端模拟生效：api_id={profile['api_id']} "
-                            f"credential_source={profile.get('credential_source')}"
+                            f"api_hash={profile.get('api_hash')} "
+                            f"credential_source={profile.get('credential_source')} "
+                            f"push_token={'有' if push_token else '无'}"
+                        )
+                    if profile.get("api_hash_corrected"):
+                        await manager.append_log(
+                            task_id,
+                            f"⚠️ api_id={profile['api_id']} 的 api_hash 与官方配对不符"
+                            f"（原值 {str(profile.get('api_hash_was', ''))[:8]}…），"
+                            f"已自动纠正为 OFFICIAL_API_CREDENTIALS 中的正确 hash，"
+                            f"避免 SendCodeRequest invalid"
                         )
                     if profile["credential_source"] == "custom":
                         await manager.append_log(task_id, f"API 凭证策略: 强制使用自建开发者凭证 (api_id={profile['api_id']})")
@@ -3401,14 +3598,7 @@ class RegistrationOrchestrator:
             if check_id: await bypass_svc.report_result(check_id, aid, "BANNED")
             manager.update_task_status(task_id, "failed", error=err)
         except ApiIdPublishedFloodError:
-            err = (
-                f"当前 api_id={profile.get('api_id')} 已被 Telegram 判定为公开泄露 ID，"
-                "在缺少合法 Push Token 的情况下触发 API_ID_PUBLISHED_FLOOD (SendCodeRequest)。"
-                "请在「🔐 凭证库 / 开发者 API」用已有账号申请专属 api_id/api_hash，"
-                "或在「全局参数拓扑」填入自建 custom_api_id / custom_api_hash "
-                "并将 api_credential_mode 设为 auto 或 custom，"
-                "或修复 Attestation 网关连通性以获取合法 Push Token 后重试"
-            )
+            err = cls._published_flood_error_message(profile, push_token, delivery_plan)
             await manager.append_log(task_id, f"❌ {err}")
             await cls._refund_and_revoke_channel(sms_svc, act_id, task_id, manager, "API_ID_PUBLISHED_FLOOD")
             await cls._refund_push_token(
@@ -3416,6 +3606,16 @@ class RegistrationOrchestrator:
                 phone, task_id, manager, "API_ID_PUBLISHED_FLOOD",
             )
             if check_id: await bypass_svc.report_result(check_id, aid, "API_ID_PUBLISHED_FLOOD")
+            manager.update_task_status(task_id, "failed", error=err)
+        except RequiredPushTokenMissingError as ex:
+            err = str(ex)
+            await manager.append_log(task_id, f"❌ {err}")
+            await cls._refund_and_revoke_channel(sms_svc, act_id, task_id, manager, "PUSH_TOKEN_MISSING")
+            await cls._refund_push_token(
+                bypass_svc, push_task_id, push_provider, push_token_obtained_at,
+                phone, task_id, manager, "PUSH_TOKEN_MISSING",
+            )
+            if check_id: await bypass_svc.report_result(check_id, aid, "PUSH_TOKEN_MISSING")
             manager.update_task_status(task_id, "failed", error=err)
         except (PhoneNumberFloodError, FloodWaitError) as e:
             sec = getattr(e, 'seconds', 0)
@@ -3462,7 +3662,12 @@ class RegistrationOrchestrator:
                 phone, task_id, manager, reason,
             )
             if check_id: await bypass_svc.report_result(check_id, aid, reason)
-            manager.update_task_status(task_id, "failed", error=err)
+            fail_kwargs: Dict[str, Any] = {"error": err}
+            pay_info = getattr(ex, "payment_required", None)
+            if pay_info:
+                fail_kwargs["payment_required"] = pay_info
+                fail_kwargs["delivery_type"] = "SentCodePaymentRequired"
+            manager.update_task_status(task_id, "failed", **fail_kwargs)
         except TimeoutError as ex:
             err = f"等待带外挑战证明超时 (NO_CODE): {str(ex) or repr(ex)}"
             await manager.append_log(task_id, f"❌ {err}")
