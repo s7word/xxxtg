@@ -353,6 +353,9 @@ class HuntRunMixin:
         client.connect = AsyncMock()
 
         stack = ExitStack()
+        from backend.app.services.registrar import SendCodeFloodWindow
+
+        SendCodeFloodWindow.get().reset()
         patches = [
             patch("backend.app.services.registrar.ConfigManager.get_instance", return_value=cfg_mgr),
             patch("backend.app.services.registrar.VakSmsService", return_value=sms),
@@ -578,9 +581,9 @@ class TestHuntNoDoubleCancel(HuntRunMixin, unittest.IsolatedAsyncioTestCase):
 
         logs = "\n".join(self.manager.get_task(self.task_id)["logs"])
         self.assertIn("出口已轮换", logs)
-        # FLOOD 秒数被压到 30s 上限，禁止无退避紧凑烧号
+        # 必须等满 Telegram 给出的 FLOOD 窗，禁止 30s 短退避后再发把窗口填满
         self.assertTrue(sleeps)
-        self.assertEqual(max(sleeps), 30.0)
+        self.assertEqual(max(sleeps), 120.0)
         self.assertEqual(sms.cancel_calls, ["act-1", "act-2"])
 
     async def test_hunt_sms_stage_keeps_full_poll_window(self):

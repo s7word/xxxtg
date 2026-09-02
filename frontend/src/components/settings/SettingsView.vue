@@ -599,6 +599,7 @@
           <input v-model.number="config.hunt_sms_first_after_app_streak" type="number" min="0" max="20" class="ce-input mono w-sm" />
           <p class="ce-tiny ce-muted" style="margin-top:6px">
             <code>hunt_sms_first_after_app_streak</code>：连续 SentCodeTypeApp 达到该值后后续轮次不 attach Push。0=关闭。
+            严格设备对齐或官方模拟开启时忽略此项，始终 attach Push。
           </p>
         </div>
         <div>
@@ -669,8 +670,13 @@
             <input v-model.number="config.hunt_proxy_max_uses" type="number" min="1" max="50" class="ce-input mono w-sm" />
             <p class="ce-tiny ce-muted" style="margin-top:6px">
               <code>hunt_proxy_max_uses</code>：达到后尝试从注册代理池换同国节点。批量槽位或显式指定出口时不会轮换。
+              严格模式强制为 1（一号一代理）。
             </p>
           </div>
+          <label class="ce-check">
+            <input type="checkbox" v-model="config.proxy_require_country_match" />
+            代理国必须等于号国（已标注异国的节点 / fallback 拒绝使用）
+          </label>
           <div>
             <label class="ce-label">同一设备指纹最多 sendCode 次数</label>
             <input v-model.number="config.hunt_device_max_uses" type="number" min="1" max="50" class="ce-input mono w-sm" />

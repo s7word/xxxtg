@@ -61,7 +61,7 @@ def is_strict_alignment(config: Any) -> bool:
     """``device_alignment_mode=strict`` 或 ``strict_vault_device_alignment=true``。
 
     SimpleNamespace / 缺字段时默认 **loose**（单测不误开）。
-    AppConfigModel 生产默认是 strict。
+    AppConfigModel 默认也是 loose，需 Settings 勾选或写配置开启。
     """
     if config is None:
         return False

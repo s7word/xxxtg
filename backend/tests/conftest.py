@@ -28,3 +28,13 @@ def test_data_dir() -> Path:
 @atexit.register
 def _cleanup_test_data_dir() -> None:
     shutil.rmtree(_TEST_DATA_DIR, ignore_errors=True)
+
+
+def pytest_runtest_setup(item):  # noqa: ARG001
+    """每条用例前清掉进程级 FLOOD 窗，避免猎号撞闸污染后续测试。"""
+    try:
+        from backend.app.services.registrar import SendCodeFloodWindow
+
+        SendCodeFloodWindow.get().reset()
+    except Exception:
+        pass
