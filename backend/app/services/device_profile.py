@@ -77,6 +77,22 @@ DEFAULT_PROFILES = {
         "app_build": "69792",
         "lang_pack": "android"
     },
+    # 早期 Android 公开泄露凭证 (api_id=4)，用于对照 official 路径 PaymentRequired 实验
+    "telegram_android_public": {
+        "key": "telegram_android_public",
+        "name": "MTProto Android Legacy Public (api_id=4)",
+        "default_aid": "308aba4e-5680-466b-81a5-477ac6befa95",
+        "api_id": 4,
+        "api_hash": "014b35b6184100b085b0d0572f9b5103",
+        "app_name": "tg",
+        "app_device": "Android",
+        "device_model": "Samsung Galaxy S23 Ultra",
+        "system_version": "SDK 33",
+        "app_version": "12.9.1 (69792)",
+        "app_version_pure": "12.9.1",
+        "app_build": "69792",
+        "lang_pack": "android"
+    },
     "telegram_x": {
         "key": "telegram_x",
         "name": "MTProto TDLib Fast Endpoint (TDLib Engine)",
