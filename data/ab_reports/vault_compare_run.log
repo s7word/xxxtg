@@ -1,0 +1,55 @@
+
+=== [1] V1_api4_official_in === api_id=4 + 正确 hash + official + smsbower email
+    country=in threads=2 attempts=2 app_type=telegram_android_public applied={'official_client_emulation': True, 'api_credential_mode': 'official', 'code_delivery_mode': 'push_required', 'email_provider_mode': 'smsbower_only', 'active_app_type': 'telegram_android_public'} @ 2026-09-02T03:41:28Z
+    batch_id=605442fe 已提交并发批量引导: 2 个任务 / 并发度 2（batch_id=605442fe）；计划最多租号 4 次（2 路 × 2 次，联合上限 200）
+    [   0s] running=0 pending=2 unfinished=2/2
+    [  12s] running=2 pending=0 unfinished=2/2
+    [  24s] running=2 pending=0 unfinished=2/2
+    [  36s] running=2 pending=0 unfinished=2/2
+    [  48s] running=2 pending=0 unfinished=2/2
+    [  60s] running=2 pending=0 unfinished=2/2
+    [  72s] running=2 pending=0 unfinished=2/2
+    [  84s] running=2 pending=0 unfinished=2/2
+    [  96s] running=2 pending=0 unfinished=2/2
+    [ 108s] running=2 pending=0 unfinished=2/2
+    -> 租号=4 发码=4 types={'SentCodeTypeApp': 4} email后Payment=0 耗时=120s
+
+=== [2] V2_api4_official_iq === api_id=4 + 正确 hash + official + iq 对照
+    country=iq threads=2 attempts=2 app_type=telegram_android_public applied={'official_client_emulation': True, 'api_credential_mode': 'official', 'code_delivery_mode': 'push_required', 'email_provider_mode': 'smsbower_only', 'active_app_type': 'telegram_android_public'} @ 2026-09-02T03:43:28Z
+    batch_id=9ccf3ea6 已提交并发批量引导: 2 个任务 / 并发度 2（batch_id=9ccf3ea6）；计划最多租号 4 次（2 路 × 2 次，联合上限 200）
+    [   0s] running=0 pending=2 unfinished=2/2
+    [  12s] running=2 pending=0 unfinished=2/2
+    [  24s] running=2 pending=0 unfinished=2/2
+    -> 租号=2 发码=0 types={} email后Payment=0 耗时=36s
+
+=== [3] V3_vault_replay_balanced === vault +91 成功路径：api_id=4 custom + balanced 非 official
+    country=in threads=2 attempts=2 app_type=telegram_android_public applied={'official_client_emulation': False, 'api_credential_mode': 'custom', 'custom_api_id': 4, 'custom_api_hash': '014b35b6184100b085b0d0572f9b5103', 'code_delivery_mode': 'balanced', 'email_provider_mode': 'smsbower_only', 'active_app_type': 'telegram_android_public'} @ 2026-09-02T03:44:04Z
+    batch_id=85f5fae5 已提交并发批量引导: 2 个任务 / 并发度 2（batch_id=85f5fae5）；计划最多租号 4 次（2 路 × 2 次，联合上限 200）
+    [   0s] running=0 pending=2 unfinished=2/2
+    [  12s] running=2 pending=0 unfinished=2/2
+    [  24s] running=2 pending=0 unfinished=2/2
+    [  36s] running=2 pending=0 unfinished=2/2
+    [  48s] running=2 pending=0 unfinished=2/2
+    [  60s] running=2 pending=0 unfinished=2/2
+    [  72s] running=2 pending=0 unfinished=2/2
+    [  84s] running=2 pending=0 unfinished=2/2
+    -> 租号=2 发码=0 types={} email后Payment=0 耗时=96s
+
+=== [4] V4_api6_official_control === api_id=6 official 同国对照
+    country=in threads=2 attempts=2 app_type=telegram_android applied={'official_client_emulation': True, 'api_credential_mode': 'official', 'code_delivery_mode': 'push_required', 'email_provider_mode': 'smsbower_only', 'active_app_type': 'telegram_android'} @ 2026-09-02T03:45:40Z
+    batch_id=a7232688 已提交并发批量引导: 2 个任务 / 并发度 2（batch_id=a7232688）；计划最多租号 4 次（2 路 × 2 次，联合上限 200）
+    [   0s] running=0 pending=2 unfinished=2/2
+    [  12s] running=2 pending=0 unfinished=2/2
+    [  24s] running=2 pending=0 unfinished=2/2
+    [  36s] running=2 pending=0 unfinished=2/2
+    [  48s] running=2 pending=0 unfinished=2/2
+    [  60s] running=2 pending=0 unfinished=2/2
+    [  72s] running=2 pending=0 unfinished=2/2
+    [  84s] running=2 pending=0 unfinished=2/2
+    [  96s] running=2 pending=0 unfinished=2/2
+    [ 108s] running=1 pending=0 unfinished=1/2
+    [ 120s] running=1 pending=0 unfinished=1/2
+    [ 132s] running=1 pending=0 unfinished=1/2
+    -> 租号=4 发码=4 types={'SentCodeTypeApp': 4} email后Payment=0 耗时=144s
+
+报告已写入 data/ab_reports/vault_compare_in_20260902_034804.json

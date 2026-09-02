@@ -136,11 +136,26 @@ class ConfigManager:
                         data = json.load(f)
                     self._config = AppConfigModel(**data)
                     logger.info("已从持久化存储区载入系统配置快照")
+                    migrated = self._migrate_legacy_config(data, self._config)
                     # 旧配置可能把 api.reghelp.net 混进 antisafety_base_urls（或反过来），
                     # Pydantic 校验器会隔离地址；启动时强制清洗并回写，避免日志再出现
                     # 「候选网关: https://api.antisafety.net, https://api.reghelp.net」。
                     contaminated = raw_urls_are_contaminated(data)
-                    if self._persist_if_urls_sanitized(data, self._config) or contaminated:
+                    persisted = self._persist_if_urls_sanitized(data, self._config)
+                    if migrated and not persisted:
+                        try:
+                            _atomic_write_unlocked(self._config.model_dump(), CONFIG_FILE)
+                            persisted = True
+                        except Exception as exc:
+                            logger.warning("回写迁移后的 Email 策略失败: %s", exc)
+                    if migrated:
+                        logger.warning(
+                            "已迁移 Email 策略: email_provider_mode=%s, "
+                            "email_smsbower_fallback_enabled=%s",
+                            self._config.email_provider_mode,
+                            self._config.email_smsbower_fallback_enabled,
+                        )
+                    if persisted or contaminated:
                         logger.warning(
                             "已自动清洗交叉污染的 Attestation 网关地址："
                             "antisafety_base_urls=%s, reghelp_base_urls=%s",
@@ -186,6 +201,19 @@ class ConfigManager:
             except Exception as exc:
                 logger.warning("回写清洗后的网关地址失败: %s", exc)
                 return False
+        return changed
+
+    @staticmethod
+    def _migrate_legacy_config(raw: Dict[str, Any], config: AppConfigModel) -> bool:
+        """将旧版 REGHelp Email 优先策略迁移为 SMS Bower only。"""
+        mode = str(raw.get("email_provider_mode") or "").strip().lower()
+        changed = False
+        if mode in ("reghelp_primary", ""):
+            config.email_provider_mode = "smsbower_only"
+            changed = True
+        if mode == "reghelp_primary" and raw.get("email_smsbower_fallback_enabled", True):
+            config.email_smsbower_fallback_enabled = False
+            changed = True
         return changed
 
     def save_config(self, new_config: AppConfigModel) -> AppConfigModel:

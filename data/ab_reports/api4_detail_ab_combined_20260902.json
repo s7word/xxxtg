@@ -1,0 +1,102 @@
+{
+  "title": "api_id=4 细节对照（T0–T5）合并摘要",
+  "started_at": "2026-09-02T11:25:46Z",
+  "finished_at": "2026-09-02T11:40:09Z",
+  "sources": [
+    "data/ab_reports/api4_detail_ab_20260902_112546.json",
+    "data/ab_reports/api4_detail_ab_20260902_113727.json"
+  ],
+  "lease_cap": 16,
+  "leased_total": 15,
+  "smsbower_balance_before": 23.611,
+  "smsbower_balance_after": 23.611,
+  "need_topup": false,
+  "handshake_engineering": {
+    "lang_pack_writable": true,
+    "tz_offset_writable": true,
+    "blocked": false,
+    "note": "Telethon _init_request 在 connect() 前可写；日志已核对 lang_pack=android / (empty) 与 tz_offset=19800|10800|未写入。"
+  },
+  "task_level_outcomes": {
+    "T0_public_default_in": {
+      "hypothesis": "T1-control",
+      "leased": 2,
+      "sendcode": 1,
+      "app": 1,
+      "sms": 0,
+      "actual_published_flood_tasks": 1,
+      "success": 0,
+      "init": "lang_pack empty, tz 未写入"
+    },
+    "T1_vault_aligned_in": {
+      "hypothesis": "T1",
+      "leased": 2,
+      "sendcode": 0,
+      "app": 0,
+      "sms": 0,
+      "actual_published_flood_tasks": 2,
+      "success": 0,
+      "init": "lang_pack=android tz=19800 vault replay"
+    },
+    "T2_langpack_empty_in": {
+      "hypothesis": "T2",
+      "leased": 2,
+      "sendcode": 0,
+      "app": 0,
+      "sms": 0,
+      "actual_published_flood_tasks": 2,
+      "success": 0,
+      "init": "lang_pack empty tz=19800 vault replay"
+    },
+    "T3_tz_omit_in": {
+      "hypothesis": "T3",
+      "leased": 2,
+      "sendcode": 1,
+      "app": 1,
+      "sms": 0,
+      "actual_published_flood_tasks": 0,
+      "push_missing_failfast": 1,
+      "first_wave_nonumber": 2,
+      "success": 0,
+      "init": "lang_pack=android tz 未写入"
+    },
+    "T4_vault_aligned_iq": {
+      "hypothesis": "T4",
+      "leased": 3,
+      "sendcode": 2,
+      "app": 2,
+      "sms": 0,
+      "actual_published_flood_tasks": 0,
+      "nonumber": 1,
+      "recaptcha_fail": 1,
+      "success": 0,
+      "init": "lang_pack=android tz=10800 locale=ar-iq"
+    },
+    "T5a_fresh_in": {
+      "hypothesis": "T5",
+      "leased": 2,
+      "sendcode": 1,
+      "app": 1,
+      "sms": 0,
+      "banned": 1,
+      "success": 0
+    },
+    "T5b_reuse_in": {
+      "hypothesis": "T5",
+      "leased": 2,
+      "sendcode": 2,
+      "app": 2,
+      "sms": 0,
+      "success": 0
+    }
+  },
+  "verdict": {
+    "progress_vs_old_path": false,
+    "sms_seen": false,
+    "registration_success": 0,
+    "possible_iq_flood_relief": true,
+    "iq_flood_relief_caveat": "相对 G1（official emu=true）iq 2/2 FLOOD；本轮 T4 emu=false + lang_pack/tz 对齐得到 App×2 FLOOD×0。变量不单一，且仍无 SMS。",
+    "keep_hypotheses": ["T4_iq_flood_to_app_repeat", "in_pool_sms_window"],
+    "drop_hypotheses": ["T2_lang_pack_isolated", "T3_tz_isolated", "T1_vault_fp_beats_default_on_in"]
+  }
+}

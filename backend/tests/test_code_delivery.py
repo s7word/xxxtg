@@ -93,16 +93,56 @@ class TestCodeDeliveryPlan(unittest.TestCase):
                 mode,
             )
 
-    def test_hunt_streak_forces_sms_even_with_published_id(self):
+    def test_hunt_streak_does_not_skip_push_for_published_id(self):
+        """泄露 api_id 被猎号强制 SMS 跳过 attach 只会稳定 FLOOD，不能当样本。"""
         plan = resolve_code_delivery_plan(
             _config(api_credential_mode="official"),
             _profile(api_id=6),
             hunt_app_streak=2,
         )
-        self.assertTrue(plan.forced_sms)
-        self.assertEqual(plan.effective_mode, CODE_DELIVERY_SMS_FIRST)
+        self.assertFalse(plan.forced_sms)
+        self.assertEqual(plan.effective_mode, CODE_DELIVERY_PUSH_REQUIRED)
+        self.assertTrue(plan.should_request_push_token)
+        self.assertTrue(plan.attach_push_token)
+
+    def test_official_api4_always_attaches_even_with_sms_first_and_hunt(self):
+        plan = resolve_code_delivery_plan(
+            _config(
+                official_client_emulation=True,
+                api_credential_mode="official",
+                code_delivery_mode=CODE_DELIVERY_SMS_FIRST,
+            ),
+            _profile(api_id=4),
+            hunt_app_streak=9,
+        )
+        self.assertTrue(plan.attach_push_token)
+        self.assertTrue(plan.should_request_push_token)
+        self.assertFalse(plan.forced_sms)
+        self.assertIn("attach_token=是", plan.summary_for_log())
+
+    def test_force_skip_push_attach_disables_token_even_for_api4(self):
+        plan = resolve_code_delivery_plan(
+            _config(
+                official_client_emulation=True,
+                api_credential_mode="official",
+                force_skip_push_attach=True,
+            ),
+            _profile(api_id=4),
+        )
         self.assertFalse(plan.attach_push_token)
-        self.assertEqual(plan.emulation_label, "balanced")
+        self.assertFalse(plan.should_request_push_token)
+        self.assertFalse(plan.can_escalate_on_published_flood)
+        self.assertIn("force_skip_push_attach", " ".join(plan.notes))
+
+    def test_hunt_streak_still_forces_sms_for_custom_unpublished(self):
+        plan = resolve_code_delivery_plan(
+            _config(code_delivery_mode=CODE_DELIVERY_BALANCED),
+            _profile(api_id=35337905),
+            hunt_app_streak=2,
+        )
+        self.assertTrue(plan.forced_sms)
+        self.assertFalse(plan.attach_push_token)
+        self.assertEqual(plan.effective_mode, CODE_DELIVERY_SMS_FIRST)
 
     def test_official_emulation_forces_push_and_ignores_hunt_streak(self):
         plan = resolve_code_delivery_plan(
@@ -173,6 +213,28 @@ class TestBuildCodeSettings(unittest.TestCase):
         self.assertTrue(cs.allow_app_hash)
         self.assertEqual(cs.token, "FCM_TOKEN")
         self.assertFalse(cs.app_sandbox)
+
+    def test_firebase_and_unknown_number_flags(self):
+        cs = RegistrationOrchestrator._build_code_settings(
+            "FCM_TOKEN",
+            allow_app_hash=True,
+            attach_push_token=True,
+            allow_firebase=True,
+            unknown_number=True,
+        )
+        self.assertTrue(cs.allow_firebase)
+        self.assertTrue(cs.unknown_number)
+        payload = cs._bytes()
+        self.assertGreater(len(payload), 0)
+
+    def test_plan_android_enables_firebase_by_default(self):
+        plan = resolve_code_delivery_plan(
+            _config(code_delivery_mode=CODE_DELIVERY_PUSH_REQUIRED),
+            _profile(api_id=4),
+        )
+        self.assertTrue(plan.allow_firebase)
+        self.assertTrue(plan.unknown_number)
+        self.assertTrue(plan.force_resend_on_app)
 
 
 class TestSendCodeRespectingDeliveryPlan(unittest.IsolatedAsyncioTestCase):
@@ -253,6 +315,44 @@ class TestSendCodeRespectingDeliveryPlan(unittest.IsolatedAsyncioTestCase):
         with self._patched([ApiIdPublishedFloodError(request=None)]):
             with self.assertRaises(ApiIdPublishedFloodError):
                 await self._call(plan)
+
+    async def test_missing_required_push_token_fails_before_sendcode(self):
+        from backend.app.services.registrar import RequiredPushTokenMissingError
+
+        plan = resolve_code_delivery_plan(
+            _config(
+                official_client_emulation=True,
+                api_credential_mode="official",
+                code_delivery_mode=CODE_DELIVERY_PUSH_REQUIRED,
+            ),
+            _profile(api_id=4),
+        )
+        self.assertTrue(plan.attach_push_token)
+        with self._patched([self.sent_code]):
+            with self.assertRaises(RequiredPushTokenMissingError) as ctx:
+                await self._call(plan, push_token=None, profile=_profile(api_id=4))
+            self.assertIn("拒绝以 api_id=4", str(ctx.exception))
+
+
+class TestPublishedFloodMessage(unittest.TestCase):
+    def test_message_distinguishes_attached_token(self):
+        from types import SimpleNamespace
+        from backend.app.services.registrar import RegistrationOrchestrator
+
+        profile = {"api_id": 4, "api_hash": "014b35b6184100b085b0d0572f9b5103"}
+        plan = SimpleNamespace(attach_push_token=True)
+        with_token = RegistrationOrchestrator._published_flood_error_message(
+            profile, "REGHELP_TOKEN", plan
+        )
+        self.assertIn("api_id=4", with_token)
+        self.assertIn("014b35b6184100b085b0d0572f9b5103", with_token)
+        self.assertIn("已 attach", with_token)
+        self.assertNotIn("缺少合法 Push Token", with_token)
+
+        without = RegistrationOrchestrator._published_flood_error_message(
+            profile, None, plan
+        )
+        self.assertIn("缺少合法 Push Token", without)
 
 
 if __name__ == "__main__":

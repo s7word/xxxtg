@@ -201,7 +201,7 @@ REGHelp Push Token 官方按一次性计费。平台侧正确优化仍是 `setSt
 
 | 触发条件 | 判据 | 为什么必须换 |
 |----------|------|--------------|
-| ID 已公开泄露 | 落在 `PUBLISHED_API_ID_BLOCKLIST`（`4/6/8/10/2040/2100/17349/21724`），或带合法 Push Token 仍反复 `API_ID_PUBLISHED_FLOOD` | 服务端对这些 ID 无差别风控，无 Push 时 `auth.sendCode` 几乎必失败，与账号/IP/地区无关 |
+| ID 已公开泄露 | 落在 `PUBLISHED_API_ID_BLOCKLIST`（`4/6/8/10/2040/2100/17349/21724`），或带合法 Push Token 仍反复 `API_ID_PUBLISHED_FLOOD` | **官方** 400 RPC（见 `docs/OFFICIAL_AND_PAYMENT_EXPLAINED.md` A.2.1）；无 Push 时 `auth.sendCode` 几乎必失败。关掉本地拦截不能绕过。api_id=6 可作 Paid 短期会员后备，当前策略暂时不用 6。 |
 | `api_hash` 外泄 | 进过公开仓库、截图、日志、工单 | `api_hash` 是凭证不是标识，等价于密码；泄露后别人可以冒用你的应用身份 |
 | 该 ID 被平台限制 | my.telegram.org 显示受限，或该 ID 上所有号、所有出口都恒定 FLOOD | 已经是 ID 维度的处置，换号换代理都无效 |
 | 多项目/多客户隔离 | 不同业务线共用一个 ID | 一条业务被风控会连带其它业务，需要故障隔离就必须分 ID |
