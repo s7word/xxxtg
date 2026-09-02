@@ -144,7 +144,10 @@ class AppConfigModel(BaseModel):
     )
     sms_provider: str = Field(
         default="fivesim",
-        description="当前接码提供源: fivesim (推荐, 5SIM) / grizzlysms (Grizzly SMS) / smsbower (SMS Bower) / vaksms (Vak-SMS)"
+        description=(
+            "当前接码提供源: fivesim (推荐, 5SIM) / grizzlysms (Grizzly SMS) / "
+            "smsbower (SMS Bower) / smscode (SMSCode.gg) / vaksms (Vak-SMS)"
+        )
     )
     fivesim_api_key: str = Field(
         default="eyJhbGciOiJSUzUxMiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE4MTg5MzAxMzYsImlhdCI6MTc4NzM5NDEzNiwicmF5IjoiMTBiOGU4OTkwMmQzODdkYmUzY2Y2NzE5Mzc2MGJkOGQiLCJzdWIiOjI5NjU0NDJ9.JvnelHQoodRonZ7OWYv-5XJMXfZ0spP2pI1yPETPvD-VGe0cE8VDJGLLsg-teh_vtRhu-QzIEIji4LcztZv0rLQ8h5poAHOxlfJJYWO_Oh077GWn83n7M1Gc1fukEgmWSv--WQify8PuSK_XwLmfttwHuDAqwvLnmq2cEIYnGTdRT2LgdomcNksRYzGk26nE8wsEqJVlbhlUH9tkLjwwWzedMLdj227_b6gjmjRR0IfwTphMatLMm-5I-6i2yfUMPAKY34rpRGSPqKmjoS3jk29xOFKYVVqKBYgTb_XoaNzHMZWqCMnm7de9jU54fjkphiECRvngh4mfI3-oeDvB2A",
@@ -157,6 +160,10 @@ class AppConfigModel(BaseModel):
     smsbower_api_key: str = Field(
         default="",
         description="SMS Bower (smsbower.app) API Key"
+    )
+    smscode_api_key: str = Field(
+        default="",
+        description="SMSCode.gg API Token（Settings 填写；亦可环境变量 SMSCODE_API_KEY / SMSCODE_TOKEN）"
     )
     sms_max_price: Optional[float] = Field(
         default=None,
@@ -521,6 +528,9 @@ class AppConfigModel(BaseModel):
             "smsbower": "smsbower",
             "smsbowerapp": "smsbower",
             "bower": "smsbower",
+            "smscode": "smscode",
+            "smscodegg": "smscode",
+            "smscode.gg": "smscode",
             "vak": "vaksms",
             "vaksms": "vaksms",
         }
@@ -723,7 +733,7 @@ class RegisterTaskRequest(BaseModel):
     )
     sms_provider: Optional[str] = Field(
         default=None,
-        description="单次任务覆盖接码提供源: fivesim / grizzlysms / smsbower / vaksms；为空则使用全局配置",
+        description="单次任务覆盖接码提供源: fivesim / grizzlysms / smsbower / smscode / vaksms；为空则使用全局配置",
     )
     max_price: Optional[float] = Field(
         default=None,
@@ -789,6 +799,9 @@ class RegisterTaskRequest(BaseModel):
             "smsbower": "smsbower",
             "smsbowerapp": "smsbower",
             "bower": "smsbower",
+            "smscode": "smscode",
+            "smscodegg": "smscode",
+            "smscode.gg": "smscode",
             "vak": "vaksms",
             "vaksms": "vaksms",
         }

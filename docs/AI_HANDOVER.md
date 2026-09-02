@@ -136,7 +136,7 @@ backend/app/
     proxy_manager.py         # 自建代理池导入
     phone_precheck.py        # ResolvePhone 白号预检
     banned_phones.py         # 本地号码黑名单（封禁/已注册）
-    fivesim.py / grizzlysms.py / vak_sms 等 SMS 网关
+    fivesim.py / grizzlysms.py / smsbower.py / smscode.py / vak_sms 等 SMS 网关
     device_db_manager.py     # 设备指纹库管理
     account_vault.py         # 金库上传/探针
     auth.py                  # 控制台 Session 登录
@@ -171,6 +171,7 @@ backend/app/
 | Vak-SMS | `vak_sms_api_key` | 接码 |
 | Grizzly SMS | `grizzlysms_api_key` | 接码，注意 `maxPrice` 美元 |
 | 5SIM | `fivesim_api_key` | JWT Bearer |
+| SMSCode.gg | `smscode_api_key` | Bearer Token；`sms_provider=smscode`。详见 [SMSCODE_GG.md](./SMSCODE_GG.md) |
 | Proxy-Seller | `proxy_seller_key` | API 拉列表；失败则用内置 CL/IN 静态账密池 |
 | 自建代理 | Settings → 代理池 | 格式 `host:port:user:pass #registration:za` |
 

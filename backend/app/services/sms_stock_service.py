@@ -25,6 +25,7 @@ CACHE_TTL_SECONDS = 90.0  # 60~120 秒轻量缓存
 PROVIDER_FIVESIM = "fivesim"
 PROVIDER_GRIZZLY = "grizzlysms"
 PROVIDER_SMSBOWER = "smsbower"
+PROVIDER_SMSCODE = "smscode"
 PROVIDER_VAK = "vaksms"
 
 
@@ -41,6 +42,9 @@ def normalize_sms_provider(value: Optional[str]) -> str:
         "smsbower": PROVIDER_SMSBOWER,
         "smsbowerapp": PROVIDER_SMSBOWER,
         "bower": PROVIDER_SMSBOWER,
+        "smscode": PROVIDER_SMSCODE,
+        "smscodegg": PROVIDER_SMSCODE,
+        "smscode.gg": PROVIDER_SMSCODE,
         "vak": PROVIDER_VAK,
         "vaksms": PROVIDER_VAK,
     }
@@ -200,6 +204,19 @@ def parse_vak_count_payload(
     return rows
 
 
+def parse_smscode_price_payload(
+    data: Any,
+    service: str = DEFAULT_SERVICE,
+) -> List[Dict[str, Any]]:
+    """解析 SMSCode.gg /catalog/products 聚合结果。"""
+    _ = service
+    from backend.app.services.smscode import parse_smscode_products_payload as _parse
+
+    if isinstance(data, dict):
+        return _parse(data.get("products"), data.get("countries"))
+    return _parse(data, None)
+
+
 def parse_fivesim_price_payload(
     data: Any,
     product: str = "telegram",
@@ -228,6 +245,10 @@ def _resolve_stock_iso2(provider: str, provider_country_id: Any) -> str:
         if iso:
             return iso
         iso = smsactivate_id_to_iso2(token)
+        if iso:
+            return iso
+    if provider == PROVIDER_SMSCODE:
+        iso = resolve_iso2(token)
         if iso:
             return iso
     iso = resolve_iso2(token)
@@ -362,6 +383,8 @@ class SmsStockService:
                 items = await cls._fetch_fivesim(service=service, api_key=api_key, config=config)
             elif resolved == PROVIDER_SMSBOWER:
                 items = await cls._fetch_smsbower(service=service, api_key=api_key, config=config)
+            elif resolved == PROVIDER_SMSCODE:
+                items = await cls._fetch_smscode(service=service, api_key=api_key, config=config)
             else:
                 items = await cls._fetch_grizzly(service=service, api_key=api_key, config=config)
         except Exception as exc:
@@ -428,6 +451,26 @@ class SmsStockService:
             payload = await svc.get_prices(country=None, service=service)
             rows = parse_grizzly_price_payload(payload, service=service)
             return enrich_stock_rows(rows, PROVIDER_SMSBOWER)
+        finally:
+            await svc.close()
+
+    @classmethod
+    async def _fetch_smscode(
+        cls,
+        service: str,
+        api_key: Optional[str],
+        config: Any,
+    ) -> List[Dict[str, Any]]:
+        from backend.app.services.smscode import SmsCodeService
+
+        key = (api_key or "").strip()
+        if not key and config is not None:
+            key = str(getattr(config, "smscode_api_key", "") or "").strip()
+        svc = SmsCodeService(key)
+        try:
+            payload = await svc.get_prices(country=None, service=service)
+            rows = parse_smscode_price_payload(payload, service=service)
+            return enrich_stock_rows(rows, PROVIDER_SMSCODE)
         finally:
             await svc.close()
 

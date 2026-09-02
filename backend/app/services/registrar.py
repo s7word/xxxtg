@@ -34,6 +34,7 @@ from backend.app.services.device_profile import DeviceProfileManager
 from backend.app.services.vaksms import NoNumberAvailableError, VakSmsService, format_no_number_message
 from backend.app.services.grizzlysms import GrizzlySmsService, PROVIDER_LABEL as GRIZZLY_PROVIDER_LABEL
 from backend.app.services.smsbower import SmsBowerService, PROVIDER_LABEL as SMSBOWER_PROVIDER_LABEL
+from backend.app.services.smscode import SmsCodeService, PROVIDER_LABEL as SMSCODE_PROVIDER_LABEL
 from backend.app.services.fivesim import FiveSimService, PROVIDER_LABEL as FIVESIM_PROVIDER_LABEL
 from backend.app.services.attestation_gateway import AttestationGatewayService
 from backend.app.services.reghelp import PUSH_REFUND_MIN_SECONDS, PUSH_REFUND_WINDOW_SECONDS
@@ -222,6 +223,12 @@ SMS_PROVIDER_ALIASES = {
     "sms_bower": "smsbower",
     "bower": "smsbower",
     "smsbowerapp": "smsbower",
+    "smscode": "smscode",
+    "sms-code": "smscode",
+    "sms_code": "smscode",
+    "smscodegg": "smscode",
+    "sms-code-gg": "smscode",
+    "smscode.gg": "smscode",
     "vak": "vaksms",
     "vaksms": "vaksms",
     "vak_sms": "vaksms",
@@ -231,6 +238,7 @@ SMS_PROVIDER_LABELS = {
     "fivesim": FIVESIM_PROVIDER_LABEL,
     "grizzlysms": GRIZZLY_PROVIDER_LABEL,
     "smsbower": SMSBOWER_PROVIDER_LABEL,
+    "smscode": SMSCODE_PROVIDER_LABEL,
     "vaksms": "Vak-SMS (vak-sms.com)",
 }
 
@@ -627,6 +635,8 @@ class RegistrationOrchestrator:
             return GrizzlySmsService(getattr(config, "grizzly_sms_api_key", "") or "")
         if provider == "smsbower":
             return SmsBowerService(getattr(config, "smsbower_api_key", "") or "")
+        if provider == "smscode":
+            return SmsCodeService(getattr(config, "smscode_api_key", "") or "")
         return FiveSimService(getattr(config, "fivesim_api_key", "") or "")
 
     @staticmethod
@@ -653,6 +663,8 @@ class RegistrationOrchestrator:
                 name = "vaksms"
             elif "smsbower" in cls_name or "bower" in cls_name:
                 name = "smsbower"
+            elif "smscode" in cls_name:
+                name = "smscode"
             elif "grizzly" in cls_name:
                 name = "grizzlysms"
             elif "fivesim" in cls_name or "five" in cls_name:

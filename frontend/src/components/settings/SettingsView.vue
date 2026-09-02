@@ -3,7 +3,7 @@
     <div class="ce-page-head">
       <div>
         <h2>⚙️ 参数拓扑 & 探针审计</h2>
-        <p>SMS Bower / Grizzly SMS / Vak-SMS / REGHelp / AntiSafety / RecaptchaMobile / 2FA 一键探针，实时返回可见。</p>
+        <p>SMS Bower / SMSCode / Grizzly SMS / Vak-SMS / REGHelp / AntiSafety / RecaptchaMobile / 2FA 一键探针，实时返回可见。</p>
       </div>
       <button class="ce-btn" :disabled="isSavingConfig" @click="saveConfig">
         {{ isSavingConfig ? '正在保存...' : '持久化全局配置' }}
@@ -361,6 +361,7 @@
             <option value="fivesim">5SIM (推荐)</option>
             <option value="grizzlysms">Grizzly SMS</option>
             <option value="smsbower">SMS Bower</option>
+            <option value="smscode">SMSCode.gg</option>
             <option value="vaksms">Vak-SMS</option>
           </select>
         </div>
@@ -458,6 +459,34 @@
             余额: {{ testResults.smsbower.data.balance }} {{ testResults.smsbower.data.currency || '账户结算币种' }}
             | 拓扑 {{ testResults.smsbower.data.country }} (id={{ testResults.smsbower.data.country_id }})
             | 库存: {{ testResults.smsbower.data.telegram_stock }}
+          </div>
+        </div>
+      </div>
+
+      <div class="ce-panel stack">
+        <div class="ce-panel-head">
+          <div class="row">
+            <h3>📩 SMSCode 接码平台 (smscode.gg)</h3>
+            <span class="ce-badge is-info">备选</span>
+          </div>
+          <button class="ce-btn-ghost" :disabled="probeTesting.smscode" @click="testSmsCode">
+            {{ probeTesting.smscode ? '测试中...' : '余额/连通性探针' }}
+          </button>
+        </div>
+        <div>
+          <label class="ce-label">SMSCode API Token</label>
+          <input v-model="config.smscode_api_key" type="password" class="ce-input mono" placeholder="在 Settings 填写，勿提交 Git" />
+        </div>
+        <div class="ce-tiny">
+          官方 REST <code>/v2</code>（USD）。将上方「当前接码提供源」切到 SMSCode 后生效。
+          失败路径自动 <code>POST /orders/cancel</code> 退款。详见 <code>docs/SMSCODE_GG.md</code>。
+        </div>
+        <div v-if="testResults.smscode" class="ce-alert" :class="testResults.smscode.success ? 'is-ok' : 'is-danger'">
+          <div>{{ testResults.smscode.message }}</div>
+          <div v-if="testResults.smscode.data" class="mono ce-tiny">
+            余额: {{ testResults.smscode.data.balance }} {{ testResults.smscode.data.currency || 'USD' }}
+            | 拓扑 {{ testResults.smscode.data.country }} (id={{ testResults.smscode.data.country_id }})
+            | 库存: {{ testResults.smscode.data.telegram_stock }}
           </div>
         </div>
       </div>
@@ -641,7 +670,7 @@ const {
   config, isSavingConfig, saveConfig, reghelpBaseUrlsText,
   antisafetyBaseUrlsText, antisafetyReportingBaseUrlsText, form
 } = useConfig()
-const { probeTesting, testResults, testRegHelp, testAntiSafety, testFiveSim, testGrizzlySms, testSmsBower, testVakSms } = useProbes()
+const { probeTesting, testResults, testRegHelp, testAntiSafety, testFiveSim, testGrizzlySms, testSmsBower, testSmsCode, testVakSms } = useProbes()
 
 const smsallLoading = ref(false)
 const smsallEvents = ref([])

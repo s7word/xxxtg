@@ -15,6 +15,7 @@ const config = reactive({
   fivesim_api_key: '',
   grizzly_sms_api_key: '',
   smsbower_api_key: '',
+  smscode_api_key: '',
   sms_max_price: null,
   smsall_webhook_secret: '',
   smsall_auto_register: false,
@@ -103,6 +104,7 @@ export const smsProviderLabel = (provider) => {
   if (token === 'vaksms') return 'Vak-SMS'
   if (token === 'grizzlysms') return 'Grizzly SMS'
   if (token === 'smsbower' || token === 'smsbowerapp' || token === 'bower') return 'SMS Bower'
+  if (token === 'smscode' || token === 'smscodegg') return 'SMSCode'
   return '5SIM'
 }
 

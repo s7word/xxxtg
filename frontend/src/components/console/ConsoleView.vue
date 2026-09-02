@@ -53,6 +53,7 @@
             <option value="fivesim">5SIM (推荐) · 5sim.net</option>
             <option value="grizzlysms">Grizzly SMS · grizzlysms.com</option>
             <option value="smsbower">SMS Bower · smsbower.app</option>
+            <option value="smscode">SMSCode · smscode.gg</option>
             <option value="vaksms">Vak-SMS · vak-sms.com</option>
           </select>
           <p class="ce-tiny">

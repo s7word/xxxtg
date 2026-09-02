@@ -94,6 +94,11 @@ from backend.app.services.smsbower import (
     SmsBowerService,
     PROVIDER_LABEL as SMSBOWER_PROVIDER_LABEL,
 )
+from backend.app.services.smscode import (
+    SmsCodeService,
+    PROVIDER_LABEL as SMSCODE_PROVIDER_LABEL,
+    parse_smscode_products_payload,
+)
 from backend.app.services.fivesim import (
     FiveSimService,
     PROVIDER_LABEL as FIVESIM_PROVIDER_LABEL,
@@ -397,7 +402,7 @@ async def generate_device_db(req: DeviceDbGenerateRequest):
 async def list_sms_available_countries(
     provider: Optional[str] = Query(
         default=None,
-        description="fivesim / grizzlysms / smsbower / vaksms；默认读取系统当前 config.sms_provider",
+        description="fivesim / grizzlysms / smsbower / smscode / vaksms；默认读取系统当前 config.sms_provider",
     ),
     refresh: bool = Query(default=False, description="true 时绕过 90s 缓存强制刷新"),
 ):
@@ -645,6 +650,76 @@ async def test_smsbower(payload: Dict[str, Any] = None):
         )
     finally:
         await svc.close()
+
+
+@router.post("/test/smscode", response_model=TestApiResponse, summary="SMSCode.gg 接码平台余额与连通性探针")
+async def test_smscode(payload: Dict[str, Any] = None):
+    config = ConfigManager.get_instance().config
+    api_key = (payload or {}).get("api_key") or config.smscode_api_key
+    country = (payload or {}).get("country") or config.target_country
+
+    svc = SmsCodeService(api_key)
+    try:
+        from backend.app.services.vaksms import format_no_number_message
+
+        balance = await svc.get_balance()
+        stock = 0
+        prices = None
+        country_id = None
+        iso = None
+        countries_count = None
+        ref_cost = None
+        try:
+            countries = await svc.get_countries()
+            countries_count = len(countries)
+            iso = await svc.resolve_country_iso2(country)
+            country_id = await svc.resolve_country_id(country)
+            prices = await svc.get_prices(country=country_id, service="tg")
+            rows = parse_smscode_products_payload(
+                (prices or {}).get("products"),
+                (prices or {}).get("countries"),
+            )
+            if rows:
+                hit = next((row for row in rows if str(row.get("provider_country_id")) == iso), rows[0])
+                stock = int(hit.get("stock") or 0)
+                ref_cost = hit.get("cost")
+        except Exception as stock_exc:
+            prices = {"error": str(stock_exc)}
+        message = f"{SMSCODE_PROVIDER_LABEL} 鉴权与通信正常，余额 {balance} USD"
+        if countries_count is not None:
+            message += f"，目录国家 {countries_count}"
+        if ref_cost is not None:
+            message += f"，参考价 {ref_cost}"
+        if int(stock or 0) <= 0 and not (isinstance(prices, dict) and prices.get("error")):
+            message = format_no_number_message(iso or country)
+        return TestApiResponse(
+            success=True,
+            service="SMSCode",
+            message=message,
+            data={
+                "balance": balance,
+                "currency": "USD",
+                "ref_cost": ref_cost,
+                "country": country,
+                "country_id": country_id,
+                "iso": iso,
+                "countries_count": countries_count,
+                "telegram_stock": stock,
+                "prices": prices,
+                "no_number": int(stock or 0) <= 0,
+                "provider": "smscode",
+                "endpoint": SmsCodeService.BASE_URL,
+            },
+        )
+    except Exception as e:
+        return TestApiResponse(
+            success=False,
+            service="SMSCode",
+            message=f"SMSCode 探针异常: {str(e)}",
+        )
+    finally:
+        await svc.close()
+
 
 @router.post("/test/antisafety", response_model=TestApiResponse, summary="Attestation 凭证网关诊断探针")
 async def test_antisafety(payload: Dict[str, Any] = None):
