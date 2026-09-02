@@ -533,6 +533,7 @@
           开启后运行时覆盖凭证与通道计划：强制官方模板 api_id/api_hash、push_required，
           并处理 SetUpEmailRequired（REGHelp Email）、FirebaseSms（Play Integrity）、
           PaymentRequired（标记需官方 App 内购并快退）。猎号连续 App 强制 SMS 在此模式下关闭。
+          REGHelp Email 为按次计费；若 API 返回 <code>SERVICE_DISABLED</code> 表示平台侧暂关闭该服务（非控制台开关）。
         </p>
         <div>
           <label class="ce-label">猎号连续 App 后强制 SMS（次数）</label>
