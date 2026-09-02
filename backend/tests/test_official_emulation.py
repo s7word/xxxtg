@@ -26,6 +26,7 @@ from backend.app.services.reghelp import (  # noqa: E402
     EmailInboxResult,
     PUSH_REFUND_REASON_MAP,
     RegHelpService,
+    _format_reghelp_service_disabled,
 )
 from backend.app.services.registrar import (  # noqa: E402
     DEFAULT_SMS_POLL_ATTEMPTS,
@@ -158,10 +159,18 @@ class TestSentCodeTypeHelpers(unittest.TestCase):
         for reason in (
             "PAYMENT_REQUIRED_OFFICIAL_ONLY",
             "EMAIL_SETUP_FAILED",
+            "EMAIL_SERVICE_DISABLED",
             "EMAIL_CODE_UNAVAILABLE",
             "FIREBASE_SMS_FAILED",
         ):
             self.assertEqual(PUSH_REFUND_REASON_MAP[reason], "NOSMS")
+
+    def test_email_setup_failure_reason_service_disabled(self):
+        exc = RuntimeError(_format_reghelp_service_disabled("Email"))
+        self.assertEqual(
+            RegistrationOrchestrator._email_setup_failure_reason(exc),
+            "EMAIL_SERVICE_DISABLED",
+        )
 
 
 class TestResolveNewSentCodeTypes(unittest.IsolatedAsyncioTestCase):
@@ -322,6 +331,48 @@ class TestRegHelpEmailApi(unittest.IsolatedAsyncioTestCase):
             )
             self.assertEqual(inbox.email, "tmp@icloud.com")
             self.assertEqual(inbox.task_id, "em-1")
+        finally:
+            await svc.close()
+
+    async def test_get_login_email_service_disabled_http503(self):
+        svc = RegHelpService("test-key")
+        svc._last_good_api_base = "https://api.reghelp.net"
+
+        async def fake_get(url, params=None, headers=None):
+            if str(url).endswith("/email/getEmail"):
+                return DummyResponse({"detail": "SERVICE_DISABLED"}, status_code=503)
+            raise AssertionError(url)
+
+        svc.client.get = fake_get
+        try:
+            with self.assertRaises(RuntimeError) as ctx:
+                await svc.get_login_email(
+                    {"app_name": "tg", "app_device": "Android"},
+                    "+56911112222",
+                )
+            self.assertIn("SERVICE_DISABLED", str(ctx.exception))
+            self.assertIn("平台侧暂时关闭", str(ctx.exception))
+            self.assertNotIn("控制台启用", str(ctx.exception))
+        finally:
+            await svc.close()
+
+    async def test_get_login_email_service_disabled_status_error(self):
+        svc = RegHelpService("test-key")
+        svc._last_good_api_base = "https://api.reghelp.net"
+
+        async def fake_get(url, params=None, headers=None):
+            if str(url).endswith("/email/getEmail"):
+                return DummyResponse({"status": "error", "detail": "SERVICE_DISABLED"})
+            raise AssertionError(url)
+
+        svc.client.get = fake_get
+        try:
+            with self.assertRaises(RuntimeError) as ctx:
+                await svc.get_login_email(
+                    {"app_name": "tg", "app_device": "Android"},
+                    "+56911112222",
+                )
+            self.assertIn("SERVICE_DISABLED", str(ctx.exception))
         finally:
             await svc.close()
 

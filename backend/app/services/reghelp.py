@@ -47,6 +47,53 @@ PUSH_REFUND_REJECT_DETAILS = frozenset({
 #   existing_2fa (旧号已启用 2FA，SignIn 即完成)       2FA
 #
 # WRONG_CODE 表示带外短信已到达，Push Token 本身有效，不触发 setStatus。
+
+# REGHelp 官方错误码（https://reghelp.net/en/api-docs/ §5 Error Codes）
+REGHELP_ERROR_CODES = frozenset({
+    "RATE_LIMIT",
+    "SERVICE_DISABLED",
+    "MAINTENANCE_MODE",
+    "TASK_NOT_FOUND",
+    "INVALID_PARAM",
+    "MISSING_PARAM",
+    "EXTERNAL_ERROR",
+    "INSUFFICIENT_FUNDS",
+})
+
+
+def _normalize_reghelp_error_code(raw: Any) -> str:
+    return str(raw or "").strip().upper().replace(" ", "_")
+
+
+def _extract_reghelp_error_code(data: Any, http_status: Optional[int] = None) -> Optional[str]:
+    """从 REGHelp JSON 回包提取错误码。
+
+    官方客户端在 HTTP 503 等非 200 时读 ``detail`` / ``id``；部分旧路径仍返回
+    ``{"status":"error","detail":"..."}``。两种形态均需识别。
+    """
+    if not isinstance(data, dict):
+        return None
+    if str(data.get("status") or "").lower() == "error":
+        return _normalize_reghelp_error_code(
+            data.get("detail") or data.get("id") or data.get("message")
+        )
+    if http_status and http_status >= 400:
+        detail = data.get("detail")
+        if isinstance(detail, str):
+            return _normalize_reghelp_error_code(detail)
+        if isinstance(detail, list):
+            return "INVALID_PARAM"
+    return None
+
+
+def _format_reghelp_service_disabled(product: str) -> str:
+    return (
+        f"REGHelp {product} 服务暂不可用 (SERVICE_DISABLED)："
+        "官方文档定义为平台侧暂时关闭该服务（按次计费，无控制台开关）；"
+        "若同 apiKey 的 Push 可用则密钥有效，请稍后重试或联系 REGHelp 确认该产品线状态"
+    )
+
+
 PUSH_REFUND_REASON_MAP: Dict[str, str] = {
     "PHONE_NUMBER_BANNED": "BANNED",
     "PHONE_PREAUDIT_BANNED": "BANNED",
@@ -56,6 +103,7 @@ PUSH_REFUND_REASON_MAP: Dict[str, str] = {
     "SENT_CODE_TYPE_APP": "NOSMS",
     "PAYMENT_REQUIRED_OFFICIAL_ONLY": "NOSMS",
     "EMAIL_SETUP_FAILED": "NOSMS",
+    "EMAIL_SERVICE_DISABLED": "NOSMS",
     "EMAIL_CODE_UNAVAILABLE": "NOSMS",
     "FIREBASE_SMS_FAILED": "NOSMS",
     "API_ID_PUBLISHED_FLOOD": "NOSMS",
@@ -505,13 +553,17 @@ class RegHelpService:
                 f"App: {params['appName']}/{app_device})..."
             )
 
-        used_base, data, _ = await self._get_with_fallback("/email/getEmail", params, headers=headers)
+        used_base, data, http_status = await self._get_with_fallback(
+            "/email/getEmail", params, headers=headers
+        )
         if is_auth_error_payload(data):
             raise RuntimeError(describe_auth_error("reghelp", data))
-        if data.get("status") == "error":
-            raise RuntimeError(
-                f"REGHelp Email 任务创建失败: {data.get('detail') or data.get('message') or data}"
-            )
+        error_code = _extract_reghelp_error_code(data, http_status)
+        if error_code:
+            if error_code == "SERVICE_DISABLED":
+                raise RuntimeError(_format_reghelp_service_disabled("Email"))
+            detail = data.get("detail") or data.get("message") or data
+            raise RuntimeError(f"REGHelp Email 任务创建失败 ({error_code}): {detail}")
         task_id = data.get("id")
         if not task_id:
             raise RuntimeError(f"REGHelp Email 任务创建返回异常: {data}")
