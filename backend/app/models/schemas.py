@@ -383,6 +383,54 @@ class AppConfigModel(BaseModel):
             "只记录 RPC 错误，不伪造真实内购。"
         ),
     )
+    sms_poll_attempts: int = Field(
+        default=30,
+        ge=1,
+        le=200,
+        description="接码网关 wait_for_code 最大轮询次数。默认 30×4s≈120s；Payment 后 SMS 实验可提到 90–150。",
+    )
+    sms_poll_interval_seconds: float = Field(
+        default=4.0,
+        ge=1.0,
+        le=15.0,
+        description="接码网关轮询间隔秒数。Payment 后 SMS 实验可降到 2s 以便更密地读 getStatus。",
+    )
+    sms_poll_bypass_push_window: bool = Field(
+        default=False,
+        description=(
+            "True 时不按 REGHelp 180s 退款窗口截断短信轮询。"
+            "Payment→resend→SMS 对照实验需要 180–300s 窗口时打开；会放弃部分 Push 退款。"
+        ),
+    )
+    payment_resend_max: int = Field(
+        default=1,
+        ge=1,
+        le=3,
+        description="PaymentRequired 后连续 auth.resendCode 次数（1=现有行为，2=立刻再 resend 一次）。",
+    )
+    payment_resend_wait_seconds: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=180.0,
+        description=(
+            "PaymentRequired 后第一次 resendCode 前等待秒数。"
+            "0=立即（已观测到 SentCodeTypeSms）；90=对齐官方 next_type timeout 再 resend。"
+        ),
+    )
+    resend_before_email_verify: bool = Field(
+        default=False,
+        description=(
+            "SetUpEmailRequired 时先按 next_type/timeout 调用 auth.resendCode，"
+            "再决定是否走临时邮箱。用于对照「Payment 之前 resend 能否直接出 SMS」。"
+        ),
+    )
+    report_missing_sms_code: bool = Field(
+        default=False,
+        description=(
+            "Payment 后第 2+ 次 resend 前调用 auth.reportMissingCode（官方缺信上报）。"
+            "虚拟号没有真实 MNC，仅作协议探测。"
+        ),
+    )
     pin_app_version_substr: str = Field(
         default="",
         description=(
@@ -638,6 +686,9 @@ class AppConfigModel(BaseModel):
         "code_settings_allow_flashcall",
         "code_settings_allow_missed_call",
         "force_resend_on_app",
+        "sms_poll_bypass_push_window",
+        "resend_before_email_verify",
+        "report_missing_sms_code",
         mode="before",
     )
     @classmethod

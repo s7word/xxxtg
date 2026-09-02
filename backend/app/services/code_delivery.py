@@ -79,6 +79,10 @@ class CodeDeliveryPlan:
     allow_missed_call: bool = False
     force_resend_on_app: bool = False
     payment_required_probe: str = "off"
+    payment_resend_max: int = 1
+    payment_resend_wait_seconds: float = 0.0
+    resend_before_email_verify: bool = False
+    report_missing_sms_code: bool = False
     notes: tuple[str, ...] = field(default_factory=tuple)
 
     def summary_for_log(self) -> str:
@@ -155,6 +159,24 @@ def _payment_probe_mode(config: Any) -> str:
     if token in {"off", "resend", "play_market", "both"}:
         return token
     return "off"
+
+
+def _config_int(config: Any, name: str, default: int, lo: int, hi: int) -> int:
+    raw = default if config is None else getattr(config, name, default)
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        value = default
+    return max(lo, min(hi, value))
+
+
+def _config_float(config: Any, name: str, default: float, lo: float, hi: float) -> float:
+    raw = default if config is None else getattr(config, name, default)
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        value = default
+    return max(lo, min(hi, value))
 
 
 def emulation_label_for(config: Any, base_mode: Optional[str] = None) -> str:
@@ -287,6 +309,10 @@ def resolve_code_delivery_plan(
     allow_missed_call = _config_bool(config, "code_settings_allow_missed_call", False)
     force_resend = _config_bool(config, "force_resend_on_app", True)
     payment_probe = _payment_probe_mode(config)
+    payment_resend_max = _config_int(config, "payment_resend_max", 1, 1, 3)
+    payment_resend_wait = _config_float(config, "payment_resend_wait_seconds", 0.0, 0.0, 180.0)
+    resend_before_email = _config_bool(config, "resend_before_email_verify", False)
+    report_missing = _config_bool(config, "report_missing_sms_code", False)
     if allow_firebase:
         notes.append("CodeSettings.allow_firebase=true（官方 Android 同位，可能走 FirebaseSms）")
     if unknown_number:
@@ -298,7 +324,14 @@ def resolve_code_delivery_plan(
     if force_resend:
         notes.append("SentCodeTypeApp 无 next_type 时仍探测 auth.resendCode")
     if payment_probe != "off":
-        notes.append(f"PaymentRequired 探测={payment_probe}")
+        notes.append(
+            f"PaymentRequired 探测={payment_probe} resend_max={payment_resend_max} "
+            f"wait={payment_resend_wait:.0f}s"
+        )
+    if resend_before_email:
+        notes.append("SetUpEmailRequired 先 resendCode 再决定是否验证邮箱")
+    if report_missing:
+        notes.append("第2次 Payment resend 前调用 auth.reportMissingCode")
 
     if skip_attach:
         should_request = False
@@ -338,6 +371,10 @@ def resolve_code_delivery_plan(
         allow_missed_call=allow_missed_call,
         force_resend_on_app=force_resend,
         payment_required_probe=payment_probe,
+        payment_resend_max=payment_resend_max,
+        payment_resend_wait_seconds=payment_resend_wait,
+        resend_before_email_verify=resend_before_email,
+        report_missing_sms_code=report_missing,
         notes=tuple(notes),
     )
 
@@ -362,5 +399,9 @@ def escalation_plan_after_published_flood(plan: CodeDeliveryPlan) -> CodeDeliver
         allow_missed_call=plan.allow_missed_call,
         force_resend_on_app=plan.force_resend_on_app,
         payment_required_probe=plan.payment_required_probe,
+        payment_resend_max=plan.payment_resend_max,
+        payment_resend_wait_seconds=plan.payment_resend_wait_seconds,
+        resend_before_email_verify=plan.resend_before_email_verify,
+        report_missing_sms_code=plan.report_missing_sms_code,
         notes=plan.notes + ("API_ID_PUBLISHED_FLOOD → escalate 至 push_required",),
     )
