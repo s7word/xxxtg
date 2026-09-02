@@ -513,27 +513,37 @@
           <input v-model.number="config.push_token_reuse_max_uses" type="number" min="1" max="5" class="ce-input mono w-sm" />
           <p class="ce-tiny ce-muted" style="margin-top:6px">达到上限后不再被选取。库存详情见「Push 令牌库」页。</p>
         </div>
+        <div class="ce-alert is-warn">
+          <strong>2023-02 Telegram 注册政策</strong>
+          新用户 SMS / Firebase 验证码仅官方移动客户端 (api_id=<code>4</code> 或 <code>6</code> + REGHelp Push) 可走通。
+          自建 <code>my.telegram.org</code> api_id 几乎只会收到 <code>SentCodeTypeApp</code> 死路。
+        </div>
         <div>
           <label class="ce-label">验证码投递通道策略</label>
           <select v-model="config.code_delivery_mode" class="ce-select">
-            <option value="balanced">balanced（默认：自建 api_id 优先 SMS，泄露 ID 需 Push）</option>
-            <option value="sms_first">sms_first（始终优先 SMS，FLOOD 时再 escalate Push）</option>
-            <option value="push_required">push_required（legacy：始终 attach Push Token）</option>
+            <option value="push_required">push_required（默认：官方 api_id 每轮 attach Push Token）</option>
+            <option value="balanced">balanced（legacy：自建 api_id 可跳过 Push，无法走官方注册主路径）</option>
+            <option value="sms_first">sms_first（legacy：FLOOD 时再 escalate Push）</option>
           </select>
           <p class="ce-tiny ce-muted" style="margin-top:6px">
-            控制 auth.sendCode 是否申请并 attach REGHelp Push Token（CodeSettings.token）。
-            自建 api_id 下 balanced 会跳过 Push，提高 SentCodeTypeSms 概率。
+            官方注册链路必须 attach REGHelp Push（CodeSettings.token）。legacy 模式仅用于对比实验。
           </p>
         </div>
         <label class="ce-check">
           <input type="checkbox" v-model="config.official_client_emulation" />
-          官方客户端模拟（official api_id=6 + 每轮 Push attach + Email / Play Integrity / 内购快退）
+          官方客户端模拟（默认开启：官方 api_id + Push + Email / Play Integrity / 内购快退）
         </label>
         <p class="ce-tiny ce-muted">
-          开启后运行时覆盖凭证与通道计划：强制官方模板 api_id/api_hash、push_required，
-          并处理 SetUpEmailRequired（REGHelp Email）、FirebaseSms（Play Integrity）、
-          PaymentRequired（标记需官方 App 内购并快退）。猎号连续 App 强制 SMS 在此模式下关闭。
+          强制 official api_id/api_hash、push_required；处理 SetUpEmailRequired（需 REGHelp Email 产品）、
+          FirebaseSms（Play Integrity）、PaymentRequired（秘鲁等 $1.19 内购快退）。
         </p>
+        <div>
+          <label class="ce-label">官方 api_id（official_client_emulation 生效）</label>
+          <select v-model.number="config.official_api_id" class="ce-select">
+            <option :value="6">6 — 正式 Telegram Android (eb06…581e)</option>
+            <option :value="4">4 — Public Android / 早期官方 (014b…5103)</option>
+          </select>
+        </div>
         <div>
           <label class="ce-label">猎号连续 App 后强制 SMS（次数）</label>
           <input v-model.number="config.hunt_sms_first_after_app_streak" type="number" min="0" max="20" class="ce-input mono w-sm" />
@@ -553,24 +563,25 @@
         <div>
           <label class="ce-label">API 凭证选择策略</label>
           <select v-model="config.api_credential_mode" class="ce-select">
-            <option value="auto">auto（无 Push Token 且官方 ID 已泄露时自动回退自建凭证）</option>
-            <option value="custom">custom（始终强制使用自建开发者凭证）</option>
-            <option value="official">official（始终使用官方内置凭证，依赖 Push Token）</option>
+            <option value="official">official（默认：官方 api_id=4/6 + Push，走注册 SMS 主路径）</option>
+            <option value="auto">auto（legacy：无 Push 时可能回退自建 api_id）</option>
+            <option value="custom">custom（legacy：强制自建 — 典型 SentCodeTypeApp 死路）</option>
           </select>
         </div>
         <div class="grid-2">
           <div>
-            <label class="ce-label">自建 API ID</label>
-            <input v-model.number="config.custom_api_id" type="number" class="ce-input mono" placeholder="例如: 12345678" />
+            <label class="ce-label">自建 API ID（legacy，勿用于新用户注册）</label>
+            <input v-model.number="config.custom_api_id" type="number" class="ce-input mono" placeholder="my.telegram.org 申请" />
           </div>
           <div>
             <label class="ce-label">自建 API Hash</label>
-            <input v-model="config.custom_api_hash" type="text" class="ce-input mono" placeholder="my.telegram.org 申请获得" />
+            <input v-model="config.custom_api_hash" type="text" class="ce-input mono" placeholder="与 custom_api_id 配套" />
           </div>
         </div>
         <div class="ce-alert is-warn">
-          官方内置 api_id（如 4 / 6 / 21724）已被公开泄露。未附带合法 Push Token 时几乎必然返回
-          <code>API_ID_PUBLISHED_FLOOD</code>。REGHelp 与 AntiSafety 密钥/网关不能交叉混用。
+          官方 api_id 4/6 需附带合法 REGHelp Push Token，否则 <code>API_ID_PUBLISHED_FLOOD</code>。
+          SetUpEmailRequired 还需在 reghelp.net 开通 <strong>Email 产品</strong>（否则 SERVICE_DISABLED）。
+          REGHelp 与 AntiSafety 密钥/网关不能交叉混用。
         </div>
       </div>
 

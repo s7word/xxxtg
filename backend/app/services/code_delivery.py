@@ -52,7 +52,7 @@ CODE_DELIVERY_MODES = frozenset({
     CODE_DELIVERY_PUSH_REQUIRED,
 })
 
-DEFAULT_CODE_DELIVERY_MODE = CODE_DELIVERY_BALANCED
+DEFAULT_CODE_DELIVERY_MODE = CODE_DELIVERY_PUSH_REQUIRED
 DEFAULT_HUNT_SMS_FIRST_AFTER_APP_STREAK = 2
 
 
@@ -120,7 +120,7 @@ def _predict_effective_api_id(profile: Dict[str, Any], config: Any) -> int:
     template_id = int(profile.get("api_id") or 0)
     if is_official_client_emulation(config):
         return template_id
-    mode = getattr(config, "api_credential_mode", "auto") or "auto"
+    mode = getattr(config, "api_credential_mode", "official") or "official"
     custom_id = getattr(config, "custom_api_id", None)
     custom_hash = getattr(config, "custom_api_hash", None)
     has_custom = bool(custom_id and custom_hash)

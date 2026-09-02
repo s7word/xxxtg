@@ -261,9 +261,10 @@ FIREBASE_SMS_TYPE_NAMES = frozenset({
 })
 APP_STREAK_REASONS = frozenset({"SENT_CODE_TYPE_APP"})
 CHANNEL_FAIL_NOTES = {
-    "SENT_CODE_TYPE_APP": "auth.sendCode 仅下发站内 App 推送（未必已注册）",
+    "SENT_CODE_TYPE_APP": "auth.sendCode 仅下发站内 App 推送（自建 api_id 典型死路）",
     "PAYMENT_REQUIRED_OFFICIAL_ONLY": "需官方 App 内购，自动化不可完成",
     "EMAIL_SETUP_FAILED": "SetUpEmailRequired 流程失败",
+    "EMAIL_SERVICE_DISABLED": "REGHelp Email 产品未开通 (SERVICE_DISABLED)",
     "EMAIL_CODE_UNAVAILABLE": "SentCodeTypeEmailCode 无法接收该邮箱验证码",
 }
 
@@ -1639,6 +1640,13 @@ class RegistrationOrchestrator:
         return 0
 
     @classmethod
+    def _email_setup_failure_reason(cls, exc: Optional[Exception]) -> str:
+        text = str(exc or "").upper()
+        if "SERVICE_DISABLED" in text:
+            return "EMAIL_SERVICE_DISABLED"
+        return "EMAIL_SETUP_FAILED"
+
+    @classmethod
     async def _complete_setup_email(
         cls,
         client,
@@ -1691,7 +1699,7 @@ class RegistrationOrchestrator:
         if not inbox or not getattr(inbox, "email", None):
             raise SentCodeAppDeliveryError(
                 f"REGHelp 未能提供临时邮箱: {last_err}",
-                reason="EMAIL_SETUP_FAILED",
+                reason=cls._email_setup_failure_reason(last_err),
             )
         await manager.append_log(task_id, f"[{emulation_label}] 临时邮箱已就绪: {inbox.email}")
         purpose = types.EmailVerifyPurposeLoginSetup(
@@ -1719,7 +1727,7 @@ class RegistrationOrchestrator:
             except Exception as exc:
                 raise SentCodeAppDeliveryError(
                     f"REGHelp Email 验证码超时/失败: {exc}",
-                    reason="EMAIL_SETUP_FAILED",
+                    reason=cls._email_setup_failure_reason(exc),
                 ) from exc
         if not code:
             raise SentCodeAppDeliveryError(
@@ -2844,7 +2852,12 @@ class RegistrationOrchestrator:
                             f"credential_source={profile.get('credential_source')}"
                         )
                     if profile["credential_source"] == "custom":
-                        await manager.append_log(task_id, f"API 凭证策略: 强制使用自建开发者凭证 (api_id={profile['api_id']})")
+                        await manager.append_log(
+                            task_id,
+                            f"⚠️⚠️ API 凭证策略: 强制使用自建开发者凭证 (api_id={profile['api_id']})。"
+                            f"Telegram 2023-02 政策下新用户注册 SMS/Firebase 仅认官方移动客户端 (api_id=4/6 + Push)；"
+                            f"典型结果为 SentCodeTypeApp 死路。建议开启 official_client_emulation"
+                        )
                     elif profile["credential_source"] == "custom_auto_fallback":
                         await manager.append_log(
                             task_id,
@@ -2854,10 +2867,10 @@ class RegistrationOrchestrator:
                     elif profile.get("credential_risk") == "published_id_without_push_token":
                         await manager.append_log(
                             task_id,
-                            f"⚠️⚠️ 高风险: 当前使用官方公开泄露 api_id={profile['api_id']} 且无有效 Push Token，"
-                            f"auth.sendCode 大概率触发 API_ID_PUBLISHED_FLOOD。建议在「全局参数拓扑」中配置自建开发者 "
-                            f"api_id/api_hash (my.telegram.org) 并将 api_credential_mode 设为 auto 或 custom，"
-                            f"或修复 Attestation 网关连通性以获取合法 Push Token"
+                            f"⚠️⚠️ 高风险: 当前使用官方 api_id={profile['api_id']} 且无有效 Push Token，"
+                            f"auth.sendCode 大概率触发 API_ID_PUBLISHED_FLOOD。"
+                            f"请修复 REGHelp Push 连通性；2023-02 起注册 SMS 仅官方 api_id=4/6 可走通，"
+                            f"勿再依赖自建 my.telegram.org api_id"
                         )
                     elif profile.get("credential_risk") == "custom_mode_missing_credentials":
                         await manager.append_log(

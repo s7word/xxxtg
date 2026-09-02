@@ -394,10 +394,14 @@
         </div>
         <div v-if="launchMode === 'manual' && manualError" class="ce-alert is-danger">{{ manualError }}</div>
 
-        <div v-if="!config.custom_api_id" class="ce-alert is-warn">
-          尚未配置专属 <code>custom_api_id</code>。本地 lod_user 只有 JSON、没有 .session，不能直接当开发者凭证。
-          请到「凭证库 & 开发者 API」申请，或到「参数拓扑」手填已有 api_id/hash。
-          <button class="ce-link" @click="goTab('vault')">立即前往</button>
+        <div v-if="config.api_credential_mode === 'custom' || (!config.official_client_emulation && config.api_credential_mode !== 'official')" class="ce-alert is-danger">
+          当前配置仍走自建/legacy 凭证路径。Telegram 2023-02 起新用户注册 SMS 仅认官方移动客户端
+          (<code>api_id=4/6</code> + Push)。典型结果为 <code>SentCodeTypeApp</code>，带外短信网关收不到码。
+          请在「参数拓扑」开启 <strong>官方客户端模拟</strong> 并设 <code>api_credential_mode=official</code>。
+        </div>
+        <div v-else-if="config.official_client_emulation" class="ce-alert is-ok">
+          官方注册链路已启用：api_id={{ config.official_api_id || 6 }} + Push + Email/Integrity。
+          SetUpEmailRequired 需在 REGHelp 控制台开通 Email 产品。
         </div>
       </div>
 
