@@ -466,7 +466,24 @@ def main() -> int:
     parser.add_argument("--probe-n", type=int, default=PROBE_N)
     parser.add_argument("--check-only", action="store_true")
     parser.add_argument("--skip-t0", action="store_true")
+    parser.add_argument(
+        "--plan-override",
+        default="",
+        help="覆盖计划，逗号分隔 id:country:n:role:stack，如 pk_fb:pk:12:fallback:t1",
+    )
+    parser.add_argument(
+        "--bid-floor",
+        default="",
+        help="覆盖最低出价，如 kz=1.2,in=1.2",
+    )
     args = parser.parse_args()
+
+    if args.bid_floor:
+        for pair in args.bid_floor.split(","):
+            if "=" not in pair:
+                continue
+            cc, val = pair.split("=", 1)
+            PRICE_FLOOR[cc.strip().lower()] = float(val)
 
     password = args.password
     if not password and args.password_file and Path(args.password_file).exists():
@@ -481,6 +498,19 @@ def main() -> int:
     report_path = out_dir / f"country_passrate_50_{stamp}.json"
 
     plan = [dict(arm) for arm in PLAN]
+    if args.plan_override.strip():
+        plan = []
+        for part in args.plan_override.split(","):
+            bits = [x.strip() for x in part.split(":")]
+            if len(bits) != 5:
+                raise SystemExit(f"plan-override 项格式应为 id:country:n:role:stack，收到 {part}")
+            plan.append({
+                "id": bits[0],
+                "country": bits[1].lower(),
+                "target": int(bits[2]),
+                "role": bits[3],
+                "stack": bits[4],
+            })
     if args.skip_t0:
         plan = [arm for arm in plan if arm["stack"] != "t0"]
 
