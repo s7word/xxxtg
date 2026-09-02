@@ -590,6 +590,30 @@
           <input type="checkbox" v-model="config.flood_rotate_push_token" />
           FLOOD 后冷却并换发 Push Token
         </label>
+        <div>
+          <label class="ce-label">FLOOD 门闩作用域</label>
+          <select v-model="config.flood_window_scope" class="ce-select">
+            <option value="process">process（默认：同进程跳过新租号/发码，不 cancel 已开跑）</option>
+            <option value="task">task（仅记录；兄弟任务可继续，供并发探测）</option>
+          </select>
+        </div>
+        <label class="ce-check">
+          <input type="checkbox" v-model="config.flood_block_new_sends" />
+          冷却窗内跳过新租号 / sendCode（避免填窗烧钱）
+        </label>
+        <label class="ce-check">
+          <input type="checkbox" v-model="config.ignore_published_flood_window" />
+          忽略 API_ID_PUBLISHED_FLOOD 门闩（10 并发探测；同窗续发通常仍 FLOOD）
+        </label>
+        <div>
+          <label class="ce-label">PUBLISHED_FLOOD 冷却秒数</label>
+          <input v-model.number="config.published_flood_hold_seconds" type="number" min="30" max="3600" class="ce-input mono w-sm" />
+          <p class="ce-tiny ce-muted" style="margin-top:6px">
+            默认 120。进程门闩只拦<strong>尚未租号/发码</strong>的任务；不是把整批 asyncio cancel。
+            要 10 并发测 api_id=4：开 <code>ignore_published_flood_window</code> 或
+            <code>flood_window_scope=task</code>（会烧号/烧钱）。
+          </p>
+        </div>
         <label class="ce-check">
           <input type="checkbox" v-model="config.inject_vault_device_secret" />
           尝试把 vault device_secret 注入 FirebaseSms（默认关：nonce 不匹配，CodeSettings 无此槽位）

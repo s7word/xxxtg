@@ -35,7 +35,12 @@ EMU_DEVICE_MARKERS = (
     "desktop",
 )
 
-PUSH_SLOT_IOS_CODESETTINGS = "CodeSettings.token(iOS-semantic)"
+# 官方 TL 文档把 CodeSettings.token / app_sandbox 标成 iOS Firebase 专用；
+# 本仓实际塞的是 Android REGHelp FCM（api_id=4 过 published 闸的历史做法）。
+# 日志用 android_fcm_in_ios_doc_slot，避免被误读成「在跑 iOS 客户端」。
+PUSH_SLOT_ANDROID_FCM_IN_IOS_DOC = "CodeSettings.token(android_fcm_in_ios_doc_slot)"
+# 旧日志关键字，仅兼容历史报告检索
+PUSH_SLOT_IOS_CODESETTINGS = PUSH_SLOT_ANDROID_FCM_IN_IOS_DOC
 PUSH_SLOT_NONE = "none"
 
 
@@ -139,7 +144,7 @@ def classify_push_token(token: Optional[str]) -> Dict[str, Any]:
 
 
 def describe_push_slot(attached: bool) -> str:
-    return PUSH_SLOT_IOS_CODESETTINGS if attached else PUSH_SLOT_NONE
+    return PUSH_SLOT_ANDROID_FCM_IN_IOS_DOC if attached else PUSH_SLOT_NONE
 
 
 def strict_app_version_pin(config: Any) -> str:

@@ -405,6 +405,33 @@ class AppConfigModel(BaseModel):
         default=True,
         description="FLOOD / API_ID_PUBLISHED_FLOOD 后冷却并换发 Push Token，禁止把同一枚 token 继续撞闸。",
     )
+    flood_window_scope: str = Field(
+        default="process",
+        description=(
+            "SendCode FLOOD 门闩作用域: process（默认：同进程其它任务跳过新租号/发码，"
+            "不 cancel 已开跑任务）/ task（仅记录；兄弟任务可继续，供并发探测）。"
+        ),
+    )
+    flood_block_new_sends: bool = Field(
+        default=True,
+        description=(
+            "process 作用域下，冷却窗内是否跳过新的租号/auth.sendCode。"
+            "关掉后仍会打警告日志；同窗续发 published api_id 通常仍 FLOOD。"
+        ),
+    )
+    ignore_published_flood_window: bool = Field(
+        default=False,
+        description=(
+            "测试开关：忽略 API_ID_PUBLISHED_FLOOD 进程门闩，允许 10 并发等探测继续发码。"
+            "日志会警告同窗续发通常仍 FLOOD 且烧钱。生产默认关。"
+        ),
+    )
+    published_flood_hold_seconds: float = Field(
+        default=120.0,
+        ge=30.0,
+        le=3600.0,
+        description="API_ID_PUBLISHED_FLOOD 硬门闩默认冷却秒数（不再无条件顶满 3600）。",
+    )
     code_settings_allow_firebase: bool = Field(
         default=True,
         description="auth.sendCode CodeSettings.allow_firebase。官方 Android 为 true。",
@@ -677,6 +704,8 @@ class AppConfigModel(BaseModel):
         "vault_attestation_persist_secrets",
         "app_delivery_fast_drop",
         "flood_rotate_push_token",
+        "flood_block_new_sends",
+        "ignore_published_flood_window",
         "proxy_require_country_match",
         "code_settings_allow_firebase",
         "code_settings_unknown_number",
@@ -689,12 +718,30 @@ class AppConfigModel(BaseModel):
         true_defaults = {
             "app_delivery_fast_drop",
             "flood_rotate_push_token",
+            "flood_block_new_sends",
             "proxy_require_country_match",
             "code_settings_allow_firebase",
             "code_settings_unknown_number",
         }
         field_name = getattr(info, "field_name", None)
         return coerce_bool(value, default=bool(field_name in true_defaults))
+
+    @field_validator("flood_window_scope", mode="before")
+    @classmethod
+    def _normalize_flood_window_scope(cls, value):
+        token = str(value or "process").strip().lower()
+        if token in {"task", "per_task", "thread", "local"}:
+            return "task"
+        return "process"
+
+    @field_validator("published_flood_hold_seconds", mode="before")
+    @classmethod
+    def _normalize_published_flood_hold_seconds(cls, value):
+        try:
+            sec = float(value)
+        except (TypeError, ValueError):
+            return 120.0
+        return max(30.0, min(sec, 3600.0))
 
     @field_validator("device_alignment_mode", mode="before")
     @classmethod

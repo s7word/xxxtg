@@ -151,9 +151,18 @@ class TestFloodWindowGate(unittest.IsolatedAsyncioTestCase):
 
     def test_hard_trip_blocks_siblings(self):
         gate = SendCodeFloodWindow.get()
-        gate.trip(reason="API_ID_PUBLISHED_FLOOD", seconds=12, hard=True)
+        gate.trip(reason="API_ID_PUBLISHED_FLOOD", seconds=12, hard=True, api_id=4)
         self.assertTrue(gate.is_hard_stop())
         self.assertGreaterEqual(gate.remaining(), 12)
+        self.assertEqual(gate.api_id(), 4)
+
+    def test_published_hard_hold_defaults_to_pause_not_hour(self):
+        gate = SendCodeFloodWindow.get()
+        gate.trip(reason="API_ID_PUBLISHED_FLOOD", seconds=0, hard=True, api_id=4)
+        # 默认约 DEFAULT_PUBLISHED_FLOOD_PAUSE_SECONDS，不再无条件顶满 3600
+        self.assertTrue(gate.is_hard_stop())
+        self.assertLess(gate.remaining(), 3600)
+        self.assertGreater(gate.remaining(), 60)
 
     def test_soft_trip_waits_full_seconds(self):
         gate = SendCodeFloodWindow.get()
@@ -163,7 +172,7 @@ class TestFloodWindowGate(unittest.IsolatedAsyncioTestCase):
 
     async def test_respect_hard_stop_returns_reason(self):
         SendCodeFloodWindow.get().trip(
-            reason="API_ID_PUBLISHED_FLOOD", seconds=3600, hard=True
+            reason="API_ID_PUBLISHED_FLOOD", seconds=3600, hard=True, api_id=4
         )
         manager = RegistrationTaskManager()
         manager.tasks = {}
@@ -171,7 +180,76 @@ class TestFloodWindowGate(unittest.IsolatedAsyncioTestCase):
         stop = await RegistrationOrchestrator._respect_flood_window(tid, manager)
         self.assertEqual(stop, "HUNT_FLOOD_WINDOW")
         logs = "\n".join(manager.get_task(tid)["logs"])
-        self.assertIn("填满窗口", logs)
+        self.assertIn("跳过本任务的租号/发码", logs)
+        self.assertNotIn("停止本任务以免继续填满窗口", logs)
+        self.assertIn("不会被 cancel", logs)
+
+    async def test_ignore_published_flood_window_allows_sibling(self):
+        SendCodeFloodWindow.get().trip(
+            reason="API_ID_PUBLISHED_FLOOD", seconds=3600, hard=True, api_id=4
+        )
+        manager = RegistrationTaskManager()
+        manager.tasks = {}
+        tid = manager.create_task()
+        cfg = SimpleNamespace(
+            ignore_published_flood_window=True,
+            flood_window_scope="process",
+            flood_block_new_sends=True,
+            published_flood_hold_seconds=120.0,
+        )
+        stop = await RegistrationOrchestrator._respect_flood_window(
+            tid, manager, config=cfg
+        )
+        self.assertIsNone(stop)
+        logs = "\n".join(manager.get_task(tid)["logs"])
+        self.assertIn("ignore_published_flood_window=开", logs)
+        self.assertIn("通常仍 FLOOD", logs)
+
+    async def test_task_scope_allows_sibling(self):
+        SendCodeFloodWindow.get().trip(
+            reason="API_ID_PUBLISHED_FLOOD", seconds=3600, hard=True, api_id=4
+        )
+        manager = RegistrationTaskManager()
+        manager.tasks = {}
+        tid = manager.create_task()
+        cfg = SimpleNamespace(
+            ignore_published_flood_window=False,
+            flood_window_scope="task",
+            flood_block_new_sends=True,
+            published_flood_hold_seconds=120.0,
+        )
+        stop = await RegistrationOrchestrator._respect_flood_window(
+            tid, manager, config=cfg
+        )
+        self.assertIsNone(stop)
+        logs = "\n".join(manager.get_task(tid)["logs"])
+        self.assertIn("flood_window_scope=task", logs)
+
+    def test_trip_with_task_scope_does_not_hard_latch(self):
+        cfg = SimpleNamespace(
+            ignore_published_flood_window=False,
+            flood_window_scope="task",
+            flood_block_new_sends=True,
+            published_flood_hold_seconds=120.0,
+        )
+        RegistrationOrchestrator._trip_flood_window(
+            reason="API_ID_PUBLISHED_FLOOD",
+            seconds=0,
+            hard=True,
+            api_id=4,
+            config=cfg,
+        )
+        gate = SendCodeFloodWindow.get()
+        self.assertFalse(gate.is_hard_stop())
+        self.assertLess(gate.remaining(), 1.0)
+
+    def test_push_slot_label_is_android_fcm_not_ios_client(self):
+        from backend.app.services.device_alignment import describe_push_slot
+
+        label = describe_push_slot(True)
+        self.assertIn("android_fcm", label)
+        self.assertNotIn("iOS-semantic", label)
+        self.assertIn("CodeSettings.token", label)
 
 
 class TestProxyCountryMatch(unittest.IsolatedAsyncioTestCase):
