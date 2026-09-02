@@ -1,0 +1,960 @@
+{
+  "title": "country passrate ~50 round 2 combined（主跑+35分钟后补探针）",
+  "round": 2,
+  "started_at": "2026-09-02T13:16:06Z",
+  "finished_at": "2026-09-02T15:47:15Z",
+  "sources": [
+    "data/ab_reports/country_passrate_50_r2_20260902_131603.json",
+    "data/ab_reports/country_passrate_50_r2_20260902_142050.json"
+  ],
+  "stack": {
+    "api_id": 4,
+    "official_emulation": false,
+    "push": true,
+    "lang_pack": "android",
+    "no_api_id_6": true,
+    "no_payment": true
+  },
+  "leased_total": 51,
+  "sendcode_total": 12,
+  "app_total": 12,
+  "sms_type_total": 0,
+  "flood_total": 26,
+  "success_total": 0,
+  "payment_total": 0,
+  "sms_received_total": 0,
+  "budget_share": {
+    "preferred_leased": 51,
+    "control_leased": 0,
+    "preferred_pct": 100.0,
+    "meets_70": true,
+    "control_pct_cap": 15,
+    "note": "in/iq getNumber noNumber，对照租号 0"
+  },
+  "balances": {
+    "smsbower_before": 23.611,
+    "smsbower_after": 23.611,
+    "grizzly_before": 29.8,
+    "grizzly_after_last_ok": 29.8,
+    "need_topup_amount": 0,
+    "need_topup_reason": "失败号 cancel，余额未动"
+  },
+  "vs_r1": {
+    "r1_leased": 44,
+    "r1_app": 10,
+    "r1_sms": 0,
+    "r1_success": 0,
+    "r1_flood": 22,
+    "r2_leased": 51,
+    "r2_app": 12,
+    "r2_sms": 0,
+    "r2_success": 0,
+    "r2_flood": 26,
+    "sms_progress": false,
+    "success_progress": false,
+    "app_window_progress": "vn 填满波仍有 App（R1 填满波 0 App）；35–70 分钟后再探针 0 App"
+  },
+  "country_table": [
+    {
+      "country": "ph",
+      "stack": "t1",
+      "leased": 17,
+      "sendcode": 2,
+      "app": 2,
+      "sms": 0,
+      "flood": 11,
+      "success": 0,
+      "sms_received": 0,
+      "payment": 0,
+      "nonumber": 0,
+      "providers": [
+        "smsbower"
+      ],
+      "role": "preferred"
+    },
+    {
+      "country": "vn",
+      "stack": "t1",
+      "leased": 18,
+      "sendcode": 7,
+      "app": 7,
+      "sms": 0,
+      "flood": 9,
+      "success": 0,
+      "sms_received": 0,
+      "payment": 0,
+      "nonumber": 4,
+      "providers": [
+        "smsbower"
+      ],
+      "role": "preferred"
+    },
+    {
+      "country": "id",
+      "stack": "t1",
+      "leased": 16,
+      "sendcode": 3,
+      "app": 3,
+      "sms": 0,
+      "flood": 6,
+      "success": 0,
+      "sms_received": 0,
+      "payment": 0,
+      "nonumber": 0,
+      "providers": [
+        "smsbower"
+      ],
+      "role": "preferred"
+    },
+    {
+      "country": "kz",
+      "stack": "t1",
+      "leased": 0,
+      "sendcode": 0,
+      "app": 0,
+      "sms": 0,
+      "flood": 0,
+      "success": 0,
+      "sms_received": 0,
+      "payment": 0,
+      "nonumber": 9,
+      "providers": [
+        "grizzlysms"
+      ],
+      "role": "preferred"
+    },
+    {
+      "country": "in",
+      "stack": "t1",
+      "leased": 0,
+      "sendcode": 0,
+      "app": 0,
+      "sms": 0,
+      "flood": 0,
+      "success": 0,
+      "sms_received": 0,
+      "payment": 0,
+      "nonumber": 4,
+      "providers": [
+        "smsbower"
+      ],
+      "role": "historical_control"
+    },
+    {
+      "country": "iq",
+      "stack": "t1",
+      "leased": 0,
+      "sendcode": 0,
+      "app": 0,
+      "sms": 0,
+      "flood": 0,
+      "success": 0,
+      "sms_received": 0,
+      "payment": 0,
+      "nonumber": 4,
+      "providers": [
+        "smsbower"
+      ],
+      "role": "alt_control"
+    }
+  ],
+  "prefix_table": [
+    {
+      "country": "ph",
+      "prefix": "0955",
+      "operator_guess": "Globe/TM/GOMO",
+      "app": 2,
+      "sms": 0,
+      "flood": 3,
+      "leased_rows": 6,
+      "providers": [
+        "smsbower"
+      ]
+    },
+    {
+      "country": "ph",
+      "prefix": "0997",
+      "operator_guess": "PH-unknown",
+      "app": 0,
+      "sms": 0,
+      "flood": 0,
+      "leased_rows": 1,
+      "providers": [
+        "smsbower"
+      ]
+    },
+    {
+      "country": "vn",
+      "prefix": "082",
+      "operator_guess": "Vinaphone",
+      "app": 0,
+      "sms": 0,
+      "flood": 2,
+      "leased_rows": 2,
+      "providers": [
+        "smsbower"
+      ]
+    },
+    {
+      "country": "vn",
+      "prefix": "052",
+      "operator_guess": "Vietnamobile",
+      "app": 1,
+      "sms": 0,
+      "flood": 0,
+      "leased_rows": 1,
+      "providers": [
+        "smsbower"
+      ]
+    },
+    {
+      "country": "vn",
+      "prefix": "090",
+      "operator_guess": "Mobifone",
+      "app": 1,
+      "sms": 0,
+      "flood": 1,
+      "leased_rows": 2,
+      "providers": [
+        "smsbower"
+      ]
+    },
+    {
+      "country": "vn",
+      "prefix": "076",
+      "operator_guess": "Mobifone",
+      "app": 1,
+      "sms": 0,
+      "flood": 0,
+      "leased_rows": 1,
+      "providers": [
+        "smsbower"
+      ]
+    },
+    {
+      "country": "id",
+      "prefix": "0857",
+      "operator_guess": "Indosat",
+      "app": 1,
+      "sms": 0,
+      "flood": 4,
+      "leased_rows": 8,
+      "providers": [
+        "smsbower"
+      ]
+    },
+    {
+      "country": "id",
+      "prefix": "0858",
+      "operator_guess": "Indosat",
+      "app": 2,
+      "sms": 0,
+      "flood": 1,
+      "leased_rows": 5,
+      "providers": [
+        "smsbower"
+      ]
+    },
+    {
+      "country": "id",
+      "prefix": "0816",
+      "operator_guess": "Indosat",
+      "app": 0,
+      "sms": 0,
+      "flood": 0,
+      "leased_rows": 1,
+      "providers": [
+        "smsbower"
+      ]
+    },
+    {
+      "country": "kz",
+      "prefix": "?",
+      "operator_guess": null,
+      "app": 0,
+      "sms": 0,
+      "flood": 0,
+      "leased_rows": 0,
+      "providers": [
+        "grizzlysms"
+      ]
+    },
+    {
+      "country": "vn",
+      "prefix": "037",
+      "operator_guess": "Viettel",
+      "app": 1,
+      "sms": 0,
+      "flood": 1,
+      "leased_rows": 2,
+      "providers": [
+        "smsbower"
+      ]
+    },
+    {
+      "country": "vn",
+      "prefix": "077",
+      "operator_guess": "Mobifone",
+      "app": 1,
+      "sms": 0,
+      "flood": 0,
+      "leased_rows": 1,
+      "providers": [
+        "smsbower"
+      ]
+    },
+    {
+      "country": "vn",
+      "prefix": "097",
+      "operator_guess": "Viettel",
+      "app": 1,
+      "sms": 0,
+      "flood": 2,
+      "leased_rows": 3,
+      "providers": [
+        "smsbower"
+      ]
+    },
+    {
+      "country": "vn",
+      "prefix": "089",
+      "operator_guess": "Mobifone",
+      "app": 0,
+      "sms": 0,
+      "flood": 1,
+      "leased_rows": 1,
+      "providers": [
+        "smsbower"
+      ]
+    },
+    {
+      "country": "vn",
+      "prefix": "035",
+      "operator_guess": "Viettel",
+      "app": 0,
+      "sms": 0,
+      "flood": 3,
+      "leased_rows": 3,
+      "providers": [
+        "smsbower"
+      ]
+    },
+    {
+      "country": "vn",
+      "prefix": "098",
+      "operator_guess": "Viettel",
+      "app": 1,
+      "sms": 0,
+      "flood": 0,
+      "leased_rows": 1,
+      "providers": [
+        "smsbower"
+      ]
+    },
+    {
+      "country": "vn",
+      "prefix": "?",
+      "operator_guess": null,
+      "app": 0,
+      "sms": 0,
+      "flood": 0,
+      "leased_rows": 0,
+      "providers": [
+        "smsbower"
+      ]
+    },
+    {
+      "country": "id",
+      "prefix": "0815",
+      "operator_guess": "Indosat",
+      "app": 0,
+      "sms": 0,
+      "flood": 1,
+      "leased_rows": 2,
+      "providers": [
+        "smsbower"
+      ]
+    },
+    {
+      "country": "ph",
+      "prefix": "0975",
+      "operator_guess": "Globe/TM/GOMO",
+      "app": 0,
+      "sms": 0,
+      "flood": 1,
+      "leased_rows": 2,
+      "providers": [
+        "smsbower"
+      ]
+    },
+    {
+      "country": "ph",
+      "prefix": "0949",
+      "operator_guess": "PH-unknown",
+      "app": 0,
+      "sms": 0,
+      "flood": 1,
+      "leased_rows": 1,
+      "providers": [
+        "smsbower"
+      ]
+    },
+    {
+      "country": "ph",
+      "prefix": "0945",
+      "operator_guess": "PH-unknown",
+      "app": 0,
+      "sms": 0,
+      "flood": 1,
+      "leased_rows": 1,
+      "providers": [
+        "smsbower"
+      ]
+    },
+    {
+      "country": "in",
+      "prefix": "?",
+      "operator_guess": null,
+      "app": 0,
+      "sms": 0,
+      "flood": 0,
+      "leased_rows": 0,
+      "providers": [
+        "smsbower"
+      ]
+    },
+    {
+      "country": "iq",
+      "prefix": "?",
+      "operator_guess": null,
+      "app": 0,
+      "sms": 0,
+      "flood": 0,
+      "leased_rows": 0,
+      "providers": [
+        "smsbower"
+      ]
+    },
+    {
+      "country": "ph",
+      "prefix": "0927",
+      "operator_guess": "Globe/TM/GOMO",
+      "app": 0,
+      "sms": 0,
+      "flood": 1,
+      "leased_rows": 1,
+      "providers": [
+        "smsbower"
+      ]
+    },
+    {
+      "country": "ph",
+      "prefix": "0946",
+      "operator_guess": "PH-unknown",
+      "app": 0,
+      "sms": 0,
+      "flood": 0,
+      "leased_rows": 1,
+      "providers": [
+        "smsbower"
+      ]
+    },
+    {
+      "country": "ph",
+      "prefix": "0960",
+      "operator_guess": "PH-unknown",
+      "app": 0,
+      "sms": 0,
+      "flood": 2,
+      "leased_rows": 2,
+      "providers": [
+        "smsbower"
+      ]
+    },
+    {
+      "country": "ph",
+      "prefix": "0961",
+      "operator_guess": "PH-unknown",
+      "app": 0,
+      "sms": 0,
+      "flood": 1,
+      "leased_rows": 1,
+      "providers": [
+        "smsbower"
+      ]
+    },
+    {
+      "country": "ph",
+      "prefix": "0968",
+      "operator_guess": "PH-unknown",
+      "app": 0,
+      "sms": 0,
+      "flood": 1,
+      "leased_rows": 1,
+      "providers": [
+        "smsbower"
+      ]
+    },
+    {
+      "country": "vn",
+      "prefix": "039",
+      "operator_guess": "Viettel",
+      "app": 0,
+      "sms": 0,
+      "flood": 1,
+      "leased_rows": 1,
+      "providers": [
+        "smsbower"
+      ]
+    }
+  ],
+  "waves": [
+    {
+      "id": "ph_r2_probe0",
+      "at": "2026-09-02T13:16:09Z",
+      "finished": "2026-09-02T13:18:33Z",
+      "country": "ph",
+      "wave": "probe",
+      "provider": "smsbower",
+      "leased": 4,
+      "sendcode": 2,
+      "app": 2,
+      "sms_type": 0,
+      "flood": 0,
+      "success": 0,
+      "prefixes": {
+        "0955": 3,
+        "0997": 1
+      },
+      "operators": {
+        "Globe/TM/GOMO": 3,
+        "PH-unknown": 1
+      },
+      "sent_code_types": {
+        "SentCodeTypeApp": 2
+      }
+    },
+    {
+      "id": "vn_r2_probe0",
+      "at": "2026-09-02T13:19:21Z",
+      "finished": "2026-09-02T13:22:21Z",
+      "country": "vn",
+      "wave": "probe",
+      "provider": "smsbower",
+      "leased": 4,
+      "sendcode": 3,
+      "app": 3,
+      "sms_type": 0,
+      "flood": 0,
+      "success": 0,
+      "prefixes": {
+        "082": 1,
+        "052": 1,
+        "090": 1,
+        "076": 1
+      },
+      "operators": {
+        "Vinaphone": 1,
+        "Vietnamobile": 1,
+        "Mobifone": 2
+      },
+      "sent_code_types": {
+        "SentCodeTypeApp": 3
+      }
+    },
+    {
+      "id": "id_r2_probe0",
+      "at": "2026-09-02T13:23:09Z",
+      "finished": "2026-09-02T13:25:21Z",
+      "country": "id",
+      "wave": "probe",
+      "provider": "smsbower",
+      "leased": 4,
+      "sendcode": 3,
+      "app": 3,
+      "sms_type": 0,
+      "flood": 0,
+      "success": 0,
+      "prefixes": {
+        "0857": 1,
+        "0858": 2,
+        "0816": 1
+      },
+      "operators": {
+        "Indosat": 4
+      },
+      "sent_code_types": {
+        "SentCodeTypeApp": 3
+      }
+    },
+    {
+      "id": "kz_r2_probe0",
+      "at": "2026-09-02T13:26:09Z",
+      "finished": "2026-09-02T13:26:21Z",
+      "country": "kz",
+      "wave": "probe",
+      "provider": "grizzlysms",
+      "leased": 0,
+      "sendcode": 0,
+      "app": 0,
+      "sms_type": 0,
+      "flood": 0,
+      "success": 0,
+      "prefixes": {},
+      "operators": {},
+      "sent_code_types": {}
+    },
+    {
+      "id": "vn_r2_fill0_1788355671",
+      "at": "2026-09-02T13:27:54Z",
+      "finished": "2026-09-02T13:30:18Z",
+      "country": "vn",
+      "wave": "fill",
+      "provider": "smsbower",
+      "leased": 4,
+      "sendcode": 3,
+      "app": 3,
+      "sms_type": 0,
+      "flood": 1,
+      "success": 0,
+      "prefixes": {
+        "037": 1,
+        "077": 1,
+        "097": 1,
+        "089": 1
+      },
+      "operators": {
+        "Viettel": 2,
+        "Mobifone": 2
+      },
+      "sent_code_types": {
+        "SentCodeTypeApp": 3
+      }
+    },
+    {
+      "id": "vn_r2_fill0_1788355908",
+      "at": "2026-09-02T13:31:52Z",
+      "finished": "2026-09-02T13:34:16Z",
+      "country": "vn",
+      "wave": "fill",
+      "provider": "smsbower",
+      "leased": 4,
+      "sendcode": 1,
+      "app": 1,
+      "sms_type": 0,
+      "flood": 2,
+      "success": 0,
+      "prefixes": {
+        "097": 1,
+        "090": 1,
+        "035": 1,
+        "098": 1
+      },
+      "operators": {
+        "Viettel": 3,
+        "Mobifone": 1
+      },
+      "sent_code_types": {
+        "SentCodeTypeApp": 1
+      }
+    },
+    {
+      "id": "vn_r2_fill0_1788356146",
+      "at": "2026-09-02T13:35:49Z",
+      "finished": "2026-09-02T13:36:25Z",
+      "country": "vn",
+      "wave": "fill",
+      "provider": "smsbower",
+      "leased": 1,
+      "sendcode": 0,
+      "app": 0,
+      "sms_type": 0,
+      "flood": 1,
+      "success": 0,
+      "prefixes": {
+        "035": 1
+      },
+      "operators": {
+        "Viettel": 1
+      },
+      "sent_code_types": {}
+    },
+    {
+      "id": "id_r2_fill0_1788356275",
+      "at": "2026-09-02T13:38:01Z",
+      "finished": "2026-09-02T13:40:01Z",
+      "country": "id",
+      "wave": "fill",
+      "provider": "smsbower",
+      "leased": 4,
+      "sendcode": 0,
+      "app": 0,
+      "sms_type": 0,
+      "flood": 4,
+      "success": 0,
+      "prefixes": {
+        "0858": 1,
+        "0857": 2,
+        "0815": 1
+      },
+      "operators": {
+        "Indosat": 4
+      },
+      "sent_code_types": {}
+    },
+    {
+      "id": "ph_r2_fill0_1788356491",
+      "at": "2026-09-02T13:41:34Z",
+      "finished": "2026-09-02T13:43:46Z",
+      "country": "ph",
+      "wave": "fill",
+      "provider": "smsbower",
+      "leased": 4,
+      "sendcode": 0,
+      "app": 0,
+      "sms_type": 0,
+      "flood": 3,
+      "success": 0,
+      "prefixes": {
+        "0975": 1,
+        "0955": 1,
+        "0949": 1,
+        "0945": 1
+      },
+      "operators": {
+        "Globe/TM/GOMO": 2,
+        "PH-unknown": 2
+      },
+      "sent_code_types": {}
+    },
+    {
+      "id": "in_r2_probe",
+      "at": "2026-09-02T13:44:35Z",
+      "finished": "2026-09-02T13:44:59Z",
+      "country": "in",
+      "wave": "probe",
+      "provider": "smsbower",
+      "leased": 0,
+      "sendcode": 0,
+      "app": 0,
+      "sms_type": 0,
+      "flood": 0,
+      "success": 0,
+      "prefixes": {},
+      "operators": {},
+      "sent_code_types": {}
+    },
+    {
+      "id": "iq_r2_probe",
+      "at": "2026-09-02T13:45:01Z",
+      "finished": "2026-09-02T13:45:14Z",
+      "country": "iq",
+      "wave": "probe",
+      "provider": "smsbower",
+      "leased": 0,
+      "sendcode": 0,
+      "app": 0,
+      "sms_type": 0,
+      "flood": 0,
+      "success": 0,
+      "prefixes": {},
+      "operators": {},
+      "sent_code_types": {}
+    },
+    {
+      "id": "ph_r2_probe0",
+      "at": "2026-09-02T14:20:56Z",
+      "finished": "2026-09-02T14:23:08Z",
+      "country": "ph",
+      "wave": "probe",
+      "provider": "smsbower",
+      "leased": 4,
+      "sendcode": 0,
+      "app": 0,
+      "sms_type": 0,
+      "flood": 3,
+      "success": 0,
+      "prefixes": {
+        "0927": 1,
+        "0946": 1,
+        "0960": 1,
+        "0961": 1
+      },
+      "operators": {
+        "Globe/TM/GOMO": 1,
+        "PH-unknown": 3
+      },
+      "sent_code_types": {}
+    },
+    {
+      "id": "vn_r2_probe0",
+      "at": "2026-09-02T14:23:56Z",
+      "finished": "2026-09-02T14:25:08Z",
+      "country": "vn",
+      "wave": "probe",
+      "provider": "smsbower",
+      "leased": 1,
+      "sendcode": 0,
+      "app": 0,
+      "sms_type": 0,
+      "flood": 1,
+      "success": 0,
+      "prefixes": {
+        "097": 1
+      },
+      "operators": {
+        "Viettel": 1
+      },
+      "sent_code_types": {}
+    },
+    {
+      "id": "id_r2_probe0",
+      "at": "2026-09-02T14:25:56Z",
+      "finished": "2026-09-02T14:26:20Z",
+      "country": "id",
+      "wave": "probe",
+      "provider": "smsbower",
+      "leased": 4,
+      "sendcode": 0,
+      "app": 0,
+      "sms_type": 0,
+      "flood": 0,
+      "success": 0,
+      "prefixes": {
+        "0857": 2,
+        "0815": 1,
+        "0858": 1
+      },
+      "operators": {
+        "Indosat": 4
+      },
+      "sent_code_types": {}
+    },
+    {
+      "id": "kz_r2_probe0",
+      "at": "2026-09-02T14:27:08Z",
+      "finished": "2026-09-02T14:27:20Z",
+      "country": "kz",
+      "wave": "probe",
+      "provider": "grizzlysms",
+      "leased": 0,
+      "sendcode": 0,
+      "app": 0,
+      "sms_type": 0,
+      "flood": 0,
+      "success": 0,
+      "prefixes": {},
+      "operators": {},
+      "sent_code_types": {}
+    },
+    {
+      "id": "ph_r2_probe1",
+      "at": "2026-09-02T15:02:23Z",
+      "finished": "2026-09-02T15:04:35Z",
+      "country": "ph",
+      "wave": "probe",
+      "provider": "smsbower",
+      "leased": 4,
+      "sendcode": 0,
+      "app": 0,
+      "sms_type": 0,
+      "flood": 4,
+      "success": 0,
+      "prefixes": {
+        "0955": 2,
+        "0975": 1,
+        "0968": 1
+      },
+      "operators": {
+        "Globe/TM/GOMO": 3,
+        "PH-unknown": 1
+      },
+      "sent_code_types": {}
+    },
+    {
+      "id": "vn_r2_probe1",
+      "at": "2026-09-02T15:05:24Z",
+      "finished": "2026-09-02T15:08:00Z",
+      "country": "vn",
+      "wave": "probe",
+      "provider": "smsbower",
+      "leased": 4,
+      "sendcode": 0,
+      "app": 0,
+      "sms_type": 0,
+      "flood": 4,
+      "success": 0,
+      "prefixes": {
+        "039": 1,
+        "082": 1,
+        "037": 1,
+        "035": 1
+      },
+      "operators": {
+        "Viettel": 3,
+        "Vinaphone": 1
+      },
+      "sent_code_types": {}
+    },
+    {
+      "id": "id_r2_probe1",
+      "at": "2026-09-02T15:08:48Z",
+      "finished": "2026-09-02T15:10:36Z",
+      "country": "id",
+      "wave": "probe",
+      "provider": "smsbower",
+      "leased": 4,
+      "sendcode": 0,
+      "app": 0,
+      "sms_type": 0,
+      "flood": 2,
+      "success": 0,
+      "prefixes": {
+        "0857": 3,
+        "0858": 1
+      },
+      "operators": {
+        "Indosat": 4
+      },
+      "sent_code_types": {}
+    },
+    {
+      "id": "kz_r2_probe1",
+      "at": "2026-09-02T15:11:24Z",
+      "finished": "2026-09-02T15:11:36Z",
+      "country": "kz",
+      "wave": "probe",
+      "provider": "grizzlysms",
+      "leased": 0,
+      "sendcode": 0,
+      "app": 0,
+      "sms_type": 0,
+      "flood": 0,
+      "success": 0,
+      "prefixes": {},
+      "operators": {},
+      "sent_code_types": {}
+    },
+    {
+      "id": "ph_r2_probe2",
+      "at": "2026-09-02T15:46:39Z",
+      "finished": "2026-09-02T15:47:15Z",
+      "country": "ph",
+      "wave": "probe",
+      "provider": "smsbower",
+      "leased": 1,
+      "sendcode": 0,
+      "app": 0,
+      "sms_type": 0,
+      "flood": 1,
+      "success": 0,
+      "prefixes": {
+        "0960": 1
+      },
+      "operators": {
+        "PH-unknown": 1
+      },
+      "sent_code_types": {}
+    }
+  ]
+}

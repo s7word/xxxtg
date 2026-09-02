@@ -1,7 +1,9 @@
+import json
 import logging
+import re
 from pathlib import Path
 from typing import Dict, Any, List, Optional
-from backend.app.config import ConfigManager, DATA_DIR
+from backend.app.config import ConfigManager, DATA_DIR, LOD_USER_DIR
 
 logger = logging.getLogger("NodeTelemetryProfileManager")
 
@@ -32,6 +34,9 @@ COUNTRY_LANG_MAP = {
     "ae": {"lang_code": "ar", "system_lang_code": "ar-ae", "tz_offset": 14400, "dial": "971"},
     "sa": {"lang_code": "ar", "system_lang_code": "ar-sa", "tz_offset": 10800, "dial": "966"},
     "eg": {"lang_code": "ar", "system_lang_code": "ar-eg", "tz_offset": 7200, "dial": "20"},
+    "iq": {"lang_code": "ar", "system_lang_code": "ar-iq", "tz_offset": 10800, "dial": "964"},
+    "jo": {"lang_code": "ar", "system_lang_code": "ar-jo", "tz_offset": 10800, "dial": "962"},
+    "ma": {"lang_code": "ar", "system_lang_code": "ar-ma", "tz_offset": 3600, "dial": "212"},
     "af": {"lang_code": "en", "system_lang_code": "en-af", "tz_offset": 16200, "dial": "93"},
     # 非洲
     "za": {"lang_code": "en", "system_lang_code": "en-za", "tz_offset": 7200, "dial": "27"},
@@ -39,6 +44,7 @@ COUNTRY_LANG_MAP = {
     "ke": {"lang_code": "en", "system_lang_code": "en-ke", "tz_offset": 10800, "dial": "254"},
     # 亚太
     "in": {"lang_code": "en", "system_lang_code": "en-in", "tz_offset": 19800, "dial": "91"},
+    "pk": {"lang_code": "en", "system_lang_code": "en-pk", "tz_offset": 18000, "dial": "92"},
     "id": {"lang_code": "id", "system_lang_code": "id-id", "tz_offset": 25200, "dial": "62"},
     "jp": {"lang_code": "ja", "system_lang_code": "ja-jp", "tz_offset": 32400, "dial": "81"},
     "kr": {"lang_code": "ko", "system_lang_code": "ko-kr", "tz_offset": 32400, "dial": "82"},
@@ -58,12 +64,65 @@ GLOBAL_TOPOLOGY_COUNTRIES = tuple(COUNTRY_LANG_MAP.keys())
 # Telegram 服务端针对这些 ID 的 auth.sendCode 请求执行近乎无差别的风控：
 # 若请求未附带合法的平台级 Push/Play-Integrity 签署凭证 (Signed Push Token)，
 # 会直接返回 API_ID_PUBLISHED_FLOOD，与账号、IP、地区历史无关。
+# API_ID_PUBLISHED_FLOOD 本身是 Telegram 官方 400 RPC（auth.sendCode /
+# auth.exportLoginToken），不是本仓库自造的错误码；本名单只用于本地预测/拦截
+# 裸发，关掉拦截只会更早撞上同一条服务端错误，不能绕过。
+# api_id=6 另走 Paid/Premium auth（短期会员号后备路径）；当前策略暂时不要主动切到 6。
 PUBLISHED_API_ID_BLOCKLIST = {4, 6, 8, 10, 2040, 2100, 17349, 21724}
+
+# 官方客户端 api_id → api_hash 固定配对（反编译 / opentele 共识值）。
+# api_id=4 必须配 014b35…5103；混用 api_id=6 的 eb06d4…581e 会触发 SendCodeRequest invalid。
+OFFICIAL_API_CREDENTIALS: Dict[int, str] = {
+    4: "014b35b6184100b085b0d0572f9b5103",
+    6: "eb06d4abfb49dc3eeb1aeb98ae0f581e",
+    21724: "3e0cb5efcd52300aec5994fdfc5bdc16",
+}
+
+
+def apply_official_api_id(profile: Dict[str, Any], api_id: int) -> Dict[str, Any]:
+    """把 profile 切到指定官方 api_id，并写入与之配对的官方 api_hash。
+
+    api_id=4 → ``014b35b6184100b085b0d0572f9b5103``；
+    api_id=6 → ``eb06d4abfb49dc3eeb1aeb98ae0f581e``。
+    """
+    resolved = dict(profile)
+    resolved["api_id"] = int(api_id)
+    expected = OFFICIAL_API_CREDENTIALS.get(int(api_id))
+    if expected:
+        current = str(resolved.get("api_hash") or "").strip().lower()
+        if current and current != expected.lower():
+            resolved["api_hash_was"] = current
+            resolved["api_hash_corrected"] = True
+        resolved["api_hash"] = expected
+    return normalize_official_api_credentials(resolved)
+
+
+def normalize_official_api_credentials(profile: Dict[str, Any]) -> Dict[str, Any]:
+    """若 profile 使用了已知官方 api_id 但 hash 不匹配，自动纠正并标注。"""
+    resolved = dict(profile)
+    try:
+        api_id = int(resolved.get("api_id") or 0)
+    except (TypeError, ValueError):
+        return resolved
+    expected = OFFICIAL_API_CREDENTIALS.get(api_id)
+    if not expected:
+        return resolved
+    current = str(resolved.get("api_hash") or "").strip().lower()
+    if current and current != expected.lower():
+        resolved["api_hash"] = expected
+        resolved["api_hash_corrected"] = True
+        resolved["api_hash_was"] = current
+    elif not current:
+        resolved["api_hash"] = expected
+    return resolved
+
 
 # 官方端点环境规范与特征参数矩阵
 DEFAULT_PROFILES = {
     "telegram_android": {
         "key": "telegram_android",
+        # api_id=6 = 现网官方 Android。服务端常走 Paid/Premium auth（可作短期会员号后备）。
+        # 当前策略：暂时不要主动切到 6；需要 Paid 路径时再开，不是默认。
         "name": "MTProto Android Endpoint (Mainstream SDK 33)",
         "default_aid": "308aba4e-5680-466b-81a5-477ac6befa95",
         "api_id": 6,
@@ -77,12 +136,28 @@ DEFAULT_PROFILES = {
         "app_build": "69792",
         "lang_pack": "android"
     },
+    # 早期 Android 公开泄露凭证 (api_id=4)，用于对照 official 路径 PaymentRequired 实验
+    "telegram_android_public": {
+        "key": "telegram_android_public",
+        "name": "MTProto Android Legacy Public (api_id=4)",
+        "default_aid": "308aba4e-5680-466b-81a5-477ac6befa95",
+        "api_id": 4,
+        "api_hash": "014b35b6184100b085b0d0572f9b5103",
+        "app_name": "tg",
+        "app_device": "Android",
+        "device_model": "Samsung Galaxy S23 Ultra",
+        "system_version": "SDK 33",
+        "app_version": "12.7.3 (67509)",
+        "app_version_pure": "12.7.3",
+        "app_build": "67509",
+        "lang_pack": "android"
+    },
     "telegram_x": {
         "key": "telegram_x",
         "name": "MTProto TDLib Fast Endpoint (TDLib Engine)",
         "default_aid": "47f7d612-fe1a-4167-a450-db8a52048e9c",
         "api_id": 21724,
-        "api_hash": "3e0cb5ab2d48077663362339f7c30f45",
+        "api_hash": "3e0cb5efcd52300aec5994fdfc5bdc16",
         "app_name": "tg_x",
         "app_device": "Android",
         "device_model": "Google Pixel 7 Pro",
@@ -108,6 +183,71 @@ DEFAULT_PROFILES = {
         "lang_pack": "android"
     }
 }
+
+_VAULT_FP_INDEX = 0
+_APP_VERSION_RE = re.compile(r"^(?P<pure>.+?)\s*\((?P<build>\d+)\)\s*$")
+
+
+def split_app_version(raw: Any) -> Dict[str, str]:
+    text = str(raw or "").strip()
+    if not text:
+        return {"app_version": "", "app_version_pure": "", "app_build": ""}
+    matched = _APP_VERSION_RE.match(text)
+    if matched:
+        return {
+            "app_version": text,
+            "app_version_pure": matched.group("pure").strip(),
+            "app_build": matched.group("build"),
+        }
+    return {"app_version": text, "app_version_pure": text.split()[0], "app_build": ""}
+
+
+def load_vault_android_fingerprints(root: Optional[Path] = None) -> List[Dict[str, Any]]:
+    """只读 lod_user 成功 JSON 的机型字段，绝不返回 token/secret。"""
+    rows: List[Dict[str, Any]] = []
+    base = Path(root) if root is not None else Path(LOD_USER_DIR)
+    if not base.exists():
+        return rows
+    for path in sorted(base.rglob("91*.json")):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        try:
+            app_id = int(data.get("app_id") or data.get("api_id") or 0)
+        except (TypeError, ValueError):
+            continue
+        if app_id != 4:
+            continue
+        version = split_app_version(data.get("app_version"))
+        try:
+            rel = str(path.relative_to(base))
+        except ValueError:
+            rel = path.name
+        rows.append({
+            "file": rel,
+            "device_model": str(data.get("device") or "").strip(),
+            "system_version": str(data.get("sdk") or "").strip(),
+            "app_version": version["app_version"],
+            "app_version_pure": version["app_version_pure"],
+            "app_build": version["app_build"],
+            "lang_pack": str(data.get("lang_pack") or "android"),
+            "system_lang_code": str(
+                data.get("system_lang_pack") or data.get("system_lang_code") or ""
+            ).lower(),
+            "tz_offset": data.get("tz_offset"),
+        })
+    return rows
+
+
+def pick_vault_fingerprint(root: Optional[Path] = None) -> Optional[Dict[str, Any]]:
+    global _VAULT_FP_INDEX
+    rows = load_vault_android_fingerprints(root)
+    if not rows:
+        return None
+    row = rows[_VAULT_FP_INDEX % len(rows)]
+    _VAULT_FP_INDEX += 1
+    return dict(row)
 
 
 class DeviceProfileManager:
@@ -205,6 +345,8 @@ class DeviceProfileManager:
         - auto:     优先使用官方 ID；若本次未拿到有效 Push Token，且官方 ID 属于已知公开泄露 ID
                     (几乎必然触发 API_ID_PUBLISHED_FLOOD)，则在已配置自建凭证的前提下自动回退
         """
+        # official_client_emulation 只在本地把凭证策略锁成 official（不回退自建 ID）。
+        # Telegram 仍然只看见最终 api_id/hash；关旗标但继续用 api_id=6 仍会进 Paid auth。
         official_emu = bool(getattr(config, "official_client_emulation", False))
         mode = "official" if official_emu else (getattr(config, "api_credential_mode", "auto") or "auto")
         custom_id = getattr(config, "custom_api_id", None)
@@ -229,12 +371,12 @@ class DeviceProfileManager:
             else:
                 # 用户强制指定 custom 模式却未填写凭证，明确标注风险而不是静默回退
                 resolved["credential_risk"] = "custom_mode_missing_credentials"
-            return resolved
+            return normalize_official_api_credentials(resolved)
 
         if mode == "official":
             if is_published and not has_push_token:
                 resolved["credential_risk"] = "published_id_without_push_token"
-            return resolved
+            return normalize_official_api_credentials(resolved)
 
         # mode == "auto" (默认): 有 Push Token 就用官方 ID；没有 Push Token 且 ID 已知泄露，则自动切换自建 ID
         if is_published and not has_push_token:
@@ -253,7 +395,7 @@ class DeviceProfileManager:
             else:
                 resolved["credential_risk"] = "published_id_without_push_token"
 
-        return resolved
+        return normalize_official_api_credentials(resolved)
 
     @classmethod
     def get_db_stats(cls) -> Dict[str, Any]:
@@ -277,7 +419,19 @@ class DeviceProfileManager:
     def _apply_locale(cls, profile: Dict[str, Any], country: str, sampled: Optional[Dict[str, Any]], match: str) -> None:
         fallback = cls.infer_locale(country)
         sampled = sampled or {}
-        keep_sampled_locale = match in {"country", "auto"} and sampled.get("lang_code") and sampled.get("system_lang_code")
+        force_country = False
+        try:
+            force_country = bool(
+                getattr(ConfigManager.get_instance().config, "force_country_locale", False)
+            )
+        except Exception:
+            force_country = False
+        keep_sampled_locale = (
+            (not force_country)
+            and match in {"country", "auto"}
+            and sampled.get("lang_code")
+            and sampled.get("system_lang_code")
+        )
         if keep_sampled_locale:
             profile["lang_code"] = str(sampled["lang_code"]).lower()
             profile["system_lang_code"] = str(sampled["system_lang_code"]).lower()
@@ -306,6 +460,26 @@ class DeviceProfileManager:
         profile["device_pack_auto"] = False
 
         selection = cls._manager().select_sample(country)
+        pin = str(getattr(config, "pin_app_version_substr", "") or "").strip()
+        if pin and selection:
+            ver0 = str((selection.get("row") or {}).get("app_version") or "")
+            if pin in ver0:
+                profile["app_version_pinned"] = True
+            else:
+                matched = None
+                for _ in range(16):
+                    cand = cls._manager().select_sample(country)
+                    if not cand:
+                        break
+                    ver = str((cand.get("row") or {}).get("app_version") or "")
+                    if pin in ver:
+                        matched = cand
+                        break
+                if matched:
+                    selection = matched
+                    profile["app_version_pinned"] = True
+                else:
+                    profile["app_version_pinned"] = False
         sampled_dev = None
         match = "none"
         if selection:
@@ -321,15 +495,56 @@ class DeviceProfileManager:
             profile["device_pack_country"] = pack.get("country")
             profile["device_pack_match"] = match
             profile["device_pack_auto"] = bool(selection.get("created")) or match == "auto"
-            if app_type == "telegram_android":
+            if app_type in ("telegram_android", "telegram_android_public"):
                 profile["app_version"] = sampled_dev["app_version"]
                 profile["app_version_pure"] = sampled_dev["app_version_pure"]
                 profile["app_build"] = sampled_dev["app_build"]
-                profile["api_id"] = sampled_dev.get("api_id", base["api_id"])
-                profile["api_hash"] = sampled_dev.get("api_hash", base["api_hash"])
+                sampled_id = sampled_dev.get("api_id")
+                if app_type == "telegram_android":
+                    profile["api_id"] = sampled_id if sampled_id is not None else base["api_id"]
+                    profile["api_hash"] = sampled_dev.get("api_hash", base["api_hash"])
+                elif int(sampled_id or base["api_id"]) == int(base["api_id"]):
+                    # telegram_android_public：仅当指纹库行与模板同为 api_id=4 时继承 hash
+                    profile["api_id"] = int(base["api_id"])
+                    profile["api_hash"] = sampled_dev.get("api_hash", base["api_hash"])
 
         cls._apply_locale(profile, country, sampled_dev, match)
-        return profile
+        if bool(getattr(config, "vault_fingerprint_replay", False)):
+            vault_fp = pick_vault_fingerprint()
+            if vault_fp:
+                if vault_fp.get("device_model"):
+                    profile["device_model"] = vault_fp["device_model"]
+                if vault_fp.get("system_version"):
+                    profile["system_version"] = vault_fp["system_version"]
+                if vault_fp.get("app_version"):
+                    profile["app_version"] = vault_fp["app_version"]
+                    profile["app_version_pure"] = vault_fp.get("app_version_pure") or profile.get("app_version_pure")
+                    profile["app_build"] = vault_fp.get("app_build") or profile.get("app_build")
+                if vault_fp.get("lang_pack"):
+                    profile["lang_pack"] = vault_fp["lang_pack"]
+                profile["vault_fingerprint_source"] = vault_fp.get("file")
+                profile["vault_fingerprint_replay"] = True
+                # 号国语言/时区仍以 force_country_locale 为准；未强制时 in 可沿用 vault 样本
+                if not bool(getattr(config, "force_country_locale", False)):
+                    if vault_fp.get("system_lang_code") and str(country or "").lower() == "in":
+                        sys_lang = vault_fp["system_lang_code"]
+                        profile["system_lang_code"] = sys_lang
+                        profile["lang_code"] = sys_lang.split("-")[0] if sys_lang else profile.get("lang_code")
+                        profile["locale_source"] = "vault_json"
+                    if vault_fp.get("tz_offset") is not None and str(country or "").lower() == "in":
+                        profile["tz_offset"] = int(vault_fp["tz_offset"])
+                else:
+                    cls._apply_locale(profile, country, None, "none")
+            else:
+                profile["vault_fingerprint_replay"] = False
+                profile["vault_fingerprint_source"] = None
+        try:
+            official_id = int(profile.get("api_id") or 0)
+        except (TypeError, ValueError):
+            official_id = 0
+        if official_id in OFFICIAL_API_CREDENTIALS:
+            profile = apply_official_api_id(profile, official_id)
+        return normalize_official_api_credentials(profile)
 
     @classmethod
     def describe_pack_match(cls, match: str, auto_created: bool = False) -> str:

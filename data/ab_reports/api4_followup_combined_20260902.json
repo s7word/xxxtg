@@ -1,0 +1,83 @@
+{
+  "title": "api_id=4 follow-up A/B 合并摘要",
+  "started_at": "2026-09-02T11:57:43Z",
+  "finished_at": "2026-09-02T12:09:15Z",
+  "source": "data/ab_reports/api4_followup_20260902_115740.json",
+  "lease_cap": 14,
+  "leased_total": 12,
+  "smsbower_balance_before": 23.611,
+  "smsbower_balance_after": 23.611,
+  "grizzlysms_balance_before": 29.8,
+  "grizzlysms_balance_after": 29.0,
+  "fivesim_balance_before_rub": 25.1154,
+  "fivesim_balance_after_rub": 25.1154,
+  "need_topup": false,
+  "constraints": {
+    "api_id": 4,
+    "official_emulation": false,
+    "no_payment": true,
+    "no_api_id_6": true
+  },
+  "task_level_outcomes": {
+    "A_treat_t4_iq": {
+      "country": "iq",
+      "stack": "vault + lang_pack=android + tz=10800 + Push + emu=false",
+      "leased": 4,
+      "sendcode_typed": 0,
+      "app": 0,
+      "sms": 0,
+      "actual_published_flood_tasks": 3,
+      "push_failfast": 1,
+      "nonumber": 1,
+      "success": 0,
+      "init": "lang_pack=android tz=10800 locale=ar-iq vault replay"
+    },
+    "A_ctrl_t0_iq": {
+      "country": "iq",
+      "stack": "api_id=4+Push, no lang_pack, no tz, no vault",
+      "leased": 2,
+      "sendcode_typed": 0,
+      "app": 0,
+      "sms": 0,
+      "actual_published_flood_tasks": 2,
+      "success": 0,
+      "init": "lang_pack empty, tz 未写入"
+    },
+    "B_w1_t3_smsbower_in": {
+      "country": "in",
+      "stack": "vault + lang_pack=android + 不写 tz",
+      "provider": "smsbower",
+      "leased": 2,
+      "app": 0,
+      "sms": 0,
+      "actual_published_flood_tasks": 2,
+      "success": 0
+    },
+    "B_w2_empty_grizzly_in": {
+      "country": "in",
+      "stack": "vault + lang_pack empty + 不写 tz（FLOOD 回退）",
+      "provider": "grizzlysms",
+      "leased": 2,
+      "app": 0,
+      "sms": 0,
+      "actual_published_flood_tasks": 2,
+      "success": 0
+    },
+    "B_w3_empty_fivesim_in": {
+      "country": "in",
+      "stack": "vault + lang_pack empty + 不写 tz",
+      "provider": "fivesim",
+      "leased": 2,
+      "app": 0,
+      "sms": 0,
+      "actual_published_flood_tasks": 2,
+      "success": 0
+    }
+  },
+  "verdict": {
+    "flood_to_app_repeatable": false,
+    "in_sms_seen": false,
+    "registration_success": 0,
+    "note": "上次 T4 iq 2 App / 0 FLOOD（11:25–11:40 UTC）在 20 分钟后同栈复查变成 3 FLOOD / 0 App；T0 对照同样 2/2 FLOOD。in 三供应商三波全 FLOOD，0 SentCodeTypeSms。"
+  }
+}
