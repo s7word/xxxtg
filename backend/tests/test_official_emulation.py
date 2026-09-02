@@ -98,6 +98,23 @@ class TestOfficialEmulationConfig(unittest.TestCase):
         self.assertFalse(cfg.official_client_emulation)
         self.assertTrue(AppConfigModel(official_client_emulation="true").official_client_emulation)
         self.assertFalse(AppConfigModel(official_client_emulation="off").official_client_emulation)
+        self.assertFalse(AppConfigModel().force_skip_push_attach)
+        self.assertTrue(AppConfigModel(force_skip_push_attach="true").force_skip_push_attach)
+        self.assertTrue(cfg.code_settings_allow_firebase)
+        self.assertTrue(cfg.code_settings_unknown_number)
+        self.assertTrue(cfg.force_resend_on_app)
+        self.assertEqual(cfg.payment_required_probe, "off")
+        self.assertEqual(AppConfigModel(payment_required_probe="BOTH").payment_required_probe, "both")
+        self.assertEqual(AppConfigModel(pin_app_version_substr=" 12.7.3 ").pin_app_version_substr, "12.7.3")
+        self.assertEqual(cfg.sms_poll_attempts, 30)
+        self.assertEqual(cfg.sms_poll_interval_seconds, 4.0)
+        self.assertFalse(cfg.sms_poll_bypass_push_window)
+        self.assertEqual(cfg.payment_resend_max, 1)
+        self.assertEqual(cfg.payment_resend_wait_seconds, 0.0)
+        self.assertFalse(cfg.resend_before_email_verify)
+        self.assertFalse(cfg.report_missing_sms_code)
+        self.assertTrue(AppConfigModel(sms_poll_bypass_push_window="true").sms_poll_bypass_push_window)
+        self.assertEqual(AppConfigModel(payment_resend_max=2).payment_resend_max, 2)
 
     def test_credentials_forced_to_official_template(self):
         profile = _android_profile()
@@ -160,6 +177,7 @@ class TestSentCodeTypeHelpers(unittest.TestCase):
             "EMAIL_SETUP_FAILED",
             "EMAIL_CODE_UNAVAILABLE",
             "FIREBASE_SMS_FAILED",
+            "PUSH_TOKEN_MISSING",
         ):
             self.assertEqual(PUSH_REFUND_REASON_MAP[reason], "NOSMS")
 
@@ -187,6 +205,72 @@ class TestResolveNewSentCodeTypes(unittest.IsolatedAsyncioTestCase):
         self.assertIn("SentCodePaymentRequired", logs)
         self.assertIn("[模式=official]", logs)
         self.assertIn("需官方 App 内购", logs)
+
+    async def test_payment_play_market_probe_records_rpc_error(self):
+        client = FakeClient(error=RuntimeError("PURCHASE_RECEIPT_INVALID"))
+        with self.assertRaises(SentCodeAppDeliveryError) as ctx:
+            await RegistrationOrchestrator.resolve_sent_code_channel(
+                client, "+96411112222", make_payment_required(),
+                self.task_id, self.manager, emulation_label="official",
+                payment_required_probe="play_market",
+            )
+        self.assertEqual(ctx.exception.reason, "PAYMENT_REQUIRED_OFFICIAL_ONLY")
+        self.assertEqual(len(client.calls), 1)
+        self.assertEqual(type(client.calls[0]).__name__, "AssignPlayMarketTransactionRequest")
+        logs = self._logs()
+        self.assertIn("[PAYMENT_PROBE]", logs)
+        self.assertIn("PURCHASE_RECEIPT_INVALID", logs)
+
+    async def test_payment_resend_probe_can_flip_to_sms(self):
+        sms_sent = make_sent_code("SentCodeTypeSms", code_hash="hash-after-pay")
+        client = FakeClient(result=sms_sent)
+        result, attempts = await RegistrationOrchestrator.resolve_sent_code_channel(
+            client, "+96411112222", make_payment_required(),
+            self.task_id, self.manager, emulation_label="official",
+            payment_required_probe="resend",
+        )
+        self.assertEqual(result.phone_code_hash, "hash-after-pay")
+        self.assertEqual(attempts, DEFAULT_SMS_POLL_ATTEMPTS)
+        logs = self._logs()
+        self.assertIn("[PAYMENT_PROBE] PaymentRequired 后尝试 auth.resendCode", logs)
+        self.assertIn("phone_code_hash=", logs)
+
+    async def test_payment_resend_max_two_calls_resend_twice(self):
+        sms_sent = make_sent_code("SentCodeTypeSms", code_hash="hash-after-pay-2")
+        client = FakeClient(result=sms_sent)
+        result, attempts = await RegistrationOrchestrator.resolve_sent_code_channel(
+            client, "+96411112222", make_payment_required(),
+            self.task_id, self.manager, emulation_label="official",
+            payment_required_probe="resend",
+            payment_resend_max=2,
+            report_missing_sms_code=True,
+        )
+        self.assertEqual(result.phone_code_hash, "hash-after-pay-2")
+        self.assertEqual(attempts, DEFAULT_SMS_POLL_ATTEMPTS)
+        names = [type(c).__name__ for c in client.calls]
+        self.assertEqual(names.count("ResendCodeRequest"), 2)
+        self.assertEqual(names.count("ReportMissingCodeRequest"), 1)
+        logs = self._logs()
+        self.assertIn("max=2", logs)
+        self.assertIn("auth.reportMissingCode", logs)
+
+    async def test_resend_before_email_verify_can_skip_inbox(self):
+        sms_sent = make_sent_code("SentCodeTypeSms", code_hash="hash-pre-email")
+        client = FakeClient(result=sms_sent)
+        sent = make_sent_code("SentCodeTypeSetUpEmailRequired")
+        bypass = MagicMock()
+        bypass.get_login_email = AsyncMock(side_effect=AssertionError("should not buy email"))
+        result, attempts = await RegistrationOrchestrator.resolve_sent_code_channel(
+            client, "+96411112222", sent,
+            self.task_id, self.manager, emulation_label="official",
+            bypass_svc=bypass,
+            resend_before_email_verify=True,
+        )
+        self.assertEqual(result.phone_code_hash, "hash-pre-email")
+        self.assertEqual(attempts, DEFAULT_SMS_POLL_ATTEMPTS)
+        self.assertEqual(len(client.calls), 1)
+        bypass.get_login_email.assert_not_called()
+        self.assertIn("EMAIL_PROBE", self._logs())
 
     async def test_email_code_fails_fast(self):
         sent = make_sent_code("SentCodeTypeEmailCode")
