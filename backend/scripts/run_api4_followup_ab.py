@@ -472,14 +472,16 @@ def main() -> int:
             in_target = min(args.b_count, remaining_cap())
             in_leased = 0
             wave = 0
-            in_bid = bid_for("in", stock_price(stock_smsbower, "in"), args.max_price_in)
-            provider = args.sms_provider
             preferred = [args.sms_provider, "grizzlysms", "fivesim"]
             preferred = list(dict.fromkeys([p for p in preferred if p]))
+            wave_providers = preferred[:]  # 每波换供应商，模拟号池窗口
+            in_bid = bid_for("in", stock_price(stock_smsbower, "in"), args.max_price_in)
+            provider = wave_providers[0]
             max_waves = 6
             sms_hit = False
             while in_leased < in_target and remaining_cap() > 0 and wave < max_waves and live_ok():
                 wave += 1
+                provider = wave_providers[(wave - 1) % len(wave_providers)]
                 live_stock = country_stock(client, provider, ["in"])
                 listed = stock_price(live_stock, "in")
                 have = stock_count(live_stock, "in")
@@ -490,13 +492,13 @@ def main() -> int:
                     live_stock = country_stock(client, provider, ["in"])
                     listed = stock_price(live_stock, "in")
                     have = stock_count(live_stock, "in")
-                    in_bid = bid_for("in", listed, in_bid)
+                    in_bid = bid_for("in", listed, max(in_bid, args.max_price_in))
                 if have <= 0:
                     in_bid = min(round(in_bid + 0.4, 2), 2.2)
                     print(f"    wave{wave} 仍无库存，抬价 max_price={in_bid} 并等待窗口", flush=True)
                     time.sleep(args.window_wait)
                     continue
-                in_bid = bid_for("in", listed, in_bid)
+                in_bid = bid_for("in", listed, args.max_price_in if provider != "smsbower" else in_bid)
                 n = min(args.b_wave_size, in_target - in_leased, remaining_cap())
                 note = f"provider={provider} bid={in_bid}"
                 spec = spec_b(n, lang_pack_android=lang_pack_android, wave=wave, note=note)
