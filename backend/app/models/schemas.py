@@ -34,6 +34,19 @@ def normalize_proxy_mode(value: Any) -> str:
     return token if token in PROXY_MODES else "custom_pool"
 
 
+def coerce_bool(value: Any, default: bool = False) -> bool:
+    """配置开关：兼容 true/yes/on/1 与 false/no/off/0 字符串。"""
+    if value is None:
+        return default
+    if isinstance(value, str):
+        token = value.strip().lower()
+        if token in {"1", "true", "yes", "on"}:
+            return True
+        if token in {"0", "false", "no", "off", ""}:
+            return False
+    return bool(value)
+
+
 def normalize_sms_max_price(value: Any) -> Optional[float]:
     """把配置/任务级最高出价规范化为任意正浮点数。
 
@@ -270,6 +283,22 @@ class AppConfigModel(BaseModel):
             "reghelp_only (仅使用 REGHelp) / antisafety_only (仅使用 AntiSafety)"
         )
     )
+    email_provider_mode: str = Field(
+        default="smsbower_only",
+        description=(
+            "SetUpEmailRequired 临时邮箱调度策略: "
+            "smsbower_only (仅 SMS Bower，默认，不再尝试 REGHelp Email) / "
+            "smsbower_primary (SMS Bower 优先，REGHelp 备选) / "
+            "reghelp_primary (REGHelp 优先，SMS Bower 备选，legacy)"
+        ),
+    )
+    email_smsbower_fallback_enabled: bool = Field(
+        default=False,
+        description=(
+            "smsbower_primary / reghelp_primary 模式下，主源失败"
+            "（SERVICE_DISABLED、超时、错误）时是否自动切换候补提供源"
+        ),
+    )
     push_token_reuse_enabled: bool = Field(
         default=False,
         description=(
@@ -301,10 +330,147 @@ class AppConfigModel(BaseModel):
     official_client_emulation: bool = Field(
         default=False,
         description=(
-            "官方客户端模拟：开启后强制使用模板官方 api_id/api_hash（telegram_android 为 6）"
-            "并以 push_required 每轮申请并 attach REGHelp Push Token；"
-            "sendCode 后处理 SetUpEmailRequired / FirebaseSms / PaymentRequired，"
-            "不再把非 App 通道一律当短信空等。猎号连续 App 强制 SMS 在此模式下关闭"
+            "官方客户端模拟（本地编排旗标，不发给 Telegram）：强制模板官方 api_id/api_hash"
+            "（telegram_android=6，telegram_android_public=4）并以 push_required attach Push。"
+            "服务端认的是 api_id 身份：关此旗标但继续用 api_id=6 仍会 Paid auth。"
+            "Email/Firebase/Payment constructor 由 registrar 按返回值处理，不独属于此旗标。"
+            "说明见 docs/OFFICIAL_AND_PAYMENT_EXPLAINED.md。"
+        ),
+    )
+    force_skip_push_attach: bool = Field(
+        default=False,
+        description=(
+            "实验对照：故意不申请、不 attach Push Token。"
+            "用于验证泄露 api_id 无 Token 时必然 API_ID_PUBLISHED_FLOOD。"
+            "生产路径必须保持 false。"
+        ),
+    )
+    code_settings_allow_firebase: bool = Field(
+        default=True,
+        description=(
+            "auth.sendCode CodeSettings.allow_firebase。"
+            "官方 Android 客户端为 true，可能触发 SentCodeTypeFirebaseSms；"
+            "历史实验未打开此位。iOS 指纹仍应保持 false。"
+        ),
+    )
+    code_settings_unknown_number: bool = Field(
+        default=True,
+        description=(
+            "CodeSettings.unknown_number：号码不是本机 SIM 时设 true。"
+            "接码平台号码符合此语义，可能降低「当作已登录设备」的 App 投递。"
+        ),
+    )
+    code_settings_allow_flashcall: bool = Field(
+        default=False,
+        description="CodeSettings.allow_flashcall；接码网关通常收不到闪信，默认关闭。",
+    )
+    code_settings_allow_missed_call: bool = Field(
+        default=False,
+        description="CodeSettings.allow_missed_call；实验开关，默认关闭。",
+    )
+    force_resend_on_app: bool = Field(
+        default=True,
+        description=(
+            "SentCodeTypeApp 即使 next_type/timeout 为空也调用 auth.resendCode 探测短信通道。"
+            "关闭则保持旧行为：无 next_type 时立即 SENT_CODE_TYPE_APP 快退。"
+        ),
+    )
+    payment_required_probe: str = Field(
+        default="off",
+        description=(
+            "收到 auth.SentCodePaymentRequired 后的探测：off / resend / play_market / both。"
+            "play_market 使用明显无效的 Play 收据调用 payments.assignPlayMarketTransaction，"
+            "只记录 RPC 错误，不伪造真实内购。"
+        ),
+    )
+    sms_poll_attempts: int = Field(
+        default=30,
+        ge=1,
+        le=200,
+        description="接码网关 wait_for_code 最大轮询次数。默认 30×4s≈120s；Payment 后 SMS 实验可提到 90–150。",
+    )
+    sms_poll_interval_seconds: float = Field(
+        default=4.0,
+        ge=1.0,
+        le=15.0,
+        description="接码网关轮询间隔秒数。Payment 后 SMS 实验可降到 2s 以便更密地读 getStatus。",
+    )
+    sms_poll_bypass_push_window: bool = Field(
+        default=False,
+        description=(
+            "True 时不按 REGHelp 180s 退款窗口截断短信轮询。"
+            "Payment→resend→SMS 对照实验需要 180–300s 窗口时打开；会放弃部分 Push 退款。"
+        ),
+    )
+    payment_resend_max: int = Field(
+        default=1,
+        ge=1,
+        le=3,
+        description="PaymentRequired 后连续 auth.resendCode 次数（1=现有行为，2=立刻再 resend 一次）。",
+    )
+    payment_resend_wait_seconds: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=180.0,
+        description=(
+            "PaymentRequired 后第一次 resendCode 前等待秒数。"
+            "0=立即（已观测到 SentCodeTypeSms）；90=对齐官方 next_type timeout 再 resend。"
+        ),
+    )
+    resend_before_email_verify: bool = Field(
+        default=False,
+        description=(
+            "SetUpEmailRequired 时先按 next_type/timeout 调用 auth.resendCode，"
+            "再决定是否走临时邮箱。用于对照「Payment 之前 resend 能否直接出 SMS」。"
+        ),
+    )
+    report_missing_sms_code: bool = Field(
+        default=False,
+        description=(
+            "Payment 后第 2+ 次 resend 前调用 auth.reportMissingCode（官方缺信上报）。"
+            "虚拟号没有真实 MNC，仅作协议探测。"
+        ),
+    )
+    pin_app_version_substr: str = Field(
+        default="",
+        description=(
+            "设备指纹抽样时优先匹配 app_version 包含该子串的样本（如 12.7.3）。"
+            "空字符串表示不钉死版本。"
+        ),
+    )
+    init_connection_set_lang_pack: bool = Field(
+        default=False,
+        description=(
+            "True：在 Telethon connect() 前把 InitConnection.lang_pack 写成 profile.lang_pack"
+            "（Android 模板为 android）。False：保持 Telethon 默认空字符串。"
+        ),
+    )
+    init_connection_set_tz_offset: bool = Field(
+        default=False,
+        description=(
+            "True：在 InitConnection.params 写入 JSON tz_offset（秒）。"
+            "False：不写 params（Telethon 缺省）。"
+        ),
+    )
+    init_connection_tz_offset_override: Optional[int] = Field(
+        default=None,
+        description=(
+            "若设置，覆盖 profile.tz_offset 写入 InitConnection.params。"
+            "用于 T3「缺省/错配时区」对照（例如 -14400）。"
+        ),
+    )
+    force_country_locale: bool = Field(
+        default=False,
+        description=(
+            "True：忽略设备包抽样的语言/时区，强制 COUNTRY_LANG_MAP 与号国对齐"
+            "（in→en-in/19800，iq→ar-iq/10800）。"
+        ),
+    )
+    vault_fingerprint_replay: bool = Field(
+        default=False,
+        description=(
+            "True：从 lod_user 成功 +91 JSON 轮询覆盖机型/SDK/app_version"
+            "（不复制 device_token / device_secret）。"
         ),
     )
     hunt_sms_first_after_app_streak: int = Field(
@@ -314,6 +480,8 @@ class AppConfigModel(BaseModel):
         description=(
             "猎号模式下连续 SentCodeTypeApp 达到该次数后，后续轮次强制 SMS 优先"
             "（不申请、不 attach Push Token）。0 表示关闭。"
+            "official_client_emulation / api_credential_mode=official / 泄露 api_id（4/6 等）"
+            "不受此开关影响，始终 attach Push。"
         ),
     )
     hunt_no_number_retries: int = Field(
@@ -541,6 +709,55 @@ class AppConfigModel(BaseModel):
             if token in {"0", "false", "no", "off", "standard", ""}:
                 return False
         return bool(value)
+
+    @field_validator("force_skip_push_attach", mode="before")
+    @classmethod
+    def _normalize_force_skip_push_attach(cls, value):
+        return coerce_bool(value, default=False)
+
+    @field_validator(
+        "code_settings_allow_firebase",
+        "code_settings_unknown_number",
+        "code_settings_allow_flashcall",
+        "code_settings_allow_missed_call",
+        "force_resend_on_app",
+        "sms_poll_bypass_push_window",
+        "resend_before_email_verify",
+        "report_missing_sms_code",
+        "init_connection_set_lang_pack",
+        "init_connection_set_tz_offset",
+        "force_country_locale",
+        "vault_fingerprint_replay",
+        mode="before",
+    )
+    @classmethod
+    def _normalize_code_settings_flags(cls, value):
+        return coerce_bool(value, default=False)
+
+    @field_validator("payment_required_probe", mode="before")
+    @classmethod
+    def _normalize_payment_required_probe(cls, value):
+        token = str(value or "off").strip().lower()
+        if token in {"off", "resend", "play_market", "both"}:
+            return token
+        if token in {"1", "true", "yes", "on"}:
+            return "both"
+        return "off"
+
+    @field_validator("pin_app_version_substr", mode="before")
+    @classmethod
+    def _normalize_pin_app_version_substr(cls, value):
+        return str(value or "").strip()
+
+    @field_validator("init_connection_tz_offset_override", mode="before")
+    @classmethod
+    def _normalize_init_connection_tz_offset_override(cls, value):
+        if value is None or value == "":
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
 
 
 class DeviceProfileSchema(BaseModel):
@@ -906,6 +1123,18 @@ class BatchStatusResponse(BaseModel):
     updated_at: str
 
 
+class PaymentRequiredInfo(BaseModel):
+    """auth.SentCodePaymentRequired 内购结构化字段（官方 App 专属，自动化不可完成）。"""
+    store_product: Optional[str] = Field(default=None, description="商店 SKU，如 telegram_premium.one_week.auth")
+    currency: Optional[str] = Field(default=None, description="ISO 4217 币种")
+    amount: Optional[int] = Field(default=None, description="最小货币单位整数（如 USD 100 = $1.00）")
+    amount_display: Optional[str] = Field(default=None, description="格式化主金额，如 USD $1.00")
+    premium_days: Optional[int] = Field(default=None, description="内购授予 Premium 天数")
+    support_email_address: Optional[str] = None
+    support_email_subject: Optional[str] = None
+    phone_code_hash: Optional[str] = None
+
+
 class TaskStatusResponse(BaseModel):
     """节点状态机生命周期与审计追踪响应"""
     task_id: str
@@ -933,6 +1162,10 @@ class TaskStatusResponse(BaseModel):
     hunt_scanned: Optional[int] = Field(default=None, description="猎号：已扫过的号码数")
     hunt_blacklisted: Optional[int] = Field(default=None, description="猎号：已拉黑/拦截的号码数")
     hunt_last_reason: Optional[str] = Field(default=None, description="猎号：最后一次失败原因")
+    payment_required: Optional[PaymentRequiredInfo] = Field(
+        default=None,
+        description="auth.SentCodePaymentRequired 内购信息（官方 App 专属）",
+    )
     cancel_requested: bool = Field(default=False, description="是否已收到取消请求（下一轮取号前生效）")
     created_at: str
     updated_at: str
