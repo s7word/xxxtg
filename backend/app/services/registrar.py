@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import json
 import os
 import random
@@ -246,6 +247,25 @@ SMS_NEXT_TYPE_NAMES = frozenset({
     "CodeTypeSms",
     "SentCodeTypeSms",
 })
+PAYMENT_REQUIRED_TYPE_NAMES = frozenset({
+    "SentCodePaymentRequired",
+})
+EMAIL_SETUP_TYPE_NAMES = frozenset({
+    "SentCodeTypeSetUpEmailRequired",
+})
+EMAIL_CODE_TYPE_NAMES = frozenset({
+    "SentCodeTypeEmailCode",
+})
+FIREBASE_SMS_TYPE_NAMES = frozenset({
+    "SentCodeTypeFirebaseSms",
+})
+APP_STREAK_REASONS = frozenset({"SENT_CODE_TYPE_APP"})
+CHANNEL_FAIL_NOTES = {
+    "SENT_CODE_TYPE_APP": "auth.sendCode 仅下发站内 App 推送（未必已注册）",
+    "PAYMENT_REQUIRED_OFFICIAL_ONLY": "需官方 App 内购，自动化不可完成",
+    "EMAIL_SETUP_FAILED": "SetUpEmailRequired 流程失败",
+    "EMAIL_CODE_UNAVAILABLE": "SentCodeTypeEmailCode 无法接收该邮箱验证码",
+}
 
 
 MAX_NUMBER_ATTEMPTS_CAP = 500
@@ -1465,15 +1485,46 @@ class RegistrationOrchestrator:
         return type(obj).__name__
 
     @classmethod
+    def _sent_code_type_name(cls, sent_code: Any) -> str:
+        """完整 constructor / inner type 名。
+
+        ``auth.SentCodePaymentRequired`` / ``auth.SentCodeSuccess`` 是独立 constructor，
+        没有 ``.type``；普通 ``auth.SentCode`` 用 ``.type``。
+        """
+        if sent_code is None:
+            return "Unknown"
+        obj_name = cls._tl_type_name(sent_code)
+        if obj_name in PAYMENT_REQUIRED_TYPE_NAMES or obj_name == "SentCodeSuccess":
+            return obj_name
+        inner = cls._tl_type_name(getattr(sent_code, "type", None))
+        return inner or obj_name or "Unknown"
+
+    @classmethod
+    def _is_payment_required(cls, sent_code: Any) -> bool:
+        return cls._sent_code_type_name(sent_code) in PAYMENT_REQUIRED_TYPE_NAMES
+
+    @classmethod
+    def _is_email_setup(cls, sent_code: Any) -> bool:
+        return cls._sent_code_type_name(sent_code) in EMAIL_SETUP_TYPE_NAMES
+
+    @classmethod
+    def _is_email_code(cls, sent_code: Any) -> bool:
+        return cls._sent_code_type_name(sent_code) in EMAIL_CODE_TYPE_NAMES
+
+    @classmethod
+    def _is_firebase_sms(cls, sent_code: Any) -> bool:
+        return cls._sent_code_type_name(sent_code) in FIREBASE_SMS_TYPE_NAMES
+
+    @classmethod
     def _is_app_delivery(cls, sent_code: Any) -> bool:
-        return cls._tl_type_name(getattr(sent_code, "type", None)) in APP_DELIVERY_TYPE_NAMES
+        return cls._sent_code_type_name(sent_code) in APP_DELIVERY_TYPE_NAMES
 
     @classmethod
     def _is_sms_delivery(cls, sent_code: Any) -> bool:
-        name = cls._tl_type_name(getattr(sent_code, "type", None))
+        name = cls._sent_code_type_name(sent_code)
         if name in SMS_DELIVERY_TYPE_NAMES:
             return True
-        return bool(name) and "Sms" in name and "App" not in name
+        return bool(name) and "Sms" in name and "App" not in name and "Firebase" not in name
 
     @classmethod
     def _next_type_is_sms(cls, sent_code: Any) -> bool:
@@ -1484,11 +1535,26 @@ class RegistrationOrchestrator:
 
     @classmethod
     def _describe_sent_code(cls, sent_code: Any) -> str:
-        type_name = cls._tl_type_name(getattr(sent_code, "type", None)) or "Unknown"
+        type_name = cls._sent_code_type_name(sent_code) or "Unknown"
         next_name = cls._tl_type_name(getattr(sent_code, "next_type", None)) or "None"
         timeout = getattr(sent_code, "timeout", None)
         timeout_text = str(timeout) if timeout is not None else "None"
-        return f"type={type_name} next_type={next_name} timeout={timeout_text}"
+        extras: List[str] = []
+        if type_name in PAYMENT_REQUIRED_TYPE_NAMES:
+            extras.append(f"store_product={getattr(sent_code, 'store_product', None)}")
+            extras.append(f"currency={getattr(sent_code, 'currency', None)}")
+            extras.append(f"amount={getattr(sent_code, 'amount', None)}")
+        code_type = getattr(sent_code, "type", None)
+        pattern = getattr(code_type, "email_pattern", None) if code_type is not None else None
+        if pattern:
+            extras.append(f"email_pattern={pattern}")
+        if code_type is not None and (
+            getattr(code_type, "play_integrity_nonce", None) is not None
+            or getattr(code_type, "nonce", None) is not None
+        ):
+            extras.append("play_integrity_nonce=present")
+        extra_text = (" " + " ".join(extras)) if extras else ""
+        return f"type={type_name} next_type={next_name} timeout={timeout_text}{extra_text}"
 
     @classmethod
     async def _maybe_resend_to_sms(
@@ -1545,6 +1611,208 @@ class RegistrationOrchestrator:
         return resent, None
 
     @classmethod
+    def _play_integrity_nonce(cls, code_type: Any) -> Optional[str]:
+        raw = getattr(code_type, "play_integrity_nonce", None)
+        if raw is None:
+            raw = getattr(code_type, "nonce", None)
+        if raw is None:
+            return None
+        if isinstance(raw, str):
+            return raw
+        if isinstance(raw, (bytes, bytearray)):
+            return base64.urlsafe_b64encode(bytes(raw)).decode("ascii")
+        return None
+
+    @classmethod
+    def _app_version_code(cls, profile: Optional[Dict[str, Any]]) -> int:
+        profile = profile or {}
+        for key in ("app_build", "app_version_code"):
+            val = profile.get(key)
+            if val is None:
+                continue
+            digits = "".join(ch for ch in str(val) if ch.isdigit())
+            if digits:
+                try:
+                    return int(digits)
+                except ValueError:
+                    continue
+        return 0
+
+    @classmethod
+    async def _complete_setup_email(
+        cls,
+        client,
+        phone: str,
+        sent_code: Any,
+        task_id: str,
+        manager: RegistrationTaskManager,
+        bypass_svc,
+        profile: Optional[Dict[str, Any]],
+        emulation_label: str,
+    ) -> Any:
+        """官方流程：SetUpEmailRequired → REGHelp 临时邮箱 → verifyEmail → 新 sent_code。"""
+        if bypass_svc is None or not hasattr(bypass_svc, "get_login_email"):
+            raise SentCodeAppDeliveryError(
+                "SentCodeTypeSetUpEmailRequired：无 REGHelp Email 客户端，无法完成登录邮箱绑定",
+                reason="EMAIL_SETUP_FAILED",
+            )
+        profile = profile or {}
+        phone_code_hash = getattr(sent_code, "phone_code_hash", None)
+        if not phone_code_hash:
+            raise SentCodeAppDeliveryError(
+                "SentCodeTypeSetUpEmailRequired 缺少 phone_code_hash",
+                reason="EMAIL_SETUP_FAILED",
+            )
+        await manager.append_log(
+            task_id,
+            f"[{emulation_label}] 官方流程 SetUpEmailRequired：account.sendVerifyEmailCode "
+            f"(purpose=EmailVerifyPurposeLoginSetup) + REGHelp /email/getEmail",
+        )
+        markers = str(profile.get("app_device") or "").lower()
+        preferred = "icloud" if "ios" in markers else "gmail"
+        types_to_try = [preferred] + [item for item in ("gmail", "icloud") if item != preferred]
+        inbox = None
+        last_err: Optional[Exception] = None
+        for email_type in types_to_try:
+            try:
+                inbox = await bypass_svc.get_login_email(
+                    profile,
+                    phone,
+                    email_type=email_type,
+                    log_callback=lambda msg: manager.append_log(task_id, msg),
+                    ref=task_id,
+                )
+                if inbox and getattr(inbox, "email", None):
+                    break
+            except Exception as exc:
+                last_err = exc
+                await manager.append_log(task_id, f"⚠️ REGHelp Email type={email_type} 失败: {exc}")
+                inbox = None
+        if not inbox or not getattr(inbox, "email", None):
+            raise SentCodeAppDeliveryError(
+                f"REGHelp 未能提供临时邮箱: {last_err}",
+                reason="EMAIL_SETUP_FAILED",
+            )
+        await manager.append_log(task_id, f"[{emulation_label}] 临时邮箱已就绪: {inbox.email}")
+        purpose = types.EmailVerifyPurposeLoginSetup(
+            phone_number=phone,
+            phone_code_hash=phone_code_hash,
+        )
+        try:
+            await client(functions.account.SendVerifyEmailCodeRequest(
+                purpose=purpose,
+                email=inbox.email,
+            ))
+        except Exception as exc:
+            raise SentCodeAppDeliveryError(
+                f"account.sendVerifyEmailCode 失败: {exc}",
+                reason="EMAIL_SETUP_FAILED",
+            ) from exc
+
+        code = getattr(inbox, "code", None)
+        if not code:
+            try:
+                code = await bypass_svc.poll_email_code(
+                    inbox.task_id,
+                    log_callback=lambda msg: manager.append_log(task_id, msg),
+                )
+            except Exception as exc:
+                raise SentCodeAppDeliveryError(
+                    f"REGHelp Email 验证码超时/失败: {exc}",
+                    reason="EMAIL_SETUP_FAILED",
+                ) from exc
+        if not code:
+            raise SentCodeAppDeliveryError(
+                "REGHelp Email 未返回验证码",
+                reason="EMAIL_SETUP_FAILED",
+            )
+        await manager.append_log(
+            task_id,
+            f"[{emulation_label}] 已取得 Email 验证码，调用 account.verifyEmail",
+        )
+        try:
+            verified = await client(functions.account.VerifyEmailRequest(
+                purpose=purpose,
+                verification=types.EmailVerificationCode(code=str(code)),
+            ))
+        except Exception as exc:
+            raise SentCodeAppDeliveryError(
+                f"account.verifyEmail 失败: {exc}",
+                reason="EMAIL_SETUP_FAILED",
+            ) from exc
+        next_sent = getattr(verified, "sent_code", None)
+        if next_sent is None:
+            raise SentCodeAppDeliveryError(
+                f"account.verifyEmail 返回 {cls._tl_type_name(verified)} 但没有 sent_code，无法继续登录",
+                reason="EMAIL_SETUP_FAILED",
+            )
+        await manager.append_log(
+            task_id,
+            f"[{emulation_label}] EmailVerifiedLogin 完成，继续处理新 sent_code "
+            f"{cls._sent_code_type_name(next_sent)} ({cls._describe_sent_code(next_sent)})",
+        )
+        return next_sent
+
+    @classmethod
+    async def _complete_firebase_sms(
+        cls,
+        client,
+        phone: str,
+        sent_code: Any,
+        task_id: str,
+        manager: RegistrationTaskManager,
+        bypass_svc,
+        profile: Optional[Dict[str, Any]],
+        emulation_label: str,
+    ) -> None:
+        """官方流程：FirebaseSms → Play Integrity → auth.requestFirebaseSms。"""
+        code_type = getattr(sent_code, "type", None)
+        nonce = cls._play_integrity_nonce(code_type)
+        version_code = cls._app_version_code(profile)
+        if bypass_svc is None or not hasattr(bypass_svc, "get_integrity_token") or not nonce or not version_code:
+            await manager.append_log(
+                task_id,
+                f"[{emulation_label}] SentCodeTypeFirebaseSms：缺少 Integrity 前置条件 "
+                f"(svc={'有' if bypass_svc else '无'} nonce={'有' if nonce else '无'} "
+                f"versionCode={version_code})，跳过 requestFirebaseSms，按短信通道继续",
+            )
+            return
+        await manager.append_log(
+            task_id,
+            f"[{emulation_label}] 官方流程 FirebaseSms：REGHelp integrity/getToken "
+            f"+ auth.requestFirebaseSms (versionCode={version_code})",
+        )
+        try:
+            token = await bypass_svc.get_integrity_token(
+                profile or {},
+                nonce=nonce,
+                app_version_code=version_code,
+                log_callback=lambda msg: manager.append_log(task_id, msg),
+                ref=task_id,
+            )
+        except Exception as exc:
+            await manager.append_log(task_id, f"⚠️ Play Integrity 失败，仍尝试短信通道: {exc}")
+            return
+        if not token:
+            await manager.append_log(task_id, "⚠️ Play Integrity 未返回 token，仍尝试短信通道")
+            return
+        try:
+            ok = await client(functions.auth.RequestFirebaseSmsRequest(
+                phone_number=phone,
+                phone_code_hash=getattr(sent_code, "phone_code_hash", None),
+                play_integrity_token=token,
+            ))
+            await manager.append_log(
+                task_id,
+                f"[{emulation_label}] auth.requestFirebaseSms 返回 {ok}，继续轮询短信",
+            )
+        except Exception as exc:
+            await manager.append_log(
+                task_id,
+                f"⚠️ auth.requestFirebaseSms 失败: {exc}，仍尝试短信通道",
+            )
+
+    @classmethod
     async def resolve_sent_code_channel(
         cls,
         client,
@@ -1553,21 +1821,103 @@ class RegistrationOrchestrator:
         task_id: str,
         manager: RegistrationTaskManager,
         wait_timeout: Optional[float] = None,
+        *,
+        bypass_svc=None,
+        profile: Optional[Dict[str, Any]] = None,
+        emulation_label: str = "balanced",
+        _email_depth: int = 0,
     ) -> Tuple[Any, int]:
-        """解析 sendCode 分发通道；SentCodeTypeApp 时尝试 ResendCode 降级到短信。
+        """解析 sendCode 分发通道。
 
-        返回 (effective_sent_code, sms_poll_attempts)。
-        若无法降级到可被带外短信网关接收的通道，抛出 SentCodeAppDeliveryError 以快速退订。
+        - SentCodeTypeApp：尝试 ResendCode 降级到短信，失败则快退
+        - SetUpEmailRequired：REGHelp Email + account.verifyEmail 后继续
+        - EmailCode：无对应邮箱时快退，不空等 SMS
+        - PaymentRequired：标记需官方 App 内购，快退
+        - FirebaseSms：Play Integrity + requestFirebaseSms 后按短信轮询
         """
-        delivery_name = cls._tl_type_name(getattr(sent_code, "type", None)) or "Unknown"
+        delivery_name = cls._sent_code_type_name(sent_code)
         await manager.append_log(
             task_id,
-            f"挑战已由服务端下发! 分发通道类型: {delivery_name} ({cls._describe_sent_code(sent_code)})"
+            f"挑战已由服务端下发! 分发通道类型: {delivery_name} "
+            f"({cls._describe_sent_code(sent_code)}) [模式={emulation_label}]"
         )
+
+        if cls._is_payment_required(sent_code):
+            product = getattr(sent_code, "store_product", None)
+            await manager.append_log(
+                task_id,
+                f"[{emulation_label}] PaymentRequired：需官方 App 内购 "
+                f"(store_product={product})，自动化不可完成，快退以免空等 SMS"
+            )
+            raise SentCodeAppDeliveryError(
+                f"auth.SentCodePaymentRequired store_product={product}，需官方 App 内购",
+                reason="PAYMENT_REQUIRED_OFFICIAL_ONLY",
+            )
+
+        if cls._is_email_setup(sent_code):
+            if _email_depth >= 2:
+                raise SentCodeAppDeliveryError(
+                    "SetUpEmailRequired 嵌套超过上限",
+                    reason="EMAIL_SETUP_FAILED",
+                )
+            next_sent = await cls._complete_setup_email(
+                client=client,
+                phone=phone,
+                sent_code=sent_code,
+                task_id=task_id,
+                manager=manager,
+                bypass_svc=bypass_svc,
+                profile=profile,
+                emulation_label=emulation_label,
+            )
+            return await cls.resolve_sent_code_channel(
+                client,
+                phone,
+                next_sent,
+                task_id,
+                manager,
+                wait_timeout=wait_timeout,
+                bypass_svc=bypass_svc,
+                profile=profile,
+                emulation_label=emulation_label,
+                _email_depth=_email_depth + 1,
+            )
+
+        if cls._is_email_code(sent_code):
+            pattern = getattr(getattr(sent_code, "type", None), "email_pattern", None)
+            await manager.append_log(
+                task_id,
+                f"[{emulation_label}] SentCodeTypeEmailCode email_pattern={pattern}："
+                "当前自动化不持有该邮箱，快退不空等 SMS",
+            )
+            raise SentCodeAppDeliveryError(
+                f"SentCodeTypeEmailCode email_pattern={pattern}，无法接收该邮箱验证码",
+                reason="EMAIL_CODE_UNAVAILABLE",
+            )
+
+        if cls._is_firebase_sms(sent_code):
+            await cls._complete_firebase_sms(
+                client=client,
+                phone=phone,
+                sent_code=sent_code,
+                task_id=task_id,
+                manager=manager,
+                bypass_svc=bypass_svc,
+                profile=profile,
+                emulation_label=emulation_label,
+            )
+            await manager.append_log(task_id, "分发通道为 Firebase/运营商短信，带外遥测网关可正常接收")
+            return sent_code, DEFAULT_SMS_POLL_ATTEMPTS
 
         if not cls._is_app_delivery(sent_code):
             if cls._is_sms_delivery(sent_code):
                 await manager.append_log(task_id, "分发通道为运营商短信，带外遥测网关可正常接收")
+            else:
+                await manager.append_log(
+                    task_id,
+                    f"[{emulation_label}] 非 App 通道 {delivery_name}，不按站内信快退，"
+                    "按默认窗口轮询（Call/其它类型可能收不到带外短信）",
+                )
             return sent_code, DEFAULT_SMS_POLL_ATTEMPTS
 
         await manager.append_log(
@@ -1866,6 +2216,9 @@ class RegistrationOrchestrator:
             sent_code=sent_code,
             task_id=task_id,
             manager=manager,
+            bypass_svc=bypass_svc,
+            profile=profile,
+            emulation_label=getattr(plan, "emulation_label", "balanced"),
         )
         return sent_code, sms_poll_attempts, push_token, push_task_id, push_provider, push_token_obtained_at, plan
 
@@ -2484,6 +2837,12 @@ class RegistrationOrchestrator:
                         profile, config, has_push_token=bool(push_token)
                     )
                     credentials_resolved = True
+                    if bool(getattr(config, "official_client_emulation", False)):
+                        await manager.append_log(
+                            task_id,
+                            f"[official] 官方客户端模拟生效：api_id={profile['api_id']} "
+                            f"credential_source={profile.get('credential_source')}"
+                        )
                     if profile["credential_source"] == "custom":
                         await manager.append_log(task_id, f"API 凭证策略: 强制使用自建开发者凭证 (api_id={profile['api_id']})")
                     elif profile["credential_source"] == "custom_auto_fallback":
@@ -2608,18 +2967,18 @@ class RegistrationOrchestrator:
                     )
                 except SentCodeAppDeliveryError as ex:
                     reason = getattr(ex, "reason", None) or "SENT_CODE_TYPE_APP"
+                    is_app = reason in APP_STREAK_REASONS
                     ttl_hours = hunt_limits["app_blacklist_ttl_hours"]
                     record = None
+                    note = CHANNEL_FAIL_NOTES.get(reason, reason)
                     if phone:
-                        # 白号预检通过后仍走 App，也可能是 attach 的 Push Token 把码送进了
-                        # 站内客户端，而不是号码已注册。只按 TTL 临时拉黑。
                         record = BannedPhonesCache.remember(
                             phone,
                             reason=reason,
                             source=SOURCE_SENT_CODE,
                             country=target_country,
                             category=CATEGORY_APP_DELIVERY,
-                            note="auth.sendCode 仅下发站内 App 推送（未必已注册）",
+                            note=note,
                             ttl_hours=ttl_hours,
                         )
                     await cls._refund_and_revoke_channel(sms_svc, act_id, task_id, manager, reason)
@@ -2636,11 +2995,13 @@ class RegistrationOrchestrator:
                     session_path = None
                     meta_path = None
                     hunt_blacklisted += 1
-                    hunt_app_streak += 1
+                    if is_app:
+                        hunt_app_streak += 1
                     last_failure_reason = reason
+                    log_label = "APP 投递不可用（未必已注册）" if is_app else note
                     await manager.append_log(
                         task_id,
-                        f"⚠️ APP 投递不可用（未必已注册）：号码 {phone} 已退订，临时拉黑至 "
+                        f"⚠️ {log_label}：号码 {phone} 已退订，临时拉黑至 "
                         f"{cls._app_blacklist_expiry_label(record, ttl_hours)}"
                         f"（分类 {CATEGORY_APP_DELIVERY}，TTL {ttl_hours:.0f}h，到期自动放回可试池）"
                     )
@@ -2661,7 +3022,7 @@ class RegistrationOrchestrator:
                             break
                         await manager.append_log(
                             task_id,
-                            f"[猎号] SentCodeTypeApp（{reason}）换号继续 "
+                            f"[猎号] {'SentCodeTypeApp' if is_app else reason}（{reason}）换号继续 "
                             f"({attempt_idx}/{max_attempts})；"
                             f"连续 APP {hunt_app_streak}"
                             + (f"/{fuse}" if fuse else "（熔断关闭）")
@@ -3075,7 +3436,8 @@ class RegistrationOrchestrator:
             manager.update_task_status(task_id, "failed", error=err)
         except SentCodeAppDeliveryError as ex:
             reason = getattr(ex, "reason", None) or "SENT_CODE_TYPE_APP"
-            err = f"站内信验证码无法被带外通道接收 ({reason}): {str(ex) or repr(ex)}"
+            note = CHANNEL_FAIL_NOTES.get(reason, reason)
+            err = f"{note} ({reason}): {str(ex) or repr(ex)}"
             await manager.append_log(task_id, f"❌ {err}")
             if phone and not phone_disposed:
                 ttl_hours = hunt_limits["app_blacklist_ttl_hours"]
@@ -3085,12 +3447,12 @@ class RegistrationOrchestrator:
                     source=SOURCE_SENT_CODE,
                     country=target_country,
                     category=CATEGORY_APP_DELIVERY,
-                    note="auth.sendCode 仅下发站内 App 推送（未必已注册）",
+                    note=note,
                     ttl_hours=ttl_hours,
                 )
                 await manager.append_log(
                     task_id,
-                    f"⚠️ APP 投递不可用（未必已注册）：号码 {phone} 临时拉黑至 "
+                    f"⚠️ {note}：号码 {phone} 临时拉黑至 "
                     f"{cls._app_blacklist_expiry_label(record, ttl_hours)}"
                     f"（分类 {CATEGORY_APP_DELIVERY}，TTL {ttl_hours:.0f}h，到期自动放回可试池）"
                 )

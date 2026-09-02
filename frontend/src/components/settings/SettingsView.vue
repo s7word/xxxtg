@@ -525,6 +525,15 @@
             自建 api_id 下 balanced 会跳过 Push，提高 SentCodeTypeSms 概率。
           </p>
         </div>
+        <label class="ce-check">
+          <input type="checkbox" v-model="config.official_client_emulation" />
+          官方客户端模拟（official api_id=6 + 每轮 Push attach + Email / Play Integrity / 内购快退）
+        </label>
+        <p class="ce-tiny ce-muted">
+          开启后运行时覆盖凭证与通道计划：强制官方模板 api_id/api_hash、push_required，
+          并处理 SetUpEmailRequired（REGHelp Email）、FirebaseSms（Play Integrity）、
+          PaymentRequired（标记需官方 App 内购并快退）。猎号连续 App 强制 SMS 在此模式下关闭。
+        </p>
         <div>
           <label class="ce-label">猎号连续 App 后强制 SMS（次数）</label>
           <input v-model.number="config.hunt_sms_first_after_app_streak" type="number" min="0" max="20" class="ce-input mono w-sm" />

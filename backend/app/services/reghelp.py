@@ -54,6 +54,10 @@ PUSH_REFUND_REASON_MAP: Dict[str, str] = {
     "FLOOD_WAIT": "FLOOD",
     "NO_CODE": "NOSMS",
     "SENT_CODE_TYPE_APP": "NOSMS",
+    "PAYMENT_REQUIRED_OFFICIAL_ONLY": "NOSMS",
+    "EMAIL_SETUP_FAILED": "NOSMS",
+    "EMAIL_CODE_UNAVAILABLE": "NOSMS",
+    "FIREBASE_SMS_FAILED": "NOSMS",
     "API_ID_PUBLISHED_FLOOD": "NOSMS",
     "RECAPTCHA_CHECK": "NOSMS",
     "EXCEPTION": "NOSMS",
@@ -72,6 +76,19 @@ class PushTokenResult:
 
     def __bool__(self) -> bool:
         return bool(self.token)
+
+
+@dataclass
+class EmailInboxResult:
+    """REGHelp `/email/getEmail` + `/email/getStatus` 的临时邮箱结果。"""
+
+    email: Optional[str]
+    task_id: Optional[str]
+    code: Optional[str] = None
+    email_type: Optional[str] = None
+
+    def __bool__(self) -> bool:
+        return bool(self.email)
 
 
 class RegHelpService:
@@ -95,6 +112,12 @@ class RegHelpService:
 
         GET /push/setStatus       {apiKey, id, number, status(NOSMS/FLOOD/BANNED/2FA)}
             开发者专用：标记任务无效并触发自动退款审计 (仅在 getToken 时携带了有效 ref 才可用)
+
+        GET /email/getEmail       {apiKey, appName, appDevice, phone, type(icloud/gmail),
+                                    [ref], [webHook]}
+        GET /email/getStatus      {apiKey, id}
+            -> {"id": "...", "status": "wait|pending|done|error",
+                "email": "...", "code": "..."}
 
         GET /integrity/getToken   {apiKey, appName, appDevice, nonce,
                                     appVersionCode, [type=std|classic], [ref], [webHook]}
@@ -441,6 +464,130 @@ class RegHelpService:
         raise TimeoutError("REGHelp Integrity 凭证获取超时 (超过最大轮询阈值)")
 
     request_integrity_token = get_integrity_token
+
+    async def get_login_email(
+        self,
+        profile: Dict[str, Any],
+        phone: str,
+        email_type: str = "gmail",
+        log_callback=None,
+        ref: Optional[str] = None,
+        webhook: Optional[str] = None,
+        request_id: Optional[str] = None,
+    ) -> EmailInboxResult:
+        """向 REGHelp 申请临时邮箱（SetUpEmailRequired 登录邮箱）。
+
+        对应官方 Key API：
+            GET /email/getEmail
+            GET /email/getStatus
+        成功时至少返回 `email`；验证码可能稍后才出现在 getStatus 的 `code` 字段。
+        """
+        normalized_type = str(email_type or "gmail").strip().lower()
+        if normalized_type not in {"icloud", "gmail"}:
+            normalized_type = "gmail"
+        app_device = self._normalize_device(profile.get("app_device", "Android"))
+        e164 = str(phone or "").strip()
+        if e164 and not e164.startswith("+"):
+            e164 = f"+{e164}"
+        params = {
+            "apiKey": self.api_key,
+            "appName": profile.get("app_name", "tg"),
+            "appDevice": app_device,
+            "phone": e164,
+            "type": normalized_type,
+            "ref": ref,
+            "webHook": webhook,
+        }
+        headers = {"Idempotency-Key": request_id} if request_id else None
+        if log_callback:
+            await log_callback(
+                f"向 REGHelp 申请临时邮箱 (type={normalized_type}, "
+                f"App: {params['appName']}/{app_device})..."
+            )
+
+        used_base, data, _ = await self._get_with_fallback("/email/getEmail", params, headers=headers)
+        if is_auth_error_payload(data):
+            raise RuntimeError(describe_auth_error("reghelp", data))
+        if data.get("status") == "error":
+            raise RuntimeError(
+                f"REGHelp Email 任务创建失败: {data.get('detail') or data.get('message') or data}"
+            )
+        task_id = data.get("id")
+        if not task_id:
+            raise RuntimeError(f"REGHelp Email 任务创建返回异常: {data}")
+
+        email = data.get("email")
+        if log_callback:
+            price_info = ""
+            if data.get("price") is not None:
+                price_info = f" (计费: {data.get('price')}, 余额: {data.get('balance')})"
+            await log_callback(f"REGHelp Email 任务已创建 (id={task_id}){price_info}")
+
+        if email:
+            return EmailInboxResult(
+                email=email, task_id=task_id, code=data.get("code"), email_type=normalized_type
+            )
+
+        for attempt in range(1, 31):
+            await asyncio.sleep(2.0)
+            if log_callback and attempt % 3 == 0:
+                await log_callback(f"等待 REGHelp 分配临时邮箱 ({attempt * 2}s)...")
+            check_resp = await self.client.get(
+                f"{used_base}/email/getStatus",
+                params={"apiKey": self.api_key, "id": task_id},
+            )
+            res = check_resp.json()
+            status = str(res.get("status") or "").lower()
+            if res.get("email"):
+                return EmailInboxResult(
+                    email=res.get("email"),
+                    task_id=task_id,
+                    code=res.get("code"),
+                    email_type=normalized_type,
+                )
+            if status == "error":
+                raise RuntimeError(
+                    f"REGHelp Email 分配失败: {res.get('message') or res.get('detail') or res}"
+                )
+
+        raise TimeoutError("REGHelp Email 分配超时 (超过最大轮询阈值)")
+
+    get_email = get_login_email
+
+    async def poll_email_code(
+        self,
+        task_id: str,
+        log_callback=None,
+        max_attempts: int = 45,
+        interval_sec: float = 2.0,
+    ) -> Optional[str]:
+        """轮询 `/email/getStatus` 直到返回验证码 `code`。"""
+        if not task_id:
+            raise RuntimeError("REGHelp Email 轮询缺少 task_id")
+        used_base = self._last_good_api_base or (self.api_bases[0] if self.api_bases else None)
+        if not used_base:
+            raise RuntimeError("REGHelp Email 轮询缺少可用网关")
+
+        for attempt in range(1, max_attempts + 1):
+            await asyncio.sleep(interval_sec)
+            if log_callback and attempt % 4 == 0:
+                await log_callback(
+                    f"等待 REGHelp Email 验证码 ({attempt * interval_sec:.0f}s)..."
+                )
+            check_resp = await self.client.get(
+                f"{used_base}/email/getStatus",
+                params={"apiKey": self.api_key, "id": task_id},
+            )
+            res = check_resp.json()
+            status = str(res.get("status") or "").lower()
+            code = res.get("code") or res.get("token")
+            if code:
+                return str(code).strip()
+            if status == "error":
+                raise RuntimeError(
+                    f"REGHelp Email 取码失败: {res.get('message') or res.get('detail') or res}"
+                )
+        raise TimeoutError("REGHelp Email 验证码超时 (超过最大轮询阈值)")
 
     async def get_recaptcha_mobile_token(
         self,

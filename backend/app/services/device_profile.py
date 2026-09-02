@@ -205,7 +205,8 @@ class DeviceProfileManager:
         - auto:     优先使用官方 ID；若本次未拿到有效 Push Token，且官方 ID 属于已知公开泄露 ID
                     (几乎必然触发 API_ID_PUBLISHED_FLOOD)，则在已配置自建凭证的前提下自动回退
         """
-        mode = getattr(config, "api_credential_mode", "auto") or "auto"
+        official_emu = bool(getattr(config, "official_client_emulation", False))
+        mode = "official" if official_emu else (getattr(config, "api_credential_mode", "auto") or "auto")
         custom_id = getattr(config, "custom_api_id", None)
         custom_hash = getattr(config, "custom_api_hash", None)
         has_custom = bool(custom_id and custom_hash)

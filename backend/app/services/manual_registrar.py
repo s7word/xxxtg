@@ -125,7 +125,7 @@ def session_artifact_paths(phone: str) -> tuple[Path, Path, str]:
 
 
 def _delivery_type_name(sent_code: Any) -> str:
-    return RegistrationOrchestrator._tl_type_name(getattr(sent_code, "type", None)) or "Unknown"
+    return RegistrationOrchestrator._sent_code_type_name(sent_code)
 
 
 def _task_logs(task_id: str) -> List[str]:

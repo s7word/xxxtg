@@ -278,6 +278,60 @@ class AttestationGatewayService:
             log_callback=log_callback,
         )
 
+    async def get_integrity_token(
+        self,
+        profile: Dict[str, Any],
+        nonce: str,
+        app_version_code: int,
+        token_type: str = "classic",
+        log_callback=None,
+        ref: Optional[str] = None,
+    ) -> Optional[str]:
+        """仅走 REGHelp Play Integrity；AntiSafety 无此能力。"""
+        if not self.reghelp:
+            raise RuntimeError(
+                "REGHelp 未启用或缺少有效 reghelp_api_key，无法申请 Play Integrity 凭证"
+            )
+        if log_callback:
+            await log_callback(
+                f"Play Integrity 走独立 REGHelp 网关 "
+                f"(bases={', '.join(self.reghelp.api_bases)}, versionCode={app_version_code})"
+            )
+        return await self.reghelp.get_integrity_token(
+            profile,
+            nonce=nonce,
+            app_version_code=app_version_code,
+            token_type=token_type,
+            log_callback=log_callback,
+            ref=ref,
+        )
+
+    async def get_login_email(
+        self,
+        profile: Dict[str, Any],
+        phone: str,
+        email_type: str = "gmail",
+        log_callback=None,
+        ref: Optional[str] = None,
+    ):
+        """仅走 REGHelp Email 产品。"""
+        if not self.reghelp:
+            raise RuntimeError(
+                "REGHelp 未启用或缺少有效 reghelp_api_key，无法申请临时登录邮箱"
+            )
+        return await self.reghelp.get_login_email(
+            profile,
+            phone=phone,
+            email_type=email_type,
+            log_callback=log_callback,
+            ref=ref,
+        )
+
+    async def poll_email_code(self, task_id: str, log_callback=None) -> Optional[str]:
+        if not self.reghelp:
+            raise RuntimeError("REGHelp 未启用，无法轮询 Email 验证码")
+        return await self.reghelp.poll_email_code(task_id, log_callback=log_callback)
+
     async def report_result(self, check_id: Optional[str], aid: Optional[str], status: str):
         """向审计监控中心上报状态机最终迁移结果 (目前仅 AntiSafety 提供上报能力)"""
         if self.antisafety and check_id:

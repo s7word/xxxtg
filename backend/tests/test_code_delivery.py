@@ -102,6 +102,30 @@ class TestCodeDeliveryPlan(unittest.TestCase):
         self.assertTrue(plan.forced_sms)
         self.assertEqual(plan.effective_mode, CODE_DELIVERY_SMS_FIRST)
         self.assertFalse(plan.attach_push_token)
+        self.assertEqual(plan.emulation_label, "balanced")
+
+    def test_official_emulation_forces_push_and_ignores_hunt_streak(self):
+        plan = resolve_code_delivery_plan(
+            _config(
+                official_client_emulation=True,
+                api_credential_mode="custom",
+                code_delivery_mode=CODE_DELIVERY_BALANCED,
+            ),
+            _profile(api_id=6),
+            hunt_app_streak=5,
+        )
+        self.assertTrue(plan.official_client_emulation)
+        self.assertEqual(plan.emulation_label, "official")
+        self.assertEqual(plan.effective_mode, CODE_DELIVERY_PUSH_REQUIRED)
+        self.assertTrue(plan.should_request_push_token)
+        self.assertTrue(plan.attach_push_token)
+        self.assertFalse(plan.forced_sms)
+        self.assertIn("official", plan.summary_for_log())
+
+    def test_balanced_label_without_emulation(self):
+        plan = resolve_code_delivery_plan(_config(), _profile(api_id=35337905))
+        self.assertEqual(plan.emulation_label, "balanced")
+        self.assertIn("模式标签=balanced", plan.summary_for_log())
 
     def test_force_sms_after_app(self):
         plan = resolve_code_delivery_plan(

@@ -298,6 +298,15 @@ class AppConfigModel(BaseModel):
             "push_required (legacy：始终申请 Push 并 attach token)"
         ),
     )
+    official_client_emulation: bool = Field(
+        default=False,
+        description=(
+            "官方客户端模拟：开启后强制使用模板官方 api_id/api_hash（telegram_android 为 6）"
+            "并以 push_required 每轮申请并 attach REGHelp Push Token；"
+            "sendCode 后处理 SetUpEmailRequired / FirebaseSms / PaymentRequired，"
+            "不再把非 App 通道一律当短信空等。猎号连续 App 强制 SMS 在此模式下关闭"
+        ),
+    )
     hunt_sms_first_after_app_streak: int = Field(
         default=2,
         ge=0,
@@ -521,6 +530,17 @@ class AppConfigModel(BaseModel):
     @classmethod
     def _normalize_sms_max_price(cls, value):
         return normalize_sms_max_price(value)
+
+    @field_validator("official_client_emulation", mode="before")
+    @classmethod
+    def _normalize_official_client_emulation(cls, value):
+        if isinstance(value, str):
+            token = value.strip().lower()
+            if token in {"1", "true", "yes", "on", "official"}:
+                return True
+            if token in {"0", "false", "no", "off", "standard", ""}:
+                return False
+        return bool(value)
 
 
 class DeviceProfileSchema(BaseModel):

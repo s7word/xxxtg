@@ -69,6 +69,8 @@ class CodeDeliveryPlan:
     use_published_api_id: bool
     hunt_app_streak: int = 0
     forced_sms: bool = False
+    official_client_emulation: bool = False
+    emulation_label: str = "balanced"
     notes: tuple[str, ...] = field(default_factory=tuple)
 
     def summary_for_log(self) -> str:
@@ -77,7 +79,10 @@ class CodeDeliveryPlan:
             f"申请Push={'是' if self.should_request_push_token else '否'}",
             f"attach_token={'是' if self.attach_push_token else '否'}",
             f"allow_app_hash={'是' if self.allow_app_hash else '否'}",
+            f"模式标签={self.emulation_label}",
         ]
+        if self.official_client_emulation:
+            parts.append("官方客户端模拟")
         if self.forced_sms:
             parts.append("猎号强制SMS")
         if self.use_published_api_id:
@@ -98,10 +103,24 @@ def _has_usable_custom_credentials(config: Any) -> bool:
     return bool(custom_id and custom_hash)
 
 
+def is_official_client_emulation(config: Any) -> bool:
+    return bool(getattr(config, "official_client_emulation", False))
+
+
+def emulation_label_for(config: Any, base_mode: Optional[str] = None) -> str:
+    """日志用模式标签：official 与 balanced 必须可从任务日志直接读出。"""
+    if is_official_client_emulation(config):
+        return "official"
+    mode = _normalize_mode(base_mode if base_mode is not None else getattr(config, "code_delivery_mode", None))
+    return mode
+
+
 def _predict_effective_api_id(profile: Dict[str, Any], config: Any) -> int:
     """在尚未申请 Push Token 时预测 sendCode 将使用的 api_id。"""
-    mode = getattr(config, "api_credential_mode", "auto") or "auto"
     template_id = int(profile.get("api_id") or 0)
+    if is_official_client_emulation(config):
+        return template_id
+    mode = getattr(config, "api_credential_mode", "auto") or "auto"
     custom_id = getattr(config, "custom_api_id", None)
     custom_hash = getattr(config, "custom_api_hash", None)
     has_custom = bool(custom_id and custom_hash)
@@ -146,9 +165,13 @@ def resolve_code_delivery_plan(
     force_sms_after_app: bool = False,
 ) -> CodeDeliveryPlan:
     """根据全局配置、预测 api_id 与猎号状态生成本轮 sendCode 通道计划。"""
+    official_emu = is_official_client_emulation(config)
     base_mode = _normalize_mode(getattr(config, "code_delivery_mode", None))
+    if official_emu:
+        base_mode = CODE_DELIVERY_PUSH_REQUIRED
     predicted_api_id = _predict_effective_api_id(profile, config)
     published = is_published_api_id(predicted_api_id)
+    label = emulation_label_for(config, base_mode)
 
     try:
         streak_threshold = int(
@@ -158,12 +181,20 @@ def resolve_code_delivery_plan(
     except (TypeError, ValueError):
         streak_threshold = DEFAULT_HUNT_SMS_FIRST_AFTER_APP_STREAK
 
+    # 官方客户端模拟始终 attach Push，不被猎号连续 App 强制 SMS 覆盖
     forced_sms = bool(
-        force_sms_after_app
-        or (hunt_app_streak >= streak_threshold > 0)
+        not official_emu
+        and (
+            force_sms_after_app
+            or (hunt_app_streak >= streak_threshold > 0)
+        )
     )
 
     notes: List[str] = []
+    if official_emu:
+        notes.append(
+            f"official_client_emulation：强制官方 api_id={predicted_api_id} + push_required"
+        )
 
     if forced_sms and base_mode != CODE_DELIVERY_PUSH_REQUIRED:
         effective = CODE_DELIVERY_SMS_FIRST
@@ -212,6 +243,8 @@ def resolve_code_delivery_plan(
         use_published_api_id=published,
         hunt_app_streak=hunt_app_streak,
         forced_sms=forced_sms,
+        official_client_emulation=official_emu,
+        emulation_label=label,
         notes=tuple(notes),
     )
 
@@ -228,5 +261,7 @@ def escalation_plan_after_published_flood(plan: CodeDeliveryPlan) -> CodeDeliver
         use_published_api_id=plan.use_published_api_id,
         hunt_app_streak=plan.hunt_app_streak,
         forced_sms=plan.forced_sms,
+        official_client_emulation=plan.official_client_emulation,
+        emulation_label=plan.emulation_label,
         notes=plan.notes + ("API_ID_PUBLISHED_FLOOD → escalate 至 push_required",),
     )
