@@ -69,6 +69,24 @@ OFFICIAL_API_CREDENTIALS: Dict[int, str] = {
 }
 
 
+def apply_official_api_id(profile: Dict[str, Any], api_id: int) -> Dict[str, Any]:
+    """把 profile 切到指定官方 api_id，并写入与之配对的官方 api_hash。
+
+    api_id=4 → ``014b35b6184100b085b0d0572f9b5103``；
+    api_id=6 → ``eb06d4abfb49dc3eeb1aeb98ae0f581e``。
+    """
+    resolved = dict(profile)
+    resolved["api_id"] = int(api_id)
+    expected = OFFICIAL_API_CREDENTIALS.get(int(api_id))
+    if expected:
+        current = str(resolved.get("api_hash") or "").strip().lower()
+        if current and current != expected.lower():
+            resolved["api_hash_was"] = current
+            resolved["api_hash_corrected"] = True
+        resolved["api_hash"] = expected
+    return normalize_official_api_credentials(resolved)
+
+
 def normalize_official_api_credentials(profile: Dict[str, Any]) -> Dict[str, Any]:
     """若 profile 使用了已知官方 api_id 但 hash 不匹配，自动纠正并标注。"""
     resolved = dict(profile)
@@ -380,6 +398,12 @@ class DeviceProfileManager:
                     profile["api_hash"] = sampled_dev.get("api_hash", base["api_hash"])
 
         cls._apply_locale(profile, country, sampled_dev, match)
+        try:
+            official_id = int(profile.get("api_id") or 0)
+        except (TypeError, ValueError):
+            official_id = 0
+        if official_id in OFFICIAL_API_CREDENTIALS:
+            profile = apply_official_api_id(profile, official_id)
         return normalize_official_api_credentials(profile)
 
     @classmethod

@@ -16,6 +16,7 @@ from backend.app.services.device_profile import (  # noqa: E402
     DEFAULT_PROFILES,
     OFFICIAL_API_CREDENTIALS,
     DeviceProfileManager,
+    apply_official_api_id,
     normalize_official_api_credentials,
 )
 
@@ -56,6 +57,17 @@ class OfficialApiCredentialsTests(unittest.TestCase):
         )
         self.assertEqual(resolved["api_hash"], OFFICIAL_API_CREDENTIALS[4])
         self.assertTrue(resolved.get("api_hash_corrected"))
+
+    def test_apply_official_api_id_4_uses_014b_hash(self):
+        out = apply_official_api_id({"api_id": 6, "api_hash": OFFICIAL_API_CREDENTIALS[6]}, 4)
+        self.assertEqual(out["api_id"], 4)
+        self.assertEqual(out["api_hash"], "014b35b6184100b085b0d0572f9b5103")
+        self.assertTrue(out.get("api_hash_corrected"))
+
+    def test_telegram_android_public_template_hash(self):
+        pub = DEFAULT_PROFILES["telegram_android_public"]
+        self.assertEqual(pub["api_id"], 4)
+        self.assertEqual(pub["api_hash"], OFFICIAL_API_CREDENTIALS[4])
 
 
 if __name__ == "__main__":

@@ -26,6 +26,8 @@ CodeSettings 各字段的官方语义（core.telegram.org/constructor/codeSettin
    自建 api_id 可不带 Push 先发码，FLOOD 再一次性 escalate 到 push_required。
 4. **猎号连续 App**：同一 Push+设备组合连续多号 App 说明是系统性失败，应在达到
    ``hunt_sms_first_after_app_streak`` 后强制 sms_first（仍持有 Token 但不 attach）。
+   **例外**：``official_client_emulation``、``api_credential_mode=official``、或预测
+   api_id 属于泄露名单（4/6/…）时，猎号不得跳过 Push，否则会稳定 FLOOD 并污染实验。
 
 模式说明：
 
@@ -107,6 +109,30 @@ def is_official_client_emulation(config: Any) -> bool:
     return bool(getattr(config, "official_client_emulation", False))
 
 
+def _api_credential_mode(config: Any) -> str:
+    return str(getattr(config, "api_credential_mode", "auto") or "auto").strip().lower()
+
+
+def push_is_mandatory(config: Any, predicted_api_id: int) -> bool:
+    """official 模拟、official 凭证模式、或泄露 api_id（4/6/…）发码必须 attach Push。
+
+    猎号连续 App 强制 SMS 不得覆盖这条：无 Token 发泄露 ID 只会稳定触发
+    API_ID_PUBLISHED_FLOOD，不能当成「国家/内购」样本。
+    """
+    if is_official_client_emulation(config):
+        return True
+    if is_published_api_id(predicted_api_id):
+        return True
+    if _api_credential_mode(config) == "official":
+        return True
+    return False
+
+
+def force_skip_push_attach(config: Any) -> bool:
+    """A/B 对照开关：故意不申请/不 attach Push（用于证明无 Token → FLOOD）。"""
+    return bool(getattr(config, "force_skip_push_attach", False))
+
+
 def emulation_label_for(config: Any, base_mode: Optional[str] = None) -> str:
     """日志用模式标签：official 与 balanced 必须可从任务日志直接读出。"""
     if is_official_client_emulation(config):
@@ -166,11 +192,13 @@ def resolve_code_delivery_plan(
 ) -> CodeDeliveryPlan:
     """根据全局配置、预测 api_id 与猎号状态生成本轮 sendCode 通道计划。"""
     official_emu = is_official_client_emulation(config)
+    skip_attach = force_skip_push_attach(config)
     base_mode = _normalize_mode(getattr(config, "code_delivery_mode", None))
-    if official_emu:
-        base_mode = CODE_DELIVERY_PUSH_REQUIRED
     predicted_api_id = _predict_effective_api_id(profile, config)
     published = is_published_api_id(predicted_api_id)
+    mandatory = push_is_mandatory(config, predicted_api_id) and not skip_attach
+    if official_emu or mandatory:
+        base_mode = CODE_DELIVERY_PUSH_REQUIRED
     label = emulation_label_for(config, base_mode)
 
     try:
@@ -181,9 +209,10 @@ def resolve_code_delivery_plan(
     except (TypeError, ValueError):
         streak_threshold = DEFAULT_HUNT_SMS_FIRST_AFTER_APP_STREAK
 
-    # 官方客户端模拟始终 attach Push，不被猎号连续 App 强制 SMS 覆盖
+    # official / 泄露 api_id 始终 attach Push，不被猎号连续 App 强制 SMS 覆盖
     forced_sms = bool(
-        not official_emu
+        not mandatory
+        and not skip_attach
         and (
             force_sms_after_app
             or (hunt_app_streak >= streak_threshold > 0)
@@ -191,12 +220,22 @@ def resolve_code_delivery_plan(
     )
 
     notes: List[str] = []
+    if skip_attach:
+        notes.append(
+            f"实验对照 force_skip_push_attach：故意不申请/不 attach Push（api_id={predicted_api_id}）"
+        )
     if official_emu:
         notes.append(
             f"official_client_emulation：强制官方 api_id={predicted_api_id} + push_required"
         )
+    elif mandatory:
+        notes.append(
+            f"泄露/official api_id={predicted_api_id}：强制 push_required，猎号不可跳过 Push"
+        )
 
-    if forced_sms and base_mode != CODE_DELIVERY_PUSH_REQUIRED:
+    if skip_attach:
+        effective = CODE_DELIVERY_SMS_FIRST
+    elif forced_sms and base_mode != CODE_DELIVERY_PUSH_REQUIRED:
         effective = CODE_DELIVERY_SMS_FIRST
         notes.append(
             f"猎号连续 App {hunt_app_streak} 次"
@@ -218,7 +257,12 @@ def resolve_code_delivery_plan(
     # allow_app_hash 只跟设备平台走：它协商短信正文里的 app hash，不选择投递通道
     allow_app_hash = profile_allows_app_hash(profile)
 
-    if effective == CODE_DELIVERY_SMS_FIRST:
+    if skip_attach:
+        should_request = False
+        attach = False
+        can_escalate = False
+        notes.append("跳过 Push Token 申请（force_skip_push_attach 对照）")
+    elif effective == CODE_DELIVERY_SMS_FIRST:
         should_request = published and not forced_sms
         attach = False
         can_escalate = True

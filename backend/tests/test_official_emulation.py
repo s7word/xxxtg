@@ -98,6 +98,8 @@ class TestOfficialEmulationConfig(unittest.TestCase):
         self.assertFalse(cfg.official_client_emulation)
         self.assertTrue(AppConfigModel(official_client_emulation="true").official_client_emulation)
         self.assertFalse(AppConfigModel(official_client_emulation="off").official_client_emulation)
+        self.assertFalse(AppConfigModel().force_skip_push_attach)
+        self.assertTrue(AppConfigModel(force_skip_push_attach="true").force_skip_push_attach)
 
     def test_credentials_forced_to_official_template(self):
         profile = _android_profile()
@@ -160,6 +162,7 @@ class TestSentCodeTypeHelpers(unittest.TestCase):
             "EMAIL_SETUP_FAILED",
             "EMAIL_CODE_UNAVAILABLE",
             "FIREBASE_SMS_FAILED",
+            "PUSH_TOKEN_MISSING",
         ):
             self.assertEqual(PUSH_REFUND_REASON_MAP[reason], "NOSMS")
 

@@ -335,6 +335,14 @@ class SentCodeAppDeliveryError(Exception):
         self.payment_required = payment_required
 
 
+class RequiredPushTokenMissingError(Exception):
+    """通道计划要求 attach Push，但 Attestation 网关未返回可用 Token。"""
+
+    def __init__(self, message: str, api_id: Optional[int] = None):
+        super().__init__(message)
+        self.api_id = api_id
+
+
 class RegistrationTaskManager:
     """边缘节点引导任务与状态机审计追踪管理器 (Node Provisioning Task Manager)"""
     _instance = None
@@ -1474,6 +1482,41 @@ class RegistrationOrchestrator:
             app_sandbox=False if token else None,
         )
 
+    @staticmethod
+    def _api_hash_for_log(profile: Dict[str, Any]) -> str:
+        raw = str(profile.get("api_hash") or "").strip()
+        if not raw:
+            return "-"
+        return raw
+
+    @classmethod
+    def _published_flood_error_message(
+        cls,
+        profile: Dict[str, Any],
+        push_token: Optional[str],
+        plan,
+    ) -> str:
+        api_id = profile.get("api_id")
+        api_hash = cls._api_hash_for_log(profile)
+        attached = bool(getattr(plan, "attach_push_token", False) and push_token)
+        if attached:
+            return (
+                f"当前 api_id={api_id} api_hash={api_hash} 已被 Telegram 判定为公开泄露 ID，"
+                f"本次已 attach REGHelp Push Token（len={len(push_token)}），"
+                "服务端仍返回 API_ID_PUBLISHED_FLOOD。"
+                "这不是「未申请 Push」：Token 未被接受为合法平台签署凭证"
+                "（网关签发无效、指纹/api_id 不匹配或 Token 过期）。"
+                "请检查 Attestation 网关连通性与设备指纹后重试，或改用自建非泄露 api_id"
+            )
+        return (
+            f"当前 api_id={api_id} api_hash={api_hash} 已被 Telegram 判定为公开泄露 ID，"
+            "在缺少合法 Push Token 的情况下触发 API_ID_PUBLISHED_FLOOD (SendCodeRequest)。"
+            "请在「🔐 凭证库 / 开发者 API」用已有账号申请专属 api_id/api_hash，"
+            "或在「全局参数拓扑」填入自建 custom_api_id / custom_api_hash "
+            "并将 api_credential_mode 设为 auto 或 custom，"
+            "或修复 Attestation 网关连通性以获取合法 Push Token 后重试"
+        )
+
     @classmethod
     def _build_code_settings_from_plan(
         cls,
@@ -2272,7 +2315,25 @@ class RegistrationOrchestrator:
         push_token_obtained_at, delivery_plan_for_refund)。
         """
         plan = delivery_plan
+        if plan.attach_push_token and not push_token:
+            api_id = profile.get("api_id")
+            api_hash = cls._api_hash_for_log(profile)
+            raise RequiredPushTokenMissingError(
+                f"通道计划要求 attach Push Token，但 Attestation 网关未返回可用凭证；"
+                f"拒绝以 api_id={api_id} api_hash={api_hash} 裸发 sendCode"
+                f"（否则会误报成 API_ID_PUBLISHED_FLOOD / 国家结论）",
+                api_id=api_id if isinstance(api_id, int) else None,
+            )
         code_settings = cls._build_code_settings_from_plan(push_token, plan)
+        await manager.append_log(
+            task_id,
+            "sendCode 凭证核对: "
+            f"api_id={profile.get('api_id')} "
+            f"api_hash={cls._api_hash_for_log(profile)} "
+            f"attach_token={'是' if (plan.attach_push_token and push_token) else '否'} "
+            f"push_token={'有' if push_token else '无'} "
+            f"code_settings.token={'有' if code_settings.token else '无'}"
+        )
         await manager.append_log(task_id, "调用 auth.sendCode 触发服务端瞬时握手挑战分发...")
         try:
             sent_code = await cls._send_code_with_recaptcha(
@@ -2309,7 +2370,22 @@ class RegistrationOrchestrator:
                 hunt_enabled=hunt_enabled,
             )
             plan = escalated
+            if plan.attach_push_token and not push_token:
+                api_id = profile.get("api_id")
+                raise RequiredPushTokenMissingError(
+                    f"FLOOD escalate 后仍未拿到 Push Token，拒绝以 api_id={api_id} 再次裸发 sendCode",
+                    api_id=api_id if isinstance(api_id, int) else None,
+                )
             code_settings = cls._build_code_settings_from_plan(push_token, plan)
+            await manager.append_log(
+                task_id,
+                "sendCode 凭证核对: "
+                f"api_id={profile.get('api_id')} "
+                f"api_hash={cls._api_hash_for_log(profile)} "
+                f"attach_token={'是' if (plan.attach_push_token and push_token) else '否'} "
+                f"push_token={'有' if push_token else '无'} "
+                f"code_settings.token={'有' if code_settings.token else '无'}"
+            )
             sent_code = await cls._send_code_with_recaptcha(
                 client=client,
                 phone=phone,
@@ -2632,6 +2708,7 @@ class RegistrationOrchestrator:
         push_provider = None
         push_token_obtained_at = None
         credentials_resolved = False
+        delivery_plan = None
         session_path = None
         meta_path = None
         phone_code_hash = None
@@ -2951,7 +3028,9 @@ class RegistrationOrchestrator:
                         await manager.append_log(
                             task_id,
                             f"[official] 官方客户端模拟生效：api_id={profile['api_id']} "
-                            f"credential_source={profile.get('credential_source')}"
+                            f"api_hash={profile.get('api_hash')} "
+                            f"credential_source={profile.get('credential_source')} "
+                            f"push_token={'有' if push_token else '无'}"
                         )
                     if profile.get("api_hash_corrected"):
                         await manager.append_log(
@@ -3519,14 +3598,7 @@ class RegistrationOrchestrator:
             if check_id: await bypass_svc.report_result(check_id, aid, "BANNED")
             manager.update_task_status(task_id, "failed", error=err)
         except ApiIdPublishedFloodError:
-            err = (
-                f"当前 api_id={profile.get('api_id')} 已被 Telegram 判定为公开泄露 ID，"
-                "在缺少合法 Push Token 的情况下触发 API_ID_PUBLISHED_FLOOD (SendCodeRequest)。"
-                "请在「🔐 凭证库 / 开发者 API」用已有账号申请专属 api_id/api_hash，"
-                "或在「全局参数拓扑」填入自建 custom_api_id / custom_api_hash "
-                "并将 api_credential_mode 设为 auto 或 custom，"
-                "或修复 Attestation 网关连通性以获取合法 Push Token 后重试"
-            )
+            err = cls._published_flood_error_message(profile, push_token, delivery_plan)
             await manager.append_log(task_id, f"❌ {err}")
             await cls._refund_and_revoke_channel(sms_svc, act_id, task_id, manager, "API_ID_PUBLISHED_FLOOD")
             await cls._refund_push_token(
@@ -3534,6 +3606,16 @@ class RegistrationOrchestrator:
                 phone, task_id, manager, "API_ID_PUBLISHED_FLOOD",
             )
             if check_id: await bypass_svc.report_result(check_id, aid, "API_ID_PUBLISHED_FLOOD")
+            manager.update_task_status(task_id, "failed", error=err)
+        except RequiredPushTokenMissingError as ex:
+            err = str(ex)
+            await manager.append_log(task_id, f"❌ {err}")
+            await cls._refund_and_revoke_channel(sms_svc, act_id, task_id, manager, "PUSH_TOKEN_MISSING")
+            await cls._refund_push_token(
+                bypass_svc, push_task_id, push_provider, push_token_obtained_at,
+                phone, task_id, manager, "PUSH_TOKEN_MISSING",
+            )
+            if check_id: await bypass_svc.report_result(check_id, aid, "PUSH_TOKEN_MISSING")
             manager.update_task_status(task_id, "failed", error=err)
         except (PhoneNumberFloodError, FloodWaitError) as e:
             sec = getattr(e, 'seconds', 0)

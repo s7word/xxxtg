@@ -317,10 +317,19 @@ class AppConfigModel(BaseModel):
     official_client_emulation: bool = Field(
         default=False,
         description=(
-            "官方客户端模拟：开启后强制使用模板官方 api_id/api_hash（telegram_android 为 6）"
-            "并以 push_required 每轮申请并 attach REGHelp Push Token；"
+            "官方客户端模拟：开启后强制使用模板官方 api_id/api_hash（telegram_android 为 6，"
+            "telegram_android_public 为 4）并以 push_required 每轮申请并 attach REGHelp Push Token；"
             "sendCode 后处理 SetUpEmailRequired / FirebaseSms / PaymentRequired，"
-            "不再把非 App 通道一律当短信空等。猎号连续 App 强制 SMS 在此模式下关闭"
+            "不再把非 App 通道一律当短信空等。猎号连续 App 强制 SMS 在此模式下关闭；"
+            "api_credential_mode=official 且 api_id 为 4/6 等泄露 ID 时同样始终 attach Push"
+        ),
+    )
+    force_skip_push_attach: bool = Field(
+        default=False,
+        description=(
+            "实验对照：故意不申请、不 attach Push Token。"
+            "用于验证泄露 api_id 无 Token 时必然 API_ID_PUBLISHED_FLOOD。"
+            "生产路径必须保持 false。"
         ),
     )
     hunt_sms_first_after_app_streak: int = Field(
@@ -330,6 +339,8 @@ class AppConfigModel(BaseModel):
         description=(
             "猎号模式下连续 SentCodeTypeApp 达到该次数后，后续轮次强制 SMS 优先"
             "（不申请、不 attach Push Token）。0 表示关闭。"
+            "official_client_emulation / api_credential_mode=official / 泄露 api_id（4/6 等）"
+            "不受此开关影响，始终 attach Push。"
         ),
     )
     hunt_no_number_retries: int = Field(
@@ -555,6 +566,17 @@ class AppConfigModel(BaseModel):
             if token in {"1", "true", "yes", "on", "official"}:
                 return True
             if token in {"0", "false", "no", "off", "standard", ""}:
+                return False
+        return bool(value)
+
+    @field_validator("force_skip_push_attach", mode="before")
+    @classmethod
+    def _normalize_force_skip_push_attach(cls, value):
+        if isinstance(value, str):
+            token = value.strip().lower()
+            if token in {"1", "true", "yes", "on"}:
+                return True
+            if token in {"0", "false", "no", "off", ""}:
                 return False
         return bool(value)
 
