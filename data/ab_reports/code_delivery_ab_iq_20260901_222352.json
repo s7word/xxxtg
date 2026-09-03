@@ -1,0 +1,578 @@
+{
+  "generated_at": "2026-09-01T22:23:52Z",
+  "country": "iq",
+  "sms_provider": "grizzlysms",
+  "max_price": 0.6,
+  "count_per_round": 10,
+  "concurrency": 5,
+  "proxy_mode": "custom_pool",
+  "original_mode": "balanced",
+  "rounds": [
+    {
+      "mode": "balanced",
+      "batch_id": "2268c43a",
+      "timed_out": false,
+      "elapsed_seconds": 315.2,
+      "batch_status": "failed",
+      "summary": {
+        "tasks": 10,
+        "leased_numbers": 14,
+        "blacklist_skips": 1,
+        "sendcode_samples": 13,
+        "sms": 0,
+        "app": 13,
+        "other_type": 0,
+        "tasks_without_sendcode": 2,
+        "no_sendcode_reasons": {
+          "NO_NUMBERS": 2
+        },
+        "next_type_none": 13,
+        "app_next_type_none": 13,
+        "sms_rate": 0.0,
+        "sent_code_types": {
+          "SentCodeTypeApp": 13
+        },
+        "plan_modes": {
+          "sms_first": 13
+        },
+        "attached_token": {
+          "否": 13
+        },
+        "statuses": {
+          "failed": 10
+        },
+        "egress_ips": [],
+        "success": 0
+      },
+      "rows": [
+        {
+          "task_id": "d20a19b5",
+          "status": "failed",
+          "phone": "+9647****329",
+          "leased_numbers": 1,
+          "blacklist_skips": 0,
+          "samples": [
+            {
+              "sent_code_type": "SentCodeTypeApp",
+              "next_type": "None",
+              "timeout": "None",
+              "bucket": "app"
+            }
+          ],
+          "resend_types": [],
+          "plan_modes": [
+            "sms_first"
+          ],
+          "plan_attached_token": [
+            "否"
+          ],
+          "egress_ip": null,
+          "no_sendcode_reason": null,
+          "error": "⚠️ 当前拓扑区域 IQ 在接码平台暂无可分配库存 (noNumber)，建议在控制台切换至库存充沛的区域（如 ID 印尼、KZ 哈萨克斯坦、RU 等）",
+          "log_lines": 64
+        },
+        {
+          "task_id": "140321d7",
+          "status": "failed",
+          "phone": "+9647****461",
+          "leased_numbers": 2,
+          "blacklist_skips": 0,
+          "samples": [
+            {
+              "sent_code_type": "SentCodeTypeApp",
+              "next_type": "None",
+              "timeout": "None",
+              "bucket": "app"
+            },
+            {
+              "sent_code_type": "SentCodeTypeApp",
+              "next_type": "None",
+              "timeout": "None",
+              "bucket": "app"
+            }
+          ],
+          "resend_types": [],
+          "plan_modes": [
+            "sms_first",
+            "sms_first"
+          ],
+          "plan_attached_token": [
+            "否",
+            "否"
+          ],
+          "egress_ip": null,
+          "no_sendcode_reason": null,
+          "error": "HUNT_EXHAUSTED: 取号 2/2 次，扫号 2 个，拉黑/拦截 2 个，最后一次失败原因 SENT_CODE_TYPE_APP",
+          "log_lines": 84
+        },
+        {
+          "task_id": "b0d9776a",
+          "status": "failed",
+          "phone": "+9647****152",
+          "leased_numbers": 2,
+          "blacklist_skips": 0,
+          "samples": [
+            {
+              "sent_code_type": "SentCodeTypeApp",
+              "next_type": "None",
+              "timeout": "None",
+              "bucket": "app"
+            },
+            {
+              "sent_code_type": "SentCodeTypeApp",
+              "next_type": "None",
+              "timeout": "None",
+              "bucket": "app"
+            }
+          ],
+          "resend_types": [],
+          "plan_modes": [
+            "sms_first",
+            "sms_first"
+          ],
+          "plan_attached_token": [
+            "否",
+            "否"
+          ],
+          "egress_ip": null,
+          "no_sendcode_reason": null,
+          "error": "HUNT_EXHAUSTED: 取号 2/2 次，扫号 2 个，拉黑/拦截 2 个，最后一次失败原因 SENT_CODE_TYPE_APP",
+          "log_lines": 96
+        },
+        {
+          "task_id": "b4d90dfd",
+          "status": "failed",
+          "phone": "+9647****973",
+          "leased_numbers": 2,
+          "blacklist_skips": 0,
+          "samples": [
+            {
+              "sent_code_type": "SentCodeTypeApp",
+              "next_type": "None",
+              "timeout": "None",
+              "bucket": "app"
+            },
+            {
+              "sent_code_type": "SentCodeTypeApp",
+              "next_type": "None",
+              "timeout": "None",
+              "bucket": "app"
+            }
+          ],
+          "resend_types": [],
+          "plan_modes": [
+            "sms_first",
+            "sms_first"
+          ],
+          "plan_attached_token": [
+            "否",
+            "否"
+          ],
+          "egress_ip": null,
+          "no_sendcode_reason": null,
+          "error": "HUNT_EXHAUSTED: 取号 2/2 次，扫号 2 个，拉黑/拦截 2 个，最后一次失败原因 SENT_CODE_TYPE_APP",
+          "log_lines": 76
+        },
+        {
+          "task_id": "916433c2",
+          "status": "failed",
+          "phone": "+9647****697",
+          "leased_numbers": 1,
+          "blacklist_skips": 0,
+          "samples": [
+            {
+              "sent_code_type": "SentCodeTypeApp",
+              "next_type": "None",
+              "timeout": "None",
+              "bucket": "app"
+            }
+          ],
+          "resend_types": [],
+          "plan_modes": [
+            "sms_first"
+          ],
+          "plan_attached_token": [
+            "否"
+          ],
+          "egress_ip": null,
+          "no_sendcode_reason": null,
+          "error": "⚠️ 当前拓扑区域 IQ 在接码平台暂无可分配库存 (noNumber)，建议在控制台切换至库存充沛的区域（如 ID 印尼、KZ 哈萨克斯坦、RU 等）",
+          "log_lines": 63
+        },
+        {
+          "task_id": "8043ba10",
+          "status": "failed",
+          "phone": "+9647****026",
+          "leased_numbers": 2,
+          "blacklist_skips": 0,
+          "samples": [
+            {
+              "sent_code_type": "SentCodeTypeApp",
+              "next_type": "None",
+              "timeout": "None",
+              "bucket": "app"
+            },
+            {
+              "sent_code_type": "SentCodeTypeApp",
+              "next_type": "None",
+              "timeout": "None",
+              "bucket": "app"
+            }
+          ],
+          "resend_types": [],
+          "plan_modes": [
+            "sms_first",
+            "sms_first"
+          ],
+          "plan_attached_token": [
+            "否",
+            "否"
+          ],
+          "egress_ip": null,
+          "no_sendcode_reason": null,
+          "error": "HUNT_EXHAUSTED: 取号 2/2 次，扫号 2 个，拉黑/拦截 2 个，最后一次失败原因 SENT_CODE_TYPE_APP",
+          "log_lines": 73
+        },
+        {
+          "task_id": "20c6f00a",
+          "status": "failed",
+          "phone": null,
+          "leased_numbers": 0,
+          "blacklist_skips": 0,
+          "samples": [],
+          "resend_types": [],
+          "plan_modes": [],
+          "plan_attached_token": [],
+          "egress_ip": null,
+          "no_sendcode_reason": "NO_NUMBERS",
+          "error": "⚠️ 当前拓扑区域 IQ 在接码平台暂无可分配库存 (noNumber)，建议在控制台切换至库存充沛的区域（如 ID 印尼、KZ 哈萨克斯坦、RU 等）",
+          "log_lines": 38
+        },
+        {
+          "task_id": "7f1d7dfa",
+          "status": "failed",
+          "phone": "+9647****609",
+          "leased_numbers": 2,
+          "blacklist_skips": 0,
+          "samples": [
+            {
+              "sent_code_type": "SentCodeTypeApp",
+              "next_type": "None",
+              "timeout": "None",
+              "bucket": "app"
+            },
+            {
+              "sent_code_type": "SentCodeTypeApp",
+              "next_type": "None",
+              "timeout": "None",
+              "bucket": "app"
+            }
+          ],
+          "resend_types": [],
+          "plan_modes": [
+            "sms_first",
+            "sms_first"
+          ],
+          "plan_attached_token": [
+            "否",
+            "否"
+          ],
+          "egress_ip": null,
+          "no_sendcode_reason": null,
+          "error": "HUNT_EXHAUSTED: 取号 2/2 次，扫号 2 个，拉黑/拦截 2 个，最后一次失败原因 SENT_CODE_TYPE_APP",
+          "log_lines": 88
+        },
+        {
+          "task_id": "a54811ee",
+          "status": "failed",
+          "phone": null,
+          "leased_numbers": 0,
+          "blacklist_skips": 0,
+          "samples": [],
+          "resend_types": [],
+          "plan_modes": [],
+          "plan_attached_token": [],
+          "egress_ip": null,
+          "no_sendcode_reason": "NO_NUMBERS",
+          "error": "⚠️ 当前拓扑区域 IQ 在接码平台暂无可分配库存 (noNumber)，建议在控制台切换至库存充沛的区域（如 ID 印尼、KZ 哈萨克斯坦、RU 等）",
+          "log_lines": 38
+        },
+        {
+          "task_id": "4db7d28c",
+          "status": "failed",
+          "phone": "+9647****338",
+          "leased_numbers": 2,
+          "blacklist_skips": 1,
+          "samples": [
+            {
+              "sent_code_type": "SentCodeTypeApp",
+              "next_type": "None",
+              "timeout": "None",
+              "bucket": "app"
+            }
+          ],
+          "resend_types": [],
+          "plan_modes": [
+            "sms_first"
+          ],
+          "plan_attached_token": [
+            "否"
+          ],
+          "egress_ip": null,
+          "no_sendcode_reason": null,
+          "error": "HUNT_EXHAUSTED: 取号 2/2 次，扫号 2 个，拉黑/拦截 2 个，最后一次失败原因 LOCAL_BANNED_PHONE_CACHE",
+          "log_lines": 68
+        }
+      ]
+    },
+    {
+      "mode": "push_required",
+      "batch_id": "47d003b9",
+      "timed_out": false,
+      "elapsed_seconds": 135.1,
+      "batch_status": "failed",
+      "summary": {
+        "tasks": 10,
+        "leased_numbers": 20,
+        "blacklist_skips": 14,
+        "sendcode_samples": 6,
+        "sms": 0,
+        "app": 6,
+        "other_type": 0,
+        "tasks_without_sendcode": 6,
+        "no_sendcode_reasons": {
+          "LOCAL_BANNED": 6
+        },
+        "next_type_none": 6,
+        "app_next_type_none": 6,
+        "sms_rate": 0.0,
+        "sent_code_types": {
+          "SentCodeTypeApp": 6
+        },
+        "plan_modes": {
+          "push_required": 6
+        },
+        "attached_token": {
+          "是": 6
+        },
+        "statuses": {
+          "failed": 10
+        },
+        "egress_ips": [],
+        "success": 0
+      },
+      "rows": [
+        {
+          "task_id": "19bdc7e0",
+          "status": "failed",
+          "phone": "+9647****752",
+          "leased_numbers": 2,
+          "blacklist_skips": 1,
+          "samples": [
+            {
+              "sent_code_type": "SentCodeTypeApp",
+              "next_type": "None",
+              "timeout": "None",
+              "bucket": "app"
+            }
+          ],
+          "resend_types": [],
+          "plan_modes": [
+            "push_required"
+          ],
+          "plan_attached_token": [
+            "是"
+          ],
+          "egress_ip": null,
+          "no_sendcode_reason": null,
+          "error": "HUNT_EXHAUSTED: 取号 2/2 次，扫号 2 个，拉黑/拦截 2 个，最后一次失败原因 LOCAL_BANNED_PHONE_CACHE",
+          "log_lines": 52
+        },
+        {
+          "task_id": "26a1ce25",
+          "status": "failed",
+          "phone": "+9647****166",
+          "leased_numbers": 2,
+          "blacklist_skips": 2,
+          "samples": [],
+          "resend_types": [],
+          "plan_modes": [],
+          "plan_attached_token": [],
+          "egress_ip": null,
+          "no_sendcode_reason": "LOCAL_BANNED",
+          "error": "HUNT_EXHAUSTED: 取号 2/2 次，扫号 2 个，拉黑/拦截 2 个，最后一次失败原因 LOCAL_BANNED_PHONE_CACHE",
+          "log_lines": 43
+        },
+        {
+          "task_id": "bd8b2bb5",
+          "status": "failed",
+          "phone": "+9647****924",
+          "leased_numbers": 2,
+          "blacklist_skips": 2,
+          "samples": [],
+          "resend_types": [],
+          "plan_modes": [],
+          "plan_attached_token": [],
+          "egress_ip": null,
+          "no_sendcode_reason": "LOCAL_BANNED",
+          "error": "HUNT_EXHAUSTED: 取号 2/2 次，扫号 2 个，拉黑/拦截 2 个，最后一次失败原因 LOCAL_BANNED_PHONE_CACHE",
+          "log_lines": 29
+        },
+        {
+          "task_id": "3caad22b",
+          "status": "failed",
+          "phone": "+9647****797",
+          "leased_numbers": 2,
+          "blacklist_skips": 2,
+          "samples": [],
+          "resend_types": [],
+          "plan_modes": [],
+          "plan_attached_token": [],
+          "egress_ip": null,
+          "no_sendcode_reason": "LOCAL_BANNED",
+          "error": "HUNT_EXHAUSTED: 取号 2/2 次，扫号 2 个，拉黑/拦截 2 个，最后一次失败原因 LOCAL_BANNED_PHONE_CACHE",
+          "log_lines": 35
+        },
+        {
+          "task_id": "f7197718",
+          "status": "failed",
+          "phone": "+9647****934",
+          "leased_numbers": 2,
+          "blacklist_skips": 0,
+          "samples": [
+            {
+              "sent_code_type": "SentCodeTypeApp",
+              "next_type": "None",
+              "timeout": "None",
+              "bucket": "app"
+            },
+            {
+              "sent_code_type": "SentCodeTypeApp",
+              "next_type": "None",
+              "timeout": "None",
+              "bucket": "app"
+            }
+          ],
+          "resend_types": [],
+          "plan_modes": [
+            "push_required",
+            "push_required"
+          ],
+          "plan_attached_token": [
+            "是",
+            "是"
+          ],
+          "egress_ip": null,
+          "no_sendcode_reason": null,
+          "error": "HUNT_EXHAUSTED: 取号 2/2 次，扫号 2 个，拉黑/拦截 2 个，最后一次失败原因 SENT_CODE_TYPE_APP",
+          "log_lines": 80
+        },
+        {
+          "task_id": "7f99ea72",
+          "status": "failed",
+          "phone": "+9647****488",
+          "leased_numbers": 2,
+          "blacklist_skips": 2,
+          "samples": [],
+          "resend_types": [],
+          "plan_modes": [],
+          "plan_attached_token": [],
+          "egress_ip": null,
+          "no_sendcode_reason": "LOCAL_BANNED",
+          "error": "HUNT_EXHAUSTED: 取号 2/2 次，扫号 2 个，拉黑/拦截 2 个，最后一次失败原因 LOCAL_BANNED_PHONE_CACHE",
+          "log_lines": 27
+        },
+        {
+          "task_id": "fd6e230d",
+          "status": "failed",
+          "phone": "+9647****119",
+          "leased_numbers": 2,
+          "blacklist_skips": 1,
+          "samples": [
+            {
+              "sent_code_type": "SentCodeTypeApp",
+              "next_type": "None",
+              "timeout": "None",
+              "bucket": "app"
+            }
+          ],
+          "resend_types": [],
+          "plan_modes": [
+            "push_required"
+          ],
+          "plan_attached_token": [
+            "是"
+          ],
+          "egress_ip": null,
+          "no_sendcode_reason": null,
+          "error": "HUNT_EXHAUSTED: 取号 2/2 次，扫号 2 个，拉黑/拦截 2 个，最后一次失败原因 SENT_CODE_TYPE_APP",
+          "log_lines": 61
+        },
+        {
+          "task_id": "83c1e3ab",
+          "status": "failed",
+          "phone": "+9647****761",
+          "leased_numbers": 2,
+          "blacklist_skips": 2,
+          "samples": [],
+          "resend_types": [],
+          "plan_modes": [],
+          "plan_attached_token": [],
+          "egress_ip": null,
+          "no_sendcode_reason": "LOCAL_BANNED",
+          "error": "HUNT_EXHAUSTED: 取号 2/2 次，扫号 2 个，拉黑/拦截 2 个，最后一次失败原因 LOCAL_BANNED_PHONE_CACHE",
+          "log_lines": 27
+        },
+        {
+          "task_id": "fa89f86f",
+          "status": "failed",
+          "phone": "+9647****537",
+          "leased_numbers": 2,
+          "blacklist_skips": 0,
+          "samples": [
+            {
+              "sent_code_type": "SentCodeTypeApp",
+              "next_type": "None",
+              "timeout": "None",
+              "bucket": "app"
+            },
+            {
+              "sent_code_type": "SentCodeTypeApp",
+              "next_type": "None",
+              "timeout": "None",
+              "bucket": "app"
+            }
+          ],
+          "resend_types": [],
+          "plan_modes": [
+            "push_required",
+            "push_required"
+          ],
+          "plan_attached_token": [
+            "是",
+            "是"
+          ],
+          "egress_ip": null,
+          "no_sendcode_reason": null,
+          "error": "HUNT_EXHAUSTED: 取号 2/2 次，扫号 2 个，拉黑/拦截 2 个，最后一次失败原因 SENT_CODE_TYPE_APP",
+          "log_lines": 72
+        },
+        {
+          "task_id": "4bebada3",
+          "status": "failed",
+          "phone": "+9647****176",
+          "leased_numbers": 2,
+          "blacklist_skips": 2,
+          "samples": [],
+          "resend_types": [],
+          "plan_modes": [],
+          "plan_attached_token": [],
+          "egress_ip": null,
+          "no_sendcode_reason": "LOCAL_BANNED",
+          "error": "HUNT_EXHAUSTED: 取号 2/2 次，扫号 2 个，拉黑/拦截 2 个，最后一次失败原因 LOCAL_BANNED_PHONE_CACHE",
+          "log_lines": 27
+        }
+      ]
+    }
+  ]
+}

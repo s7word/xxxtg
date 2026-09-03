@@ -1,0 +1,724 @@
+{
+  "generated_at": "2026-09-01T22:40:05Z",
+  "country": "co",
+  "sms_provider": "grizzlysms",
+  "max_price": 0.2,
+  "count_per_round": 10,
+  "concurrency": 5,
+  "proxy_mode": "custom_pool",
+  "original_mode": "balanced",
+  "rounds": [
+    {
+      "mode": "balanced",
+      "batch_id": "815affbf",
+      "timed_out": false,
+      "elapsed_seconds": null,
+      "batch_status": "failed",
+      "summary": {
+        "tasks": 10,
+        "leased_numbers": 20,
+        "blacklist_skips": 0,
+        "sendcode_samples": 16,
+        "sms": 0,
+        "app": 16,
+        "other_type": 0,
+        "tasks_without_sendcode": 0,
+        "no_sendcode_reasons": {},
+        "next_type_none": 16,
+        "app_next_type_none": 16,
+        "sms_rate": 0.0,
+        "sent_code_types": {
+          "SentCodeTypeApp": 16
+        },
+        "plan_modes": {
+          "sms_first": 20
+        },
+        "attached_token": {
+          "否": 20
+        },
+        "statuses": {
+          "failed": 10
+        },
+        "egress_ips": [],
+        "success": 0
+      },
+      "rows": [
+        {
+          "task_id": "1c09bc20",
+          "status": "failed",
+          "phone": "+5731****878",
+          "leased_numbers": 2,
+          "blacklist_skips": 0,
+          "samples": [
+            {
+              "sent_code_type": "SentCodeTypeApp",
+              "next_type": "None",
+              "timeout": "None",
+              "bucket": "app"
+            },
+            {
+              "sent_code_type": "SentCodeTypeApp",
+              "next_type": "None",
+              "timeout": "None",
+              "bucket": "app"
+            }
+          ],
+          "resend_types": [],
+          "plan_modes": [
+            "sms_first",
+            "sms_first"
+          ],
+          "plan_attached_token": [
+            "否",
+            "否"
+          ],
+          "egress_ip": null,
+          "no_sendcode_reason": null,
+          "error": "HUNT_EXHAUSTED: 取号 2/2 次，扫号 2 个，拉黑/拦截 2 个，最后一次失败原因 SENT_CODE_TYPE_APP",
+          "log_lines": 62
+        },
+        {
+          "task_id": "28248c9d",
+          "status": "failed",
+          "phone": "+5730****668",
+          "leased_numbers": 2,
+          "blacklist_skips": 0,
+          "samples": [
+            {
+              "sent_code_type": "SentCodeTypeApp",
+              "next_type": "None",
+              "timeout": "None",
+              "bucket": "app"
+            },
+            {
+              "sent_code_type": "SentCodeTypeApp",
+              "next_type": "None",
+              "timeout": "None",
+              "bucket": "app"
+            }
+          ],
+          "resend_types": [],
+          "plan_modes": [
+            "sms_first",
+            "sms_first"
+          ],
+          "plan_attached_token": [
+            "否",
+            "否"
+          ],
+          "egress_ip": null,
+          "no_sendcode_reason": null,
+          "error": "HUNT_EXHAUSTED: 取号 2/2 次，扫号 2 个，拉黑/拦截 2 个，最后一次失败原因 SENT_CODE_TYPE_APP",
+          "log_lines": 62
+        },
+        {
+          "task_id": "f100b785",
+          "status": "failed",
+          "phone": "+5731****416",
+          "leased_numbers": 2,
+          "blacklist_skips": 0,
+          "samples": [
+            {
+              "sent_code_type": "SentCodeTypeApp",
+              "next_type": "None",
+              "timeout": "None",
+              "bucket": "app"
+            },
+            {
+              "sent_code_type": "SentCodeTypeApp",
+              "next_type": "None",
+              "timeout": "None",
+              "bucket": "app"
+            }
+          ],
+          "resend_types": [],
+          "plan_modes": [
+            "sms_first",
+            "sms_first"
+          ],
+          "plan_attached_token": [
+            "否",
+            "否"
+          ],
+          "egress_ip": null,
+          "no_sendcode_reason": null,
+          "error": "HUNT_EXHAUSTED: 取号 2/2 次，扫号 2 个，拉黑/拦截 2 个，最后一次失败原因 SENT_CODE_TYPE_APP",
+          "log_lines": 62
+        },
+        {
+          "task_id": "009936ba",
+          "status": "failed",
+          "phone": "+5731****877",
+          "leased_numbers": 2,
+          "blacklist_skips": 0,
+          "samples": [
+            {
+              "sent_code_type": "SentCodeTypeApp",
+              "next_type": "None",
+              "timeout": "None",
+              "bucket": "app"
+            },
+            {
+              "sent_code_type": "SentCodeTypeApp",
+              "next_type": "None",
+              "timeout": "None",
+              "bucket": "app"
+            }
+          ],
+          "resend_types": [],
+          "plan_modes": [
+            "sms_first",
+            "sms_first"
+          ],
+          "plan_attached_token": [
+            "否",
+            "否"
+          ],
+          "egress_ip": null,
+          "no_sendcode_reason": null,
+          "error": "HUNT_EXHAUSTED: 取号 2/2 次，扫号 2 个，拉黑/拦截 2 个，最后一次失败原因 SENT_CODE_TYPE_APP",
+          "log_lines": 62
+        },
+        {
+          "task_id": "2019a96e",
+          "status": "failed",
+          "phone": "+5730****129",
+          "leased_numbers": 2,
+          "blacklist_skips": 0,
+          "samples": [
+            {
+              "sent_code_type": "SentCodeTypeApp",
+              "next_type": "None",
+              "timeout": "None",
+              "bucket": "app"
+            }
+          ],
+          "resend_types": [],
+          "plan_modes": [
+            "sms_first",
+            "sms_first"
+          ],
+          "plan_attached_token": [
+            "否",
+            "否"
+          ],
+          "egress_ip": null,
+          "no_sendcode_reason": null,
+          "error": "HUNT_EXHAUSTED: 取号 2/2 次，扫号 2 个，拉黑/拦截 2 个，最后一次失败原因 PHONE_NUMBER_BANNED",
+          "log_lines": 59
+        },
+        {
+          "task_id": "019cfd4b",
+          "status": "failed",
+          "phone": "+5730****467",
+          "leased_numbers": 2,
+          "blacklist_skips": 0,
+          "samples": [
+            {
+              "sent_code_type": "SentCodeTypeApp",
+              "next_type": "None",
+              "timeout": "None",
+              "bucket": "app"
+            }
+          ],
+          "resend_types": [],
+          "plan_modes": [
+            "sms_first",
+            "sms_first"
+          ],
+          "plan_attached_token": [
+            "否",
+            "否"
+          ],
+          "egress_ip": null,
+          "no_sendcode_reason": null,
+          "error": "HUNT_EXHAUSTED: 取号 2/2 次，扫号 2 个，拉黑/拦截 2 个，最后一次失败原因 PHONE_NUMBER_BANNED",
+          "log_lines": 59
+        },
+        {
+          "task_id": "d2578f71",
+          "status": "failed",
+          "phone": "+5731****673",
+          "leased_numbers": 2,
+          "blacklist_skips": 0,
+          "samples": [
+            {
+              "sent_code_type": "SentCodeTypeApp",
+              "next_type": "None",
+              "timeout": "None",
+              "bucket": "app"
+            }
+          ],
+          "resend_types": [],
+          "plan_modes": [
+            "sms_first",
+            "sms_first"
+          ],
+          "plan_attached_token": [
+            "否",
+            "否"
+          ],
+          "egress_ip": null,
+          "no_sendcode_reason": null,
+          "error": "HUNT_EXHAUSTED: 取号 2/2 次，扫号 2 个，拉黑/拦截 2 个，最后一次失败原因 SENT_CODE_TYPE_APP",
+          "log_lines": 59
+        },
+        {
+          "task_id": "b6d098a2",
+          "status": "failed",
+          "phone": "+5730****482",
+          "leased_numbers": 2,
+          "blacklist_skips": 0,
+          "samples": [
+            {
+              "sent_code_type": "SentCodeTypeApp",
+              "next_type": "None",
+              "timeout": "None",
+              "bucket": "app"
+            },
+            {
+              "sent_code_type": "SentCodeTypeApp",
+              "next_type": "None",
+              "timeout": "None",
+              "bucket": "app"
+            }
+          ],
+          "resend_types": [],
+          "plan_modes": [
+            "sms_first",
+            "sms_first"
+          ],
+          "plan_attached_token": [
+            "否",
+            "否"
+          ],
+          "egress_ip": null,
+          "no_sendcode_reason": null,
+          "error": "HUNT_EXHAUSTED: 取号 2/2 次，扫号 2 个，拉黑/拦截 2 个，最后一次失败原因 SENT_CODE_TYPE_APP",
+          "log_lines": 62
+        },
+        {
+          "task_id": "2f9a5d6d",
+          "status": "failed",
+          "phone": "+5731****339",
+          "leased_numbers": 2,
+          "blacklist_skips": 0,
+          "samples": [
+            {
+              "sent_code_type": "SentCodeTypeApp",
+              "next_type": "None",
+              "timeout": "None",
+              "bucket": "app"
+            },
+            {
+              "sent_code_type": "SentCodeTypeApp",
+              "next_type": "None",
+              "timeout": "None",
+              "bucket": "app"
+            }
+          ],
+          "resend_types": [],
+          "plan_modes": [
+            "sms_first",
+            "sms_first"
+          ],
+          "plan_attached_token": [
+            "否",
+            "否"
+          ],
+          "egress_ip": null,
+          "no_sendcode_reason": null,
+          "error": "HUNT_EXHAUSTED: 取号 2/2 次，扫号 2 个，拉黑/拦截 2 个，最后一次失败原因 SENT_CODE_TYPE_APP",
+          "log_lines": 62
+        },
+        {
+          "task_id": "b9396e73",
+          "status": "failed",
+          "phone": "+5730****809",
+          "leased_numbers": 2,
+          "blacklist_skips": 0,
+          "samples": [
+            {
+              "sent_code_type": "SentCodeTypeApp",
+              "next_type": "None",
+              "timeout": "None",
+              "bucket": "app"
+            }
+          ],
+          "resend_types": [],
+          "plan_modes": [
+            "sms_first",
+            "sms_first"
+          ],
+          "plan_attached_token": [
+            "否",
+            "否"
+          ],
+          "egress_ip": null,
+          "no_sendcode_reason": null,
+          "error": "HUNT_EXHAUSTED: 取号 2/2 次，扫号 2 个，拉黑/拦截 2 个，最后一次失败原因 PHONE_NUMBER_BANNED",
+          "log_lines": 59
+        }
+      ]
+    },
+    {
+      "mode": "push_required",
+      "batch_id": "73a130f3",
+      "timed_out": false,
+      "elapsed_seconds": 285.1,
+      "batch_status": "failed",
+      "summary": {
+        "tasks": 10,
+        "leased_numbers": 20,
+        "blacklist_skips": 0,
+        "sendcode_samples": 17,
+        "sms": 0,
+        "app": 17,
+        "other_type": 0,
+        "tasks_without_sendcode": 0,
+        "no_sendcode_reasons": {},
+        "next_type_none": 17,
+        "app_next_type_none": 17,
+        "sms_rate": 0.0,
+        "sent_code_types": {
+          "SentCodeTypeApp": 17
+        },
+        "plan_modes": {
+          "push_required": 20
+        },
+        "attached_token": {
+          "是": 20
+        },
+        "statuses": {
+          "failed": 10
+        },
+        "egress_ips": [],
+        "success": 0
+      },
+      "rows": [
+        {
+          "task_id": "dd4cebf2",
+          "status": "failed",
+          "phone": "+5731****554",
+          "leased_numbers": 2,
+          "blacklist_skips": 0,
+          "samples": [
+            {
+              "sent_code_type": "SentCodeTypeApp",
+              "next_type": "None",
+              "timeout": "None",
+              "bucket": "app"
+            },
+            {
+              "sent_code_type": "SentCodeTypeApp",
+              "next_type": "None",
+              "timeout": "None",
+              "bucket": "app"
+            }
+          ],
+          "resend_types": [],
+          "plan_modes": [
+            "push_required",
+            "push_required"
+          ],
+          "plan_attached_token": [
+            "是",
+            "是"
+          ],
+          "egress_ip": null,
+          "no_sendcode_reason": null,
+          "error": "HUNT_EXHAUSTED: 取号 2/2 次，扫号 2 个，拉黑/拦截 2 个，最后一次失败原因 SENT_CODE_TYPE_APP",
+          "log_lines": 74
+        },
+        {
+          "task_id": "e4e0ce96",
+          "status": "failed",
+          "phone": "+5730****246",
+          "leased_numbers": 2,
+          "blacklist_skips": 0,
+          "samples": [
+            {
+              "sent_code_type": "SentCodeTypeApp",
+              "next_type": "None",
+              "timeout": "None",
+              "bucket": "app"
+            },
+            {
+              "sent_code_type": "SentCodeTypeApp",
+              "next_type": "None",
+              "timeout": "None",
+              "bucket": "app"
+            }
+          ],
+          "resend_types": [],
+          "plan_modes": [
+            "push_required",
+            "push_required"
+          ],
+          "plan_attached_token": [
+            "是",
+            "是"
+          ],
+          "egress_ip": null,
+          "no_sendcode_reason": null,
+          "error": "HUNT_EXHAUSTED: 取号 2/2 次，扫号 2 个，拉黑/拦截 2 个，最后一次失败原因 SENT_CODE_TYPE_APP",
+          "log_lines": 74
+        },
+        {
+          "task_id": "ff2cbefd",
+          "status": "failed",
+          "phone": "+5730****362",
+          "leased_numbers": 2,
+          "blacklist_skips": 0,
+          "samples": [
+            {
+              "sent_code_type": "SentCodeTypeApp",
+              "next_type": "None",
+              "timeout": "None",
+              "bucket": "app"
+            }
+          ],
+          "resend_types": [],
+          "plan_modes": [
+            "push_required",
+            "push_required"
+          ],
+          "plan_attached_token": [
+            "是",
+            "是"
+          ],
+          "egress_ip": null,
+          "no_sendcode_reason": null,
+          "error": "HUNT_EXHAUSTED: 取号 2/2 次，扫号 2 个，拉黑/拦截 2 个，最后一次失败原因 PHONE_NUMBER_BANNED",
+          "log_lines": 71
+        },
+        {
+          "task_id": "3f9697c7",
+          "status": "failed",
+          "phone": "+5731****901",
+          "leased_numbers": 2,
+          "blacklist_skips": 0,
+          "samples": [
+            {
+              "sent_code_type": "SentCodeTypeApp",
+              "next_type": "None",
+              "timeout": "None",
+              "bucket": "app"
+            },
+            {
+              "sent_code_type": "SentCodeTypeApp",
+              "next_type": "None",
+              "timeout": "None",
+              "bucket": "app"
+            }
+          ],
+          "resend_types": [],
+          "plan_modes": [
+            "push_required",
+            "push_required"
+          ],
+          "plan_attached_token": [
+            "是",
+            "是"
+          ],
+          "egress_ip": null,
+          "no_sendcode_reason": null,
+          "error": "HUNT_EXHAUSTED: 取号 2/2 次，扫号 2 个，拉黑/拦截 2 个，最后一次失败原因 SENT_CODE_TYPE_APP",
+          "log_lines": 81
+        },
+        {
+          "task_id": "0a4c3678",
+          "status": "failed",
+          "phone": "+5731****232",
+          "leased_numbers": 2,
+          "blacklist_skips": 0,
+          "samples": [
+            {
+              "sent_code_type": "SentCodeTypeApp",
+              "next_type": "None",
+              "timeout": "None",
+              "bucket": "app"
+            }
+          ],
+          "resend_types": [],
+          "plan_modes": [
+            "push_required",
+            "push_required"
+          ],
+          "plan_attached_token": [
+            "是",
+            "是"
+          ],
+          "egress_ip": null,
+          "no_sendcode_reason": null,
+          "error": "HUNT_EXHAUSTED: 取号 2/2 次，扫号 2 个，拉黑/拦截 2 个，最后一次失败原因 PHONE_NUMBER_BANNED",
+          "log_lines": 73
+        },
+        {
+          "task_id": "16cae636",
+          "status": "failed",
+          "phone": "+5731****671",
+          "leased_numbers": 2,
+          "blacklist_skips": 0,
+          "samples": [
+            {
+              "sent_code_type": "SentCodeTypeApp",
+              "next_type": "None",
+              "timeout": "None",
+              "bucket": "app"
+            },
+            {
+              "sent_code_type": "SentCodeTypeApp",
+              "next_type": "None",
+              "timeout": "None",
+              "bucket": "app"
+            }
+          ],
+          "resend_types": [],
+          "plan_modes": [
+            "push_required",
+            "push_required"
+          ],
+          "plan_attached_token": [
+            "是",
+            "是"
+          ],
+          "egress_ip": null,
+          "no_sendcode_reason": null,
+          "error": "HUNT_EXHAUSTED: 取号 2/2 次，扫号 2 个，拉黑/拦截 2 个，最后一次失败原因 SENT_CODE_TYPE_APP",
+          "log_lines": 74
+        },
+        {
+          "task_id": "fab2346e",
+          "status": "failed",
+          "phone": "+5731****450",
+          "leased_numbers": 2,
+          "blacklist_skips": 0,
+          "samples": [
+            {
+              "sent_code_type": "SentCodeTypeApp",
+              "next_type": "None",
+              "timeout": "None",
+              "bucket": "app"
+            },
+            {
+              "sent_code_type": "SentCodeTypeApp",
+              "next_type": "None",
+              "timeout": "None",
+              "bucket": "app"
+            }
+          ],
+          "resend_types": [],
+          "plan_modes": [
+            "push_required",
+            "push_required"
+          ],
+          "plan_attached_token": [
+            "是",
+            "是"
+          ],
+          "egress_ip": null,
+          "no_sendcode_reason": null,
+          "error": "HUNT_EXHAUSTED: 取号 2/2 次，扫号 2 个，拉黑/拦截 2 个，最后一次失败原因 SENT_CODE_TYPE_APP",
+          "log_lines": 75
+        },
+        {
+          "task_id": "9d196e55",
+          "status": "failed",
+          "phone": "+5731****809",
+          "leased_numbers": 2,
+          "blacklist_skips": 0,
+          "samples": [
+            {
+              "sent_code_type": "SentCodeTypeApp",
+              "next_type": "None",
+              "timeout": "None",
+              "bucket": "app"
+            },
+            {
+              "sent_code_type": "SentCodeTypeApp",
+              "next_type": "None",
+              "timeout": "None",
+              "bucket": "app"
+            }
+          ],
+          "resend_types": [],
+          "plan_modes": [
+            "push_required",
+            "push_required"
+          ],
+          "plan_attached_token": [
+            "是",
+            "是"
+          ],
+          "egress_ip": null,
+          "no_sendcode_reason": null,
+          "error": "HUNT_EXHAUSTED: 取号 2/2 次，扫号 2 个，拉黑/拦截 2 个，最后一次失败原因 SENT_CODE_TYPE_APP",
+          "log_lines": 74
+        },
+        {
+          "task_id": "57331d3e",
+          "status": "failed",
+          "phone": "+5730****986",
+          "leased_numbers": 2,
+          "blacklist_skips": 0,
+          "samples": [
+            {
+              "sent_code_type": "SentCodeTypeApp",
+              "next_type": "None",
+              "timeout": "None",
+              "bucket": "app"
+            }
+          ],
+          "resend_types": [],
+          "plan_modes": [
+            "push_required",
+            "push_required"
+          ],
+          "plan_attached_token": [
+            "是",
+            "是"
+          ],
+          "egress_ip": null,
+          "no_sendcode_reason": null,
+          "error": "HUNT_EXHAUSTED: 取号 2/2 次，扫号 2 个，拉黑/拦截 2 个，最后一次失败原因 SENT_CODE_TYPE_APP",
+          "log_lines": 71
+        },
+        {
+          "task_id": "81c01d88",
+          "status": "failed",
+          "phone": "+5731****921",
+          "leased_numbers": 2,
+          "blacklist_skips": 0,
+          "samples": [
+            {
+              "sent_code_type": "SentCodeTypeApp",
+              "next_type": "None",
+              "timeout": "None",
+              "bucket": "app"
+            },
+            {
+              "sent_code_type": "SentCodeTypeApp",
+              "next_type": "None",
+              "timeout": "None",
+              "bucket": "app"
+            }
+          ],
+          "resend_types": [],
+          "plan_modes": [
+            "push_required",
+            "push_required"
+          ],
+          "plan_attached_token": [
+            "是",
+            "是"
+          ],
+          "egress_ip": null,
+          "no_sendcode_reason": null,
+          "error": "HUNT_EXHAUSTED: 取号 2/2 次，扫号 2 个，拉黑/拦截 2 个，最后一次失败原因 SENT_CODE_TYPE_APP",
+          "log_lines": 74
+        }
+      ]
+    }
+  ]
+}
