@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import logging
 import re
+import threading
 import time
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 import httpx
@@ -124,6 +125,8 @@ STATIC_INDIA_USERNAME = STATIC_REGIONAL_POOLS["in"]["username"]
 STATIC_INDIA_PASSWORD = STATIC_REGIONAL_POOLS["in"]["password"]
 STATIC_INDIA_PORTS = STATIC_REGIONAL_POOLS["in"]["ports"]
 IP_PROBE_ENDPOINTS = (
+    "https://api.ip.sb/geoip",
+    "https://api.ip.sb/ip",
     "https://ipapi.co/json/",
     "https://ipinfo.io/json",
 )
@@ -294,7 +297,20 @@ def country_alpha3(query: Optional[str]) -> Optional[str]:
 
 
 def _parse_ip_probe_payload(data: Any) -> Optional[Dict[str, Any]]:
-    """兼容 ipapi.co / ipinfo.io 等出口探测响应。"""
+    """兼容 api.ip.sb / ipapi.co / ipinfo.io 等出口探测响应（JSON 或纯文本 IP）。"""
+    if isinstance(data, str):
+        token = data.strip()
+        # 纯文本 IP（如 https://api.ip.sb/ip）
+        if token and " " not in token and 3 <= len(token) <= 45:
+            return {
+                "ip": token,
+                "country": None,
+                "country_code": None,
+                "city": None,
+                "region": None,
+                "org": None,
+            }
+        return None
     if not isinstance(data, dict):
         return None
     ip = data.get("ip") or data.get("query")
@@ -315,6 +331,48 @@ def _parse_ip_probe_payload(data: Any) -> Optional[Dict[str, Any]]:
         "region": data.get("region") or data.get("region_name"),
         "org": data.get("org") or data.get("org_name") or data.get("isp"),
     }
+
+
+class EgressIpRegistry:
+    """进程级真实出口 IP 占用账本：发现多任务复用同一公网 IP 时告警。
+
+    槽位 1:1 只按 host:port:user 互斥，住宅网关背后的真实 egress 仍可能撞车。
+    """
+
+    _lock = threading.Lock()
+    _holders: Dict[str, Set[str]] = {}
+
+    @classmethod
+    def reset_for_tests(cls) -> None:
+        with cls._lock:
+            cls._holders = {}
+
+    @classmethod
+    def note(cls, egress_ip: Optional[str], task_id: str) -> List[str]:
+        """登记 task 正在使用该出口 IP，返回其它仍占用同一 IP 的 task_id。"""
+        ip = str(egress_ip or "").strip()
+        tid = str(task_id or "").strip()
+        if not ip or not tid:
+            return []
+        with cls._lock:
+            holders = cls._holders.setdefault(ip, set())
+            others = sorted(holders - {tid})
+            holders.add(tid)
+            return others
+
+    @classmethod
+    def release(cls, egress_ip: Optional[str], task_id: str) -> None:
+        ip = str(egress_ip or "").strip()
+        tid = str(task_id or "").strip()
+        if not ip or not tid:
+            return
+        with cls._lock:
+            holders = cls._holders.get(ip)
+            if not holders:
+                return
+            holders.discard(tid)
+            if not holders:
+                cls._holders.pop(ip, None)
 
 
 def _as_int(value: Any, default: Optional[int] = None) -> Optional[int]:
@@ -1487,13 +1545,16 @@ class ProxySellerService:
                     probe_started = time.perf_counter()
                     try:
                         ip_resp = await client.get(endpoint)
-                        ip_data = ip_resp.json()
+                        try:
+                            ip_data: Any = ip_resp.json()
+                        except Exception:
+                            ip_data = (ip_resp.text or "").strip()
                     except Exception as exc:
                         last_error = f"{endpoint}: {exc}"
                         continue
                     parsed = _parse_ip_probe_payload(ip_data)
                     if not parsed:
-                        last_error = f"出口探测响应异常: {ip_data}"
+                        last_error = f"出口探测响应异常: {ip_data!r}"
                         continue
                     latency_ms = round((time.perf_counter() - probe_started) * 1000, 1)
                     parsed.update({

@@ -1725,6 +1725,100 @@ class RegistrationOrchestrator:
             await ps_svc.close()
 
     @classmethod
+    async def _probe_and_log_live_egress(
+        cls,
+        proxy: Optional[Dict[str, Any]],
+        task_id: str,
+        manager: RegistrationTaskManager,
+        *,
+        previous_egress_ip: Optional[str] = None,
+    ) -> Tuple[Optional[str], Dict[str, Any]]:
+        """发码前经当前代理实测公网出口 IP（api.ip.sb / ipapi / ipinfo）。
+
+        槽位 1:1 只锁 host:port，住宅网关背后真实 egress 仍可能多任务撞车；
+        这里把实测 IP 写入任务日志，并在进程内登记复用告警。
+        返回 (egress_ip, probe_result)；探测失败不阻断发码，只打警告。
+        """
+        from backend.app.services.proxyseller import (
+            EgressIpRegistry,
+            ProxySellerService,
+            format_proxy_endpoint,
+            proxy_identity,
+        )
+
+        if previous_egress_ip:
+            EgressIpRegistry.release(previous_egress_ip, task_id)
+
+        if not proxy or not proxy.get("addr") or not proxy.get("port"):
+            await manager.append_log(
+                task_id,
+                "⚠️ [出口探测] 当前无有效代理，拒绝裸连 Telegram（会暴露服务器公网 IP）",
+            )
+            return None, {"success": False, "error": "missing_proxy"}
+
+        endpoint = format_proxy_endpoint(proxy)
+        ident = proxy_identity(proxy)
+        cached = proxy.get("egress_ip") or proxy.get("ip")
+        await manager.append_log(
+            task_id,
+            f"[出口探测] 经代理访问 IP 查询站以确认真实出口 "
+            f"(中继={endpoint} identity={ident}"
+            + (f" 缓存标注={cached}" if cached else "")
+            + ")...",
+        )
+        try:
+            probe = await ProxySellerService.test_proxy_connectivity(proxy)
+        except Exception as exc:
+            probe = {"success": False, "error": str(exc)}
+
+        if not probe.get("success"):
+            await manager.append_log(
+                task_id,
+                f"⚠️ [出口探测] 失败: {probe.get('error') or 'unknown'}；"
+                "仍将尝试经该代理建立 MTProto（请核对代理是否可出网）",
+            )
+            return None, probe
+
+        egress_ip = str(probe.get("ip") or "").strip() or None
+        country = probe.get("country_code") or probe.get("country") or "-"
+        city = probe.get("city") or "-"
+        org = probe.get("org") or "-"
+        latency = probe.get("latency_ms")
+        probe_url = probe.get("probe_url") or "-"
+        await manager.append_log(
+            task_id,
+            f"[出口探测] 真实出口 IP={egress_ip or '-'} 国家={country} "
+            f"城市={city} org={org} 延迟={latency if latency is not None else '-'}ms "
+            f"来源={probe_url}",
+        )
+        if cached and egress_ip and str(cached).strip() != egress_ip:
+            await manager.append_log(
+                task_id,
+                f"⚠️ [出口探测] 缓存标注 IP={cached} 与实测 {egress_ip} 不一致"
+                "（住宅出口可能已轮换，或以网关 IP 误标）",
+            )
+
+        others = EgressIpRegistry.note(egress_ip, task_id) if egress_ip else []
+        if others:
+            shown = ", ".join(others[:6])
+            more = f" 等{len(others)}个" if len(others) > 6 else ""
+            await manager.append_log(
+                task_id,
+                f"⚠️ [出口复用] 公网 IP {egress_ip} 同时被其它任务占用: {shown}{more}。"
+                "槽位按 host:port 隔离，但 Telegram 侧看到的是同一 egress —— "
+                "这可能触发关联风控 / API_ID_PUBLISHED_FLOOD",
+            )
+
+        # 回写到代理字典，供后续日志 / 对齐检查使用
+        if egress_ip:
+            proxy["egress_ip"] = egress_ip
+            if probe.get("country_code"):
+                proxy["egress_country_code"] = probe.get("country_code")
+            if probe.get("country"):
+                proxy["egress_country"] = probe.get("country")
+        return egress_ip, probe
+
+    @classmethod
     async def _connect_mtproto(
         cls,
         client: TelegramClient,
@@ -3076,6 +3170,7 @@ class RegistrationOrchestrator:
         push_task_id = None
         push_provider = None
         push_token_obtained_at = None
+        live_egress_ip = None
         credentials_resolved = False
         session_path = None
         meta_path = None
@@ -3506,20 +3601,38 @@ class RegistrationOrchestrator:
                 session_path = SESSIONS_DIR / f"{session_filename}.session"
                 meta_path = SESSIONS_DIR / f"{session_filename}.json"
 
-                proxy_dict = {
-                    "proxy_type": active_proxy.get("proxy_type", "socks5"),
-                    "addr": active_proxy.get("addr", "127.0.0.1"),
-                    "port": int(active_proxy.get("port", 10808)),
-                    "username": active_proxy.get("username"),
-                    "password": active_proxy.get("password")
-                }
+                live_egress_ip, _egress_probe = await cls._probe_and_log_live_egress(
+                    active_proxy,
+                    task_id,
+                    manager,
+                    previous_egress_ip=live_egress_ip,
+                )
+                from backend.app.services.telegram_apps import to_telethon_proxy
+                proxy_dict = to_telethon_proxy(active_proxy)
+                if not proxy_dict:
+                    await manager.append_log(
+                        task_id,
+                        "❌ [出口探测] 代理无效，中止 MTProto（禁止服务器公网直连 Telegram）",
+                    )
+                    last_failure_reason = "PROXY_MISSING"
+                    if not hunt_enabled:
+                        manager.update_task_status(
+                            task_id, "failed", error="PROXY_MISSING: 无有效代理，拒绝直连"
+                        )
+                        return
+                    break
 
-                await manager.append_log(task_id, f"建立 MTProto 协议传输通道 (中继节点: {proxy_dict['addr']}:{proxy_dict['port']})...")
+                await manager.append_log(
+                    task_id,
+                    f"建立 MTProto 协议传输通道 (中继节点: {proxy_dict['addr']}:{proxy_dict['port']}"
+                    + (f", 实测出口={live_egress_ip}" if live_egress_ip else "")
+                    + ", rdns=on)...",
+                )
                 client = TelegramClient(
                     session=str(session_path),
                     api_id=profile["api_id"],
                     api_hash=profile["api_hash"],
-                    proxy=proxy_dict if proxy_dict["addr"] else None,
+                    proxy=proxy_dict,
                     device_model=profile["device_model"],
                     system_version=profile["system_version"],
                     app_version=profile["app_version"],
@@ -4262,6 +4375,11 @@ class RegistrationOrchestrator:
             # 任务终结（成功 / 失败 / 取消 / 异常）必须归还 Push Token 租约，
             # 否则这枚 Token 要等到 LEASE_TTL_SECONDS 兜底过期才能被别的任务复用
             cls._release_push_token_leases(task_id)
+            try:
+                from backend.app.services.proxyseller import EgressIpRegistry
+                EgressIpRegistry.release(live_egress_ip, task_id)
+            except Exception:
+                pass
             await cls._release_registration_resources(client, sms_svc, bypass_svc)
 
     @classmethod
