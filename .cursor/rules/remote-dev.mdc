@@ -1,0 +1,20 @@
+---
+description: 远程开发：当前模型自己完成，禁止委派 Task
+alwaysApply: true
+---
+
+# 远程开发工作方式
+
+本仓库当前在自有服务器远程开发：`187.127.218.157`，工作区 `/opt/xxxtg`。
+
+- 自己读代码、改代码、跑测试、重建 Docker、在浏览器或 curl 验证。
+- **禁止**用 `Task` 委派其他模型 / 子代理做实现或探索。
+- 即使用户需求复杂，也由当前对话里的模型直接完成。
+- 与用户用简体中文沟通；不要把密钥写入 Git。
+- 未要求时不要 commit / push。
+- 这台机器的 Remote Control worker 名是 `xxxtg@srv1884560`；手机/Web 遥控走该 worker，不要再派 Task。
+
+```text
+❌ BAD: 复杂实现交给 Task(subagent) / 其他模型
+✅ GOOD: 当前会话里直接改文件、跑命令、汇报结果
+```
