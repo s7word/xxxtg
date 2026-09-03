@@ -3372,34 +3372,48 @@ class RegistrationOrchestrator:
                         continue
                     return
 
-                # 2. 端点信誉预检
+                # 2. AntiSafety 号码历史过滤（与 Push 走 REGHelp/AntiSafety 无关；无 Key 时会打日志跳过）
                 await manager.append_log(task_id, "正在对通信句柄进行历史安全状态审计...")
-                check_data = await bypass_svc.check_phone_history(phone, aid)
+                check_data = await bypass_svc.check_phone_history(
+                    phone, aid, log_callback=lambda msg: manager.append_log(task_id, msg)
+                )
                 if check_data:
                     check_id = check_data.get("id")
-                    if "BANNED" in check_data.get("statuses", []):
-                        await manager.append_log(task_id, "检测到该通信句柄存在服务端历史异常记录，触发主动退避与信道撤销！")
+                    reject_hits = bypass_svc.matched_phone_filter_statuses(
+                        check_data,
+                        bypass_svc.phone_filter_reject_statuses(),
+                    )
+                    if reject_hits:
+                        hit_label = "/".join(reject_hits)
+                        await manager.append_log(
+                            task_id,
+                            f"AntiSafety 号码过滤命中 [{hit_label}]，触发主动退避与信道撤销！",
+                        )
                         BannedPhonesCache.remember(
                             phone,
-                            reason="PHONE_PREAUDIT_BANNED",
+                            reason=f"PHONE_PREAUDIT_{reject_hits[0]}",
                             source=SOURCE_ANTISAFETY,
                             country=target_country,
                         )
-                        await cls._refund_and_revoke_channel(sms_svc, act_id, task_id, manager, "PHONE_PREAUDIT_BANNED")
+                        await cls._refund_and_revoke_channel(
+                            sms_svc, act_id, task_id, manager, f"PHONE_PREAUDIT_{reject_hits[0]}"
+                        )
                         await bypass_svc.report_result(check_id, aid, "REJECTED")
                         act_id = None
                         check_id = None
                         if hunt_enabled:
                             hunt_blacklisted += 1
                             hunt_app_streak = 0
-                            last_failure_reason = "PHONE_PREAUDIT_BANNED"
+                            last_failure_reason = f"PHONE_PREAUDIT_{reject_hits[0]}"
                             await manager.append_log(
                                 task_id,
-                                f"[猎号] 预审封禁 {phone}，换号继续（Push Token 保持复用）"
+                                f"[猎号] 预审过滤 {phone} [{hit_label}]，换号继续（Push Token 保持复用）"
                             )
                             manager.update_task_status(task_id, "running")
                             continue
-                        manager.update_task_status(task_id, "failed", error="Endpoint handle pre-audit rejected")
+                        manager.update_task_status(
+                            task_id, "failed", error=f"AntiSafety phone filter rejected: {hit_label}"
+                        )
                         return
 
                 # 3. 验证码投递通道策略 + Attestation Push（按 plan 决定是否申请）

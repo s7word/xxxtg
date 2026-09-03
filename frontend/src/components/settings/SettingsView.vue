@@ -306,8 +306,17 @@
           <input type="checkbox" v-model="config.antisafety_enabled" />
           启用 AntiSafety 作为 Attestation / Push 凭证提供源
         </label>
+        <label class="ce-check">
+          <input type="checkbox" v-model="config.antisafety_phone_filter_enabled" />
+          启用 AntiSafety 号码历史过滤（默认开；与 Push 主备无关，REGHelp 无对等接口）
+        </label>
+        <p class="ce-tiny ce-muted">
+          Push 即使走 <code>reghelp_primary/only</code>，只要填写了下方 AntiSafety API Key，
+          租号后仍会查询 reporting <code>/check</code>，按
+          <code>BANNED / ALREADY_REGISTERED / FLOOD_WAIT</code> 退号换号。
+        </p>
         <div>
-          <label class="ce-label">Attestation API Key</label>
+          <label class="ce-label">Attestation API Key（Push 备选 + 号码过滤共用）</label>
           <input v-model="config.antisafety_api_key" type="password" class="ce-input mono" />
         </div>
         <div>
