@@ -575,8 +575,8 @@
           <code>android_x</code> + 号国 tz）。处理 SetUpEmailRequired（REGHelp Email）、
           FirebaseSms（Play Integrity）、PaymentRequired（标记需官方 App 内购并快退）。
           猎号连续 App 强制 SMS 在此模式下关闭。
-          Push attach 仍把 Android FCM 塞进文档标为 iOS 的 <code>CodeSettings.token</code>
-          （错槽兼容，<strong>不是</strong> iOS 客户端）。
+          Push attach 走农场常规路径：Android FCM → <code>CodeSettings.token(fcm)</code>
+          （不是 APNS，也不表示切换平台客户端）。
           <strong>vault 严格对齐开启时会钉死 api_id=4</strong>，不会漂到 6（Payment 路径）。
         </p>
         <label class="ce-check">

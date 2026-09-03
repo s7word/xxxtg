@@ -3,11 +3,10 @@
 CodeSettings 各字段的官方语义（core.telegram.org/constructor/codeSettings），
 决定了哪些开关真的能影响 SMS 概率：
 
-- ``token`` / ``app_sandbox``：官方文档写的是 **iOS 官方客户端 Firebase/APNS 设备令牌**。
-  本仓历史做法是把 REGHelp 下发的 **Android FCM** 塞进这个「文档标成 iOS」的槽
-  （``android_fcm_in_ios_doc_slot``），试图让泄露 api_id=4/6 过 published 闸。
-  **这是错槽用法，不是在跑 iOS 客户端**；与 Android 指纹（lang_pack=android）并存时
-  属于自知矛盾的兼容路径，日志必须标明，不能再写成「APNS 收码机制」。
+- ``token`` / ``app_sandbox``：农场/Expert 路径把 REGHelp **Android FCM** 写入
+  ``CodeSettings.token``（日志槽位 ``CodeSettings.token(fcm)``），用于泄露 api_id=4/6
+  过 published 闸。这是本仓预期协议字段用法，**不是 APNS，也不表示切换平台客户端**。
+  运行日志禁止再写成「错槽/iOS 客户端」以免误导后续排障与 AI 改码。
 - ``allow_app_hash``：「required in newer versions of android, to use the android SMS
   receiver APIs」。它描述的是**短信正文里要不要附带 app hash**，属于 SMS 内容协商，
   不参与「App 还是 SMS」的通道选择。官方 Android 客户端在有 Google Play 服务时恒为
@@ -260,7 +259,7 @@ def resolve_code_delivery_plan(
     if strict:
         notes.append(
             "严格设备对齐：非 emu 强制 attach Push（CodeSettings.token / FCM）；"
-            "文档槽位为 iOS，实际 token 为 Android FCM（错槽兼容）"
+            "槽位=CodeSettings.token(fcm)，Android FCM 农场常规路径"
         )
     if (
         expect_push

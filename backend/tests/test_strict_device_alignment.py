@@ -308,7 +308,7 @@ class TestVaultAttestationMetadata(unittest.TestCase):
 
 
 class TestPushSlotConflicts(unittest.TestCase):
-    def test_android_fcm_in_ios_slot_is_flagged(self):
+    def test_android_fcm_in_codesettings_token_is_not_conflict(self):
         conflicts = detect_push_slot_conflicts(
             {
                 "app_device": "Android",
@@ -319,8 +319,12 @@ class TestPushSlotConflicts(unittest.TestCase):
             "dGVzdA:APA91" + ("x" * 140),
             attached=True,
         )
-        self.assertTrue(any("错槽" in c for c in conflicts))
-        self.assertFalse(any(c.startswith("类型冲突") for c in conflicts))
+        # Android FCM → CodeSettings.token 是农场常规路径，不应再报「错槽/iOS」
+        self.assertEqual(conflicts, [])
+        from backend.app.services.device_alignment import describe_push_slot
+        label = describe_push_slot(True)
+        self.assertEqual(label, "CodeSettings.token(fcm)")
+        self.assertNotIn("ios", label.lower())
 
     def test_android_with_apns_hex_is_hard_conflict(self):
         conflicts = detect_push_slot_conflicts(

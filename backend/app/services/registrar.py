@@ -1843,8 +1843,9 @@ class RegistrationOrchestrator:
         token 传 str 即可，Telethon 会走 serialize_bytes。
 
         SMS 优先策略靠 attach_push_token=False 生效。
-        token/app_sandbox：官方文档标为 iOS Firebase/APNS 槽；本仓历史兼容路径是把
-        Android FCM 塞进去（错槽），不是 APNS，也不是在跑 iOS 客户端。
+        token/app_sandbox：本仓农场路径与 Expert 一致——把 Android FCM 写入
+        CodeSettings.token（push_slot=CodeSettings.token(fcm)）。这是预期协议字段用法，
+        不是 APNS，也不表示切换成其它平台客户端。
         allow_app_hash 只协商短信正文里的 Android SMS Retriever hash，应跟随设备平台
         而非投递模式。
         allow_firebase / unknown_number 由配置注入，对应官方 Android 的 Firebase
@@ -1886,6 +1887,44 @@ class RegistrationOrchestrator:
         )
 
     @classmethod
+    def _mask_phone_for_protocol_log(cls, phone: str) -> str:
+        digits = "".join(ch for ch in str(phone or "") if ch.isdigit())
+        if len(digits) <= 6:
+            return digits or "-"
+        return f"+{digits[:3]}…{digits[-2:]}"
+
+    @classmethod
+    def _format_code_settings_for_protocol_log(cls, code_settings, push_token: Optional[str]) -> str:
+        token = getattr(code_settings, "token", None)
+        info = classify_push_token(push_token if token else None)
+        token_part = (
+            f"token=有(kind={info['kind']},len={info['length']})"
+            if token
+            else "token=无"
+        )
+        return (
+            f"allow_flashcall={bool(getattr(code_settings, 'allow_flashcall', None))} "
+            f"current_number={bool(getattr(code_settings, 'current_number', None))} "
+            f"allow_app_hash={bool(getattr(code_settings, 'allow_app_hash', None))} "
+            f"allow_missed_call={bool(getattr(code_settings, 'allow_missed_call', None))} "
+            f"allow_firebase={bool(getattr(code_settings, 'allow_firebase', None))} "
+            f"unknown_number={bool(getattr(code_settings, 'unknown_number', None))} "
+            f"{token_part} "
+            f"app_sandbox={getattr(code_settings, 'app_sandbox', None)}"
+        )
+
+    @classmethod
+    def _format_rpc_error_for_protocol_log(cls, exc: BaseException) -> str:
+        code = getattr(exc, "code", None)
+        message = getattr(exc, "message", None) or type(exc).__name__
+        raw = str(exc).replace("\n", " ").strip()
+        if len(raw) > 240:
+            raw = raw[:240] + "…"
+        if code is not None:
+            return f"rpc_code={code} rpc_message={message} detail={raw}"
+        return f"exc={type(exc).__name__} detail={raw}"
+
+    @classmethod
     async def _append_send_code_credential_log(
         cls,
         task_id: str,
@@ -1897,7 +1936,7 @@ class RegistrationOrchestrator:
     ) -> None:
         await manager.append_log(
             task_id,
-            "sendCode 凭证核对: "
+            "[协议] auth.sendCode 本地凭证快照: "
             f"api_id={profile.get('api_id')} "
             f"api_hash={cls._api_hash_for_log(profile)} "
             f"attach_token={'是' if (plan.attach_push_token and push_token) else '否'} "
@@ -1909,6 +1948,7 @@ class RegistrationOrchestrator:
             f"missed={'是' if getattr(code_settings, 'allow_missed_call', None) else '否'} "
             f"{cls._log_push_token_slot(push_token, plan)}"
         )
+
 
     @classmethod
     def _build_code_settings_from_plan(
@@ -2302,7 +2342,7 @@ class RegistrationOrchestrator:
         delivery_name = cls._sent_code_type_name(sent_code)
         await manager.append_log(
             task_id,
-            f"挑战已由服务端下发! 分发通道类型: {delivery_name} "
+            f"[协议] auth.sendCode 成功后的通道解析: type={delivery_name} "
             f"({cls._describe_sent_code(sent_code)}) [模式={emulation_label}]"
         )
 
@@ -2493,25 +2533,48 @@ class RegistrationOrchestrator:
         active_proxy: Optional[Dict[str, Any]],
         task_id: str,
         manager: RegistrationTaskManager,
+        push_token: Optional[str] = None,
     ):
-        """发送 auth.sendCode；若触发 RECAPTCHA_CHECK_* 则自动解题并 invokeWithReCaptcha 重发。"""
+        """发送 auth.sendCode；若触发 RECAPTCHA_CHECK_* 则自动解题并 invokeWithReCaptcha 重发。
+
+        任务日志会记录：协议阶段说明、发出字段摘要、官方成功构造或 RPC 错误原文。
+        """
         send_req = functions.auth.SendCodeRequest(
             phone_number=phone,
             api_id=profile["api_id"],
             api_hash=profile["api_hash"],
             settings=code_settings,
         )
+        await manager.append_log(
+            task_id,
+            "[协议] 阶段=auth.sendCode：向 Telegram 申请注册/登录验证码投递。"
+            "本步只发 MTProto 请求，尚未进入等码/填码。",
+        )
+        await manager.append_log(
+            task_id,
+            "[协议] auth.sendCode 发送 → "
+            f"phone={cls._mask_phone_for_protocol_log(phone)} "
+            f"api_id={profile.get('api_id')} "
+            f"api_hash={cls._api_hash_for_log(profile)} "
+            f"settings={{ {cls._format_code_settings_for_protocol_log(code_settings, push_token)} }}",
+        )
         try:
-            return await client(send_req)
+            sent_code = await client(send_req)
         except Exception as send_err:
             parsed = parse_recaptcha_check(send_err)
             if not parsed:
+                await manager.append_log(
+                    task_id,
+                    "[协议] auth.sendCode 官方错误 ← "
+                    f"{cls._format_rpc_error_for_protocol_log(send_err)}",
+                )
                 raise
             action, site_key = parsed
             await manager.append_log(
                 task_id,
-                f"检测到 Telegram RECAPTCHA_CHECK 人机挑战 "
-                f"(action={action}, site_key={site_key})，正在通过 REGHelp RecaptchaMobile 自动解题..."
+                "[协议] auth.sendCode 官方要求人机验证 ← "
+                f"RECAPTCHA_CHECK action={action} site_key={site_key}；"
+                "将走 REGHelp RecaptchaMobile 解题后 invokeWithReCaptcha 重发",
             )
             try:
                 token = await bypass_svc.get_recaptcha_mobile_token(
@@ -2537,15 +2600,20 @@ class RegistrationOrchestrator:
 
             await manager.append_log(
                 task_id,
-                "已获得 Recaptcha token，通过 invokeWithReCaptcha 重发 auth.sendCode..."
+                "[协议] 已获 Recaptcha token，重发 → invokeWithReCaptcha(auth.sendCode)",
             )
             try:
-                return await client(functions.InvokeWithReCaptchaRequest(
+                sent_code = await client(functions.InvokeWithReCaptchaRequest(
                     token=token,
                     query=send_req,
                 ))
             except Exception as retry_err:
                 retry_parsed = parse_recaptcha_check(retry_err)
+                await manager.append_log(
+                    task_id,
+                    "[协议] invokeWithReCaptcha(auth.sendCode) 官方错误 ← "
+                    f"{cls._format_rpc_error_for_protocol_log(retry_err)}",
+                )
                 detail = str(retry_err)
                 if retry_parsed:
                     detail = f"{detail} (仍为 RECAPTCHA_CHECK_{retry_parsed[0]}__{retry_parsed[1]})"
@@ -2554,6 +2622,16 @@ class RegistrationOrchestrator:
                     action=action,
                     site_key=site_key,
                 ) from retry_err
+
+        phone_code_hash = getattr(sent_code, "phone_code_hash", None)
+        hash_note = "有" if phone_code_hash else "无"
+        await manager.append_log(
+            task_id,
+            "[协议] auth.sendCode 官方回复 ← "
+            f"{cls._describe_sent_code(sent_code)} phone_code_hash={hash_note} "
+            f"ctor={type(sent_code).__name__}",
+        )
+        return sent_code
 
     @classmethod
     async def _fetch_push_token_if_needed(
@@ -2671,13 +2749,10 @@ class RegistrationOrchestrator:
             conflicts = detect_push_slot_conflicts(
                 profile, push_token, attached=True
             )
+            # 仅真实类型交叉写入任务日志；Android FCM→CodeSettings.token 是常规路径，不再告警。
             for item in conflicts:
-                await manager.append_log(task_id, f"⚠️ [指纹/槽位冲突] {item}")
-            # 已知错槽（Android FCM → iOS 文档槽）只告警；真正的类型交叉直接拒绝
-            hard = [
-                c for c in conflicts
-                if c.startswith("类型冲突") or (info.get("suspicious") and info.get("kind") == "apns_hex" and "Android" in ",".join(conflicts))
-            ]
+                await manager.append_log(task_id, f"⚠️ [Push 类型冲突] {item}")
+            hard = [c for c in conflicts if c.startswith("类型冲突")]
             if hard:
                 raise RequiredPushTokenMissingError(
                     "；".join(hard) + "；拒绝塞进 CodeSettings.token",
@@ -2689,11 +2764,15 @@ class RegistrationOrchestrator:
                     "拒绝塞进 CodeSettings.token",
                     api_id=profile.get("api_id") if isinstance(profile.get("api_id"), int) else None,
                 )
+            await manager.append_log(
+                task_id,
+                "[协议] Push attach 模式=Android FCM → CodeSettings.token "
+                f"({cls._log_push_token_slot(push_token, plan)})；这是农场常规路径，不是平台切换。",
+            )
         code_settings = cls._build_code_settings_from_plan(push_token, plan)
         await cls._append_send_code_credential_log(
             task_id, manager, profile, push_token, plan, code_settings
         )
-        await manager.append_log(task_id, "调用 auth.sendCode 触发服务端瞬时握手挑战分发...")
         try:
             sent_code = await cls._send_code_with_recaptcha(
                 client=client,
@@ -2704,6 +2783,7 @@ class RegistrationOrchestrator:
                 active_proxy=active_proxy,
                 task_id=task_id,
                 manager=manager,
+                push_token=push_token,
             )
         except ApiIdPublishedFloodError:
             if not plan.can_escalate_on_published_flood:
@@ -2748,6 +2828,7 @@ class RegistrationOrchestrator:
                 active_proxy=active_proxy,
                 task_id=task_id,
                 manager=manager,
+                push_token=push_token,
             )
         sent_code, sms_poll_attempts = await cls.resolve_sent_code_channel(
             client=client,
@@ -3733,6 +3814,8 @@ class RegistrationOrchestrator:
                     meta_path = None
                     last_failure_reason = "API_ID_PUBLISHED_FLOOD"
                     hunt_app_streak = 0
+                    flood_slot_snapshot = cls._log_push_token_slot(push_token, delivery_plan)
+                    had_push_at_flood = bool(push_token)
                     if push_token or push_task_id:
                         await cls._refund_push_token(
                             bypass_svc, push_task_id, push_provider, push_token_obtained_at,
@@ -3744,13 +3827,20 @@ class RegistrationOrchestrator:
                         push_token_obtained_at = None
                     # 默认：本号失败即可；猎号换下一号继续测。省钱硬停才整任务收束。
                     block_new = bool(cls._flood_gate_policy(config).get("block_new_sends"))
+                    await manager.append_log(
+                        task_id,
+                        "[协议] 结论=API_ID_PUBLISHED_FLOOD："
+                        f"api_id={profile.get('api_id')} 在发码时 "
+                        f"{'已 attach Push（' + flood_slot_snapshot + '）' if had_push_at_flood else '未 attach Push'}；"
+                        "Telegram 仍拒绝该公开 api_id 凭证组合。",
+                    )
                     if hunt_enabled and not block_new:
                         proxy_send_uses += 1
                         device_send_uses += 1
                         await manager.append_log(
                             task_id,
                             f"[Expert] 本号 API_ID_PUBLISHED_FLOOD api_id={profile.get('api_id')} "
-                            f"{cls._log_push_token_slot(push_token, delivery_plan)} → 丢本号换号继续 "
+                            f"{flood_slot_snapshot} → 丢本号换号继续 "
                             f"({attempt_idx}/{max_attempts})；不拦后续新测试",
                         )
                         manager.update_task_status(task_id, "running")
@@ -3758,7 +3848,7 @@ class RegistrationOrchestrator:
                     await manager.append_log(
                         task_id,
                         f"[Expert] 本号 API_ID_PUBLISHED_FLOOD api_id={profile.get('api_id')} "
-                        f"{cls._log_push_token_slot(push_token, delivery_plan)} → 本任务结束；"
+                        f"{flood_slot_snapshot} → 本任务结束；"
                         "不阻止后续新测试 / 其它并发租号（省钱硬停需 flood_block_new_sends=true）",
                     )
                     raise
@@ -4180,16 +4270,20 @@ class RegistrationOrchestrator:
                 config=config,
             )
             attached = bool(push_token)
-            err = (
-                f"当前 api_id={profile.get('api_id')} 已被 Telegram 判定为公开泄露 ID，"
-                + (
-                    f"本次已 attach REGHelp Push Token（len={len(push_token)}），"
-                    "服务端仍返回 API_ID_PUBLISHED_FLOOD。Token 未被接受为合法平台签署凭证。"
-                    if attached else
-                    "在缺少合法 Push Token 的情况下触发 API_ID_PUBLISHED_FLOOD (SendCodeRequest)。"
+            if attached:
+                tok_info = classify_push_token(push_token)
+                err = (
+                    f"当前 api_id={profile.get('api_id')} 已被 Telegram 判定为公开泄露 ID；"
+                    f"本次 auth.sendCode 已附带 Push Token"
+                    f"（kind={tok_info['kind']} len={tok_info['length']}），"
+                    "官方仍返回 API_ID_PUBLISHED_FLOOD——服务端未接受该凭证组合。"
+                )
+            else:
+                err = (
+                    f"当前 api_id={profile.get('api_id')} 已被 Telegram 判定为公开泄露 ID；"
+                    "本次 auth.sendCode 未附带 Push Token，官方返回 API_ID_PUBLISHED_FLOOD (SendCodeRequest)。"
                     "请修复 Attestation 网关或改用自建非泄露 api_id。"
                 )
-            )
             await manager.append_log(task_id, f"❌ {err}")
             await cls._refund_and_revoke_channel(sms_svc, act_id, task_id, manager, "API_ID_PUBLISHED_FLOOD")
             await cls._refund_push_token(

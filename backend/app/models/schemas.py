@@ -347,8 +347,8 @@ class AppConfigModel(BaseModel):
             "握手写入 InitConnection.lang_pack（android / android_x）与号国 tz_offset；"
             "sendCode 后处理 SetUpEmailRequired / FirebaseSms / PaymentRequired，"
             "不再把非 App 通道一律当短信空等。猎号连续 App 强制 SMS 在此模式下关闭。"
-            "Push attach 仍走文档标为 iOS 的 CodeSettings.token（Android FCM 错槽兼容），"
-            "不是在跑 iOS 客户端。"
+            "Push attach 走 CodeSettings.token(fcm)（Android FCM 农场常规路径），"
+            "不是 APNS，也不表示切换平台客户端。"
             "vault 严格对齐开启时会覆盖为 api_id=4，避免漂到 6 触发 Payment。"
         ),
     )

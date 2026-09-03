@@ -318,8 +318,8 @@ class TestFloodWindowGate(unittest.IsolatedAsyncioTestCase):
         from backend.app.services.device_alignment import describe_push_slot
 
         label = describe_push_slot(True)
-        self.assertIn("android_fcm", label)
-        self.assertNotIn("iOS-semantic", label)
+        self.assertEqual(label, "CodeSettings.token(fcm)")
+        self.assertNotIn("ios", label.lower())
         self.assertIn("CodeSettings.token", label)
 
 
