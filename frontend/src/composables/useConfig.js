@@ -54,6 +54,8 @@ const config = reactive({
   antisafety_connect_timeout: 6.0,
   antisafety_total_timeout: 20.0,
   antisafety_enabled: true,
+  antisafety_phone_filter_enabled: true,
+  antisafety_phone_filter_statuses: ['BANNED', 'ALREADY_REGISTERED', 'FLOOD_WAIT'],
   reghelp_api_key: '',
   reghelp_base_urls: ['https://api.reghelp.net'],
   reghelp_enabled: true,

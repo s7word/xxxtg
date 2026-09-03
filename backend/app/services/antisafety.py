@@ -93,9 +93,9 @@ class AntiSafetyService:
             })
             if data.get("status") == "ok":
                 return data
-            logger.warning(f"端点历史安全审计返回状态: {data}")
+            logger.warning("AntiSafety `/check` 返回非 ok: %s", data)
         except Exception as e:
-            logger.warning(f"端点历史安全审计请求异常: {e}")
+            logger.warning("AntiSafety `/check` 请求异常: %s", e)
         return None
 
     audit_channel_telemetry_history = check_phone_history

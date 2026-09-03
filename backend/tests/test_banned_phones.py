@@ -538,6 +538,10 @@ class TestAntiSafetyBannedIsRemembered(unittest.IsolatedAsyncioTestCase):
         sms.get_number = AsyncMock(return_value=("act-hist", "+628111111111"))
         gw = MagicMock()
         gw.check_phone_history = AsyncMock(return_value={"id": "chk-1", "statuses": ["BANNED"]})
+        gw.phone_filter_reject_statuses = MagicMock(
+            return_value=["BANNED", "ALREADY_REGISTERED", "FLOOD_WAIT"]
+        )
+        gw.matched_phone_filter_statuses = MagicMock(return_value=["BANNED"])
         gw.get_push_token = AsyncMock(return_value=("TOKEN", "push-task-1", "reghelp"))
         gw.close = AsyncMock()
         gw.report_result = AsyncMock()
