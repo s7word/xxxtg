@@ -548,6 +548,15 @@ class ManualRegistrationOrchestrator:
         push_token_obtained_at = None
 
         try:
+            live_egress_ip = None
+
+            def _release_live_egress() -> None:
+                try:
+                    from backend.app.services.proxyseller import EgressIpRegistry
+                    EgressIpRegistry.release(live_egress_ip, task_id)
+                except Exception:
+                    pass
+
             active_proxy = await RegistrationOrchestrator.resolve_active_proxy(
                 config=config,
                 target_country=target_country,
@@ -680,22 +689,39 @@ class ManualRegistrationOrchestrator:
                 )
 
             session_path, meta_path, session_filename = session_artifact_paths(normalized)
-            proxy_dict = {
-                "proxy_type": active_proxy.get("proxy_type", "socks5"),
-                "addr": active_proxy.get("addr", "127.0.0.1"),
-                "port": int(active_proxy.get("port", 10808)),
-                "username": active_proxy.get("username"),
-                "password": active_proxy.get("password"),
-            }
+            live_egress_ip, _egress_probe = await RegistrationOrchestrator._probe_and_log_live_egress(
+                active_proxy,
+                task_id,
+                manager,
+            )
+            from backend.app.services.telegram_apps import to_telethon_proxy
+            proxy_dict = to_telethon_proxy(active_proxy)
+            if not proxy_dict:
+                await manager.append_log(
+                    task_id,
+                    "❌ [出口探测] 代理无效，中止 MTProto（禁止服务器公网直连 Telegram）",
+                )
+                _release_live_egress()
+                await RegistrationOrchestrator._release_registration_resources(None, None, bypass_svc)
+                return cls._snapshot_start(
+                    task_id,
+                    "failed",
+                    normalized,
+                    "PROXY_MISSING: 无有效代理，拒绝直连",
+                    country=target_country,
+                    error="PROXY_MISSING",
+                )
             await manager.append_log(
                 task_id,
-                f"建立 MTProto 协议传输通道 (中继节点: {proxy_dict['addr']}:{proxy_dict['port']})...",
+                f"建立 MTProto 协议传输通道 (中继节点: {proxy_dict['addr']}:{proxy_dict['port']}"
+                + (f", 实测出口={live_egress_ip}" if live_egress_ip else "")
+                + ", rdns=on)...",
             )
             client = TelegramClient(
                 session=str(session_path),
                 api_id=profile["api_id"],
                 api_hash=profile["api_hash"],
-                proxy=proxy_dict if proxy_dict["addr"] else None,
+                proxy=proxy_dict,
                 device_model=profile.get("device_model"),
                 system_version=profile.get("system_version"),
                 app_version=profile.get("app_version"),
@@ -713,6 +739,7 @@ class ManualRegistrationOrchestrator:
                 client, task_id, manager, None, None, timeout=CONNECT_TIMEOUT_SECONDS
             )
             if not connected:
+                _release_live_egress()
                 await RegistrationOrchestrator._release_registration_resources(client, None, bypass_svc)
                 return cls._snapshot_start(
                     task_id,
@@ -847,6 +874,7 @@ class ManualRegistrationOrchestrator:
         except PhoneNumberInvalidError:
             err = f"通信句柄 {normalized} 不是有效手机号 (PHONE_NUMBER_INVALID)"
             await manager.append_log(task_id, f"❌ {err}")
+            _release_live_egress()
             await RegistrationOrchestrator._release_registration_resources(client, None, bypass_svc)
             manager.update_task_status(task_id, "failed", error=err, phone=normalized)
             return cls._snapshot_start(
@@ -865,6 +893,7 @@ class ManualRegistrationOrchestrator:
                 bypass_svc, push_task_id, push_provider, push_token_obtained_at,
                 normalized, task_id, manager, "PHONE_NUMBER_BANNED",
             )
+            _release_live_egress()
             await RegistrationOrchestrator._release_registration_resources(client, None, bypass_svc)
             manager.update_task_status(task_id, "failed", error=err, phone=normalized)
             return cls._snapshot_start(
@@ -876,6 +905,7 @@ class ManualRegistrationOrchestrator:
                 "触发 API_ID_PUBLISHED_FLOOD。请配置自建 api_id/api_hash 或修复 Push Token 后重试"
             )
             await manager.append_log(task_id, f"❌ {err}")
+            _release_live_egress()
             await RegistrationOrchestrator._release_registration_resources(client, None, bypass_svc)
             manager.update_task_status(task_id, "failed", error=err, phone=normalized)
             return cls._snapshot_start(
@@ -889,6 +919,7 @@ class ManualRegistrationOrchestrator:
                 bypass_svc, push_task_id, push_provider, push_token_obtained_at,
                 normalized, task_id, manager, "FLOOD_WAIT",
             )
+            _release_live_egress()
             await RegistrationOrchestrator._release_registration_resources(client, None, bypass_svc)
             manager.update_task_status(task_id, "failed", error=err, phone=normalized)
             return cls._snapshot_start(
@@ -897,6 +928,7 @@ class ManualRegistrationOrchestrator:
         except RecaptchaChallengeError as exc:
             err = f"RECAPTCHA_CHECK 人机挑战未能突破: {exc}"
             await manager.append_log(task_id, f"❌ {err}")
+            _release_live_egress()
             await RegistrationOrchestrator._release_registration_resources(client, None, bypass_svc)
             manager.update_task_status(task_id, "failed", error=err, phone=normalized)
             return cls._snapshot_start(
@@ -907,6 +939,7 @@ class ManualRegistrationOrchestrator:
             reason = "RECAPTCHA_CHECK" if parsed else "EXCEPTION"
             err = f"手动发码流程异常: {exc or repr(exc)}"
             await manager.append_log(task_id, f"❌ {err}")
+            _release_live_egress()
             await RegistrationOrchestrator._release_registration_resources(client, None, bypass_svc)
             if session_path and Path(session_path).exists() and (not meta_path or not Path(meta_path).exists()):
                 try:
