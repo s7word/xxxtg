@@ -62,7 +62,8 @@ class TestAntiSafetyPhoneFilterDecoupling(unittest.IsolatedAsyncioTestCase):
         data = await gw.check_phone_history("56912345678", "aid-1", log_callback=log_cb)
         self.assertEqual(data["id"], "c1")
         as_svc.check_phone_history.assert_awaited_once()
-        self.assertTrue(any("reporting" in m for m in logs))
+        self.assertTrue(any("[AntiSafety 号码过滤]" in m and "/check" in m for m in logs))
+        self.assertTrue(any("响应 ok" in m and "BANNED" in m for m in logs))
 
         hits = AttestationGatewayService.matched_phone_filter_statuses(
             data, gw.phone_filter_reject_statuses()
@@ -82,7 +83,7 @@ class TestAntiSafetyPhoneFilterDecoupling(unittest.IsolatedAsyncioTestCase):
 
         data = await gw.check_phone_history("56912345678", "aid-1", log_callback=log_cb)
         self.assertIsNone(data)
-        self.assertTrue(any("缺少有效 antisafety_api_key" in m for m in logs))
+        self.assertTrue(any("[AntiSafety 号码过滤]" in m and "antisafety_api_key" in m for m in logs))
         antisafety_cls.assert_not_called()
 
     def test_matched_statuses_already_registered(self):

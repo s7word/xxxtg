@@ -3373,21 +3373,35 @@ class RegistrationOrchestrator:
                     return
 
                 # 2. AntiSafety 号码历史过滤（与 Push 走 REGHelp/AntiSafety 无关；无 Key 时会打日志跳过）
-                await manager.append_log(task_id, "正在对通信句柄进行历史安全状态审计...")
+                reject_cfg = bypass_svc.phone_filter_reject_statuses()
+                await manager.append_log(
+                    task_id,
+                    f"[AntiSafety 号码过滤] 开始 /check：{phone} "
+                    f"（拒绝态={'/'.join(reject_cfg) or '无'}）",
+                )
                 check_data = await bypass_svc.check_phone_history(
                     phone, aid, log_callback=lambda msg: manager.append_log(task_id, msg)
                 )
                 if check_data:
                     check_id = check_data.get("id")
+                    raw_statuses = check_data.get("statuses")
+                    if raw_statuses is None and isinstance(check_data.get("status"), list):
+                        raw_statuses = check_data.get("status")
+                    status_label = (
+                        "/".join(str(s) for s in (raw_statuses or []) if str(s).strip())
+                        or "空"
+                    )
                     reject_hits = bypass_svc.matched_phone_filter_statuses(
                         check_data,
-                        bypass_svc.phone_filter_reject_statuses(),
+                        reject_cfg,
                     )
                     if reject_hits:
                         hit_label = "/".join(reject_hits)
                         await manager.append_log(
                             task_id,
-                            f"AntiSafety 号码过滤命中 [{hit_label}]，触发主动退避与信道撤销！",
+                            f"[AntiSafety 号码过滤] ❌ 命中拒绝态 [{hit_label}] "
+                            f"（statuses={status_label}，check_id={check_id or '无'}），"
+                            f"撤销信道并换号/失败",
                         )
                         BannedPhonesCache.remember(
                             phone,
@@ -3407,7 +3421,7 @@ class RegistrationOrchestrator:
                             last_failure_reason = f"PHONE_PREAUDIT_{reject_hits[0]}"
                             await manager.append_log(
                                 task_id,
-                                f"[猎号] 预审过滤 {phone} [{hit_label}]，换号继续（Push Token 保持复用）"
+                                f"[猎号] AntiSafety 过滤 {phone} [{hit_label}]，换号继续（Push Token 保持复用）",
                             )
                             manager.update_task_status(task_id, "running")
                             continue
@@ -3415,6 +3429,18 @@ class RegistrationOrchestrator:
                             task_id, "failed", error=f"AntiSafety phone filter rejected: {hit_label}"
                         )
                         return
+                    await manager.append_log(
+                        task_id,
+                        f"[AntiSafety 号码过滤] ✅ 通过：{phone} "
+                        f"statuses={status_label} check_id={check_id or '无'} "
+                        f"（未命中拒绝态）",
+                    )
+                else:
+                    # 关闭/缺 Key/请求失败时，gateway 的 log_callback 已写明原因；这里补一条结果行
+                    await manager.append_log(
+                        task_id,
+                        f"[AntiSafety 号码过滤] ⚠️ 无有效 /check 结果，放行继续：{phone}",
+                    )
 
                 # 3. 验证码投递通道策略 + Attestation Push（按 plan 决定是否申请）
                 delivery_plan = resolve_code_delivery_plan(

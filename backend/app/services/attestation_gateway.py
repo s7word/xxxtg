@@ -172,22 +172,43 @@ class AttestationGatewayService:
         """
         if not self._antisafety_phone_filter_enabled:
             if log_callback:
-                await log_callback("AntiSafety 号码历史过滤已关闭（antisafety_phone_filter_enabled=false），跳过")
+                await log_callback(
+                    "[AntiSafety 号码过滤] 已关闭（antisafety_phone_filter_enabled=false），跳过 /check"
+                )
             return None
         if not self.antisafety:
             if log_callback:
                 await log_callback(
-                    "⚠️ AntiSafety 号码历史过滤未生效：缺少有效 antisafety_api_key "
-                    "（Push 走 REGHelp 时仍需单独配置 AntiSafety Key 才能过滤烂号；REGHelp 无对等 /check）"
+                    "[AntiSafety 号码过滤] ⚠️ 未生效：缺少有效 antisafety_api_key "
+                    "（Push 走 REGHelp 时仍需单独配置 AntiSafety Key；REGHelp 无对等 /check）"
                 )
             return None
         try:
             if log_callback:
-                await log_callback("AntiSafety 号码历史过滤：正在查询 reporting `/check`…")
-            return await self.antisafety.check_phone_history(phone_number, aid)
+                await log_callback(
+                    f"[AntiSafety 号码过滤] 正在请求 reporting `/check`（number={phone_number}）…"
+                )
+            data = await self.antisafety.check_phone_history(phone_number, aid)
+            if log_callback:
+                if data:
+                    raw = data.get("statuses")
+                    if raw is None and isinstance(data.get("status"), list):
+                        raw = data.get("status")
+                    status_label = (
+                        "/".join(str(s) for s in (raw or []) if str(s).strip()) or "空"
+                    )
+                    await log_callback(
+                        f"[AntiSafety 号码过滤] `/check` 响应 ok："
+                        f"statuses={status_label} check_id={data.get('id') or '无'}"
+                    )
+                else:
+                    await log_callback(
+                        "[AntiSafety 号码过滤] `/check` 无有效 payload（非 ok 或空响应），将放行"
+                    )
+            return data
         except Exception as e:
             if log_callback:
-                await log_callback(f"⚠️ AntiSafety 历史安全审计请求异常，跳过: {e}")
+                await log_callback(f"[AntiSafety 号码过滤] ⚠️ `/check` 请求异常，跳过放行: {e}")
             return None
 
     async def get_push_token(
