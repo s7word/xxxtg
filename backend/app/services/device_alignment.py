@@ -147,6 +147,61 @@ def describe_push_slot(attached: bool) -> str:
     return PUSH_SLOT_ANDROID_FCM_IN_IOS_DOC if attached else PUSH_SLOT_NONE
 
 
+def profile_platform_markers(profile: Optional[Dict[str, Any]]) -> str:
+    profile = profile or {}
+    return " ".join(
+        str(profile.get(key) or "")
+        for key in ("app_device", "lang_pack", "system_version", "device_model")
+    ).lower()
+
+
+def profile_looks_ios(profile: Optional[Dict[str, Any]]) -> bool:
+    blob = profile_platform_markers(profile)
+    return any(tok in blob for tok in ("ios", "iphone", "ipad"))
+
+
+def profile_looks_android(profile: Optional[Dict[str, Any]]) -> bool:
+    blob = profile_platform_markers(profile)
+    if profile_looks_ios(profile):
+        return False
+    return ("android" in blob) or ("sdk" in blob) or bool(str((profile or {}).get("lang_pack") or "").strip().lower() == "android")
+
+
+def detect_push_slot_conflicts(
+    profile: Optional[Dict[str, Any]],
+    push_token: Optional[str],
+    *,
+    attached: bool,
+) -> List[str]:
+    """发现指纹/Token/文档槽位自相矛盾。返回人类可读冲突列表（可为空）。"""
+    if not attached or not push_token:
+        return []
+    info = classify_push_token(push_token)
+    conflicts: List[str] = []
+    android = profile_looks_android(profile)
+    ios = profile_looks_ios(profile)
+    kind = str(info.get("kind") or "")
+    if android and not ios:
+        conflicts.append(
+            "错槽：Android 指纹 + FCM 写入文档标为 iOS 的 CodeSettings.token"
+            f"（token_kind={kind}，槽位={PUSH_SLOT_ANDROID_FCM_IN_IOS_DOC}）"
+        )
+        if kind == "apns_hex":
+            conflicts.append(
+                "类型冲突：Android 指纹却拿到 APNS 形态 token（疑似按 iOS 向网关要号）"
+            )
+    if ios and kind in {"fcm_legacy", "fcm_colon"}:
+        conflicts.append(
+            "类型冲突：iOS 指纹却拿到 FCM 形态 token（网关 appDevice 与指纹不一致）"
+        )
+    if info.get("suspicious"):
+        conflicts.append(
+            f"Token 形态可疑：kind={kind} len={info.get('length')}"
+        )
+    return conflicts
+
+
+
 def strict_app_version_pin(config: Any) -> str:
     pin = str(getattr(config, "pin_app_version_substr", "") or "").strip()
     if pin:

@@ -20,6 +20,7 @@ from backend.app.models.schemas import AppConfigModel  # noqa: E402
 from backend.app.services.device_alignment import (  # noqa: E402
     DeviceAlignmentError,
     classify_push_token,
+    detect_push_slot_conflicts,
     is_strict_alignment,
     validate_strict_device_profile,
 )
@@ -248,6 +249,30 @@ class TestVaultAttestationMetadata(unittest.TestCase):
             self.assertGreater(rows[0]["device_secret_len"], 0)
         finally:
             tmp.cleanup()
+
+
+class TestPushSlotConflicts(unittest.TestCase):
+    def test_android_fcm_in_ios_slot_is_flagged(self):
+        conflicts = detect_push_slot_conflicts(
+            {
+                "app_device": "Android",
+                "lang_pack": "android",
+                "system_version": "SDK 29",
+                "device_model": "OPPOCPH2035",
+            },
+            "dGVzdA:APA91" + ("x" * 140),
+            attached=True,
+        )
+        self.assertTrue(any("错槽" in c for c in conflicts))
+        self.assertFalse(any(c.startswith("类型冲突") for c in conflicts))
+
+    def test_android_with_apns_hex_is_hard_conflict(self):
+        conflicts = detect_push_slot_conflicts(
+            {"app_device": "Android", "lang_pack": "android"},
+            "a" * 64,
+            attached=True,
+        )
+        self.assertTrue(any("类型冲突" in c for c in conflicts))
 
 
 if __name__ == "__main__":

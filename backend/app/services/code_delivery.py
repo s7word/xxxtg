@@ -3,10 +3,11 @@
 CodeSettings 各字段的官方语义（core.telegram.org/constructor/codeSettings），
 决定了哪些开关真的能影响 SMS 概率：
 
-- ``token`` / ``app_sandbox``：「Used only by official iOS apps for Firebase auth：
-  device token for apple push」。带上它等于告诉服务端「有一台可收 APNS 推送的官方
-  客户端」，服务端就可能把 OTP 走推送而不是运营商短信 —— 这是唯一真正能压低 SMS
-  概率的开关，也是 REGHelp Push Token 流程赖以收码的机制。
+- ``token`` / ``app_sandbox``：官方文档写的是 **iOS 官方客户端 Firebase/APNS 设备令牌**。
+  本仓历史做法是把 REGHelp 下发的 **Android FCM** 塞进这个「文档标成 iOS」的槽
+  （``android_fcm_in_ios_doc_slot``），试图让泄露 api_id=4/6 过 published 闸。
+  **这是错槽用法，不是在跑 iOS 客户端**；与 Android 指纹（lang_pack=android）并存时
+  属于自知矛盾的兼容路径，日志必须标明，不能再写成「APNS 收码机制」。
 - ``allow_app_hash``：「required in newer versions of android, to use the android SMS
   receiver APIs」。它描述的是**短信正文里要不要附带 app hash**，属于 SMS 内容协商，
   不参与「App 还是 SMS」的通道选择。官方 Android 客户端在有 Google Play 服务时恒为
@@ -127,7 +128,37 @@ def emulation_label_for(config: Any, base_mode: Optional[str] = None) -> str:
     return mode
 
 
-def _predict_effective_api_id(profile: Dict[str, Any], config: Any) -> int:
+def _expect_push_token_before_credentials(
+    config: Any,
+    *,
+    base_mode: str,
+    template_api_id: int,
+) -> bool:
+    """在拉 Token / 定凭证之前，判断本轮是否「预期会拿到并依赖 Push」。
+
+    旧逻辑在 auto 模式下无条件按「无 Push → 回退自建」预测 api_id，会把
+    balanced/push_required 下本该走 api_id=4+Push 的路径误判成自建 ID，进而关掉
+    Push 申请 —— 典型的计划与凭证互相拆台。
+    """
+    if is_strict_alignment(config) or is_official_client_emulation(config):
+        return True
+    if base_mode == CODE_DELIVERY_PUSH_REQUIRED:
+        return True
+    if base_mode == CODE_DELIVERY_SMS_FIRST:
+        return False
+    # balanced：模板已是泄露官方 ID 时，默认走 Push，而不是先假定回退自建
+    mode = getattr(config, "api_credential_mode", "auto") or "auto"
+    if mode == "custom":
+        return False
+    return int(template_api_id or 0) in PUBLISHED_API_ID_BLOCKLIST
+
+
+def _predict_effective_api_id(
+    profile: Dict[str, Any],
+    config: Any,
+    *,
+    expect_push_token: bool = False,
+) -> int:
     """在尚未申请 Push Token 时预测 sendCode 将使用的 api_id。"""
     if is_strict_alignment(config):
         return VAULT_STRICT_API_ID
@@ -143,8 +174,12 @@ def _predict_effective_api_id(profile: Dict[str, Any], config: Any) -> int:
         return int(custom_id)
     if mode == "official":
         return template_id
-    # auto: 无 Push 且模板 ID 泄露 → 可能回退自建
-    if template_id in PUBLISHED_API_ID_BLOCKLIST and has_custom:
+    # auto: 仅当预期拿不到 Push、且模板是泄露 ID 时，才按「回退自建」预测
+    if (
+        template_id in PUBLISHED_API_ID_BLOCKLIST
+        and has_custom
+        and not expect_push_token
+    ):
         return int(custom_id)
     return template_id
 
@@ -186,7 +221,16 @@ def resolve_code_delivery_plan(
     # 官方模拟同样始终 attach。两者都不受猎号连续 App → SMS 覆盖。
     if official_emu or strict:
         base_mode = CODE_DELIVERY_PUSH_REQUIRED
-    predicted_api_id = _predict_effective_api_id(profile, config)
+    try:
+        template_api_id = int(profile.get("api_id") or 0)
+    except (TypeError, ValueError):
+        template_api_id = 0
+    expect_push = _expect_push_token_before_credentials(
+        config, base_mode=base_mode, template_api_id=template_api_id
+    )
+    predicted_api_id = _predict_effective_api_id(
+        profile, config, expect_push_token=expect_push
+    )
     published = is_published_api_id(predicted_api_id)
     label = emulation_label_for(config, base_mode)
 
@@ -215,7 +259,16 @@ def resolve_code_delivery_plan(
         )
     if strict:
         notes.append(
-            "严格设备对齐：非 emu 强制 attach Push（CodeSettings.token / FCM）"
+            "严格设备对齐：非 emu 强制 attach Push（CodeSettings.token / FCM）；"
+            "文档槽位为 iOS，实际 token 为 Android FCM（错槽兼容）"
+        )
+    if (
+        expect_push
+        and predicted_api_id == template_api_id
+        and template_api_id in PUBLISHED_API_ID_BLOCKLIST
+    ):
+        notes.append(
+            f"预期 Push 可用：预测 api_id={predicted_api_id}（避免 auto 误判提前回退自建）"
         )
 
     if forced_sms and base_mode != CODE_DELIVERY_PUSH_REQUIRED:

@@ -169,6 +169,38 @@ class TestCodeDeliveryPlan(unittest.TestCase):
         self.assertEqual(escalated.allow_app_hash, base.allow_app_hash)
 
 
+
+    def test_balanced_auto_published_keeps_api4_when_push_expected(self):
+        """auto+balanced+模板4：不得因「假定无Push」误判成自建 ID 而关掉 Push。"""
+        plan = resolve_code_delivery_plan(
+            _config(
+                code_delivery_mode=CODE_DELIVERY_BALANCED,
+                api_credential_mode="auto",
+                custom_api_id=35337905,
+                custom_api_hash="deadbeefcafebabe",
+            ),
+            _profile(api_id=4),
+        )
+        self.assertEqual(plan.effective_mode, CODE_DELIVERY_PUSH_REQUIRED)
+        self.assertTrue(plan.should_request_push_token)
+        self.assertTrue(plan.attach_push_token)
+        self.assertTrue(plan.use_published_api_id)
+        self.assertTrue(any("误判" in n for n in plan.notes))
+
+    def test_sms_first_auto_published_may_predict_custom(self):
+        plan = resolve_code_delivery_plan(
+            _config(
+                code_delivery_mode=CODE_DELIVERY_SMS_FIRST,
+                api_credential_mode="auto",
+                custom_api_id=35337905,
+                custom_api_hash="deadbeefcafebabe",
+            ),
+            _profile(api_id=4),
+        )
+        # sms_first 预期无 Push → 可预测自建；非泄露自建则不申请 Push
+        self.assertEqual(plan.effective_mode, CODE_DELIVERY_SMS_FIRST)
+        self.assertFalse(plan.attach_push_token)
+
 class TestBuildCodeSettings(unittest.TestCase):
     def test_sms_first_settings_no_token(self):
         cs = RegistrationOrchestrator._build_code_settings(

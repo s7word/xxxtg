@@ -35,6 +35,7 @@ from backend.app.services.device_alignment import (
     alignment_summary_for_log,
     classify_push_token,
     describe_push_slot,
+    detect_push_slot_conflicts,
     is_strict_alignment,
     validate_strict_device_profile,
 )
@@ -1840,9 +1841,11 @@ class RegistrationOrchestrator:
         无 Token 时两者都必须保持 False-y（None）。
         token 传 str 即可，Telethon 会走 serialize_bytes。
 
-        SMS 优先策略靠 attach_push_token=False 生效：token/app_sandbox 是 iOS APNS
-        推送凭证，带上就等于给服务端一条推送通道。allow_app_hash 只协商短信正文里的
-        Android SMS Retriever hash，应跟随设备平台而非投递模式。
+        SMS 优先策略靠 attach_push_token=False 生效。
+        token/app_sandbox：官方文档标为 iOS Firebase/APNS 槽；本仓历史兼容路径是把
+        Android FCM 塞进去（错槽），不是 APNS，也不是在跑 iOS 客户端。
+        allow_app_hash 只协商短信正文里的 Android SMS Retriever hash，应跟随设备平台
+        而非投递模式。
         allow_firebase / unknown_number 由配置注入，对应官方 Android 的 Firebase
         通道协商与「号码非本机 SIM」标志。
         """
@@ -2662,6 +2665,21 @@ class RegistrationOrchestrator:
         if plan.attach_push_token and push_token:
             info = classify_push_token(push_token)
             config = ConfigManager.get_instance().config
+            conflicts = detect_push_slot_conflicts(
+                profile, push_token, attached=True
+            )
+            for item in conflicts:
+                await manager.append_log(task_id, f"⚠️ [指纹/槽位冲突] {item}")
+            # 已知错槽（Android FCM → iOS 文档槽）只告警；真正的类型交叉直接拒绝
+            hard = [
+                c for c in conflicts
+                if c.startswith("类型冲突") or (info.get("suspicious") and info.get("kind") == "apns_hex" and "Android" in ",".join(conflicts))
+            ]
+            if hard:
+                raise RequiredPushTokenMissingError(
+                    "；".join(hard) + "；拒绝塞进 CodeSettings.token",
+                    api_id=profile.get("api_id") if isinstance(profile.get("api_id"), int) else None,
+                )
             if is_strict_alignment(config) and not info["ok"]:
                 raise RequiredPushTokenMissingError(
                     f"Push Token 形态不合格（kind={info['kind']} len={info['length']}），"
@@ -3439,10 +3457,14 @@ class RegistrationOrchestrator:
                             "本次仍将回退使用官方内置凭证"
                         )
                     if profile.get("credential_source") == "vault_strict_api4":
+                        override_note = ""
+                        if str(getattr(config, "api_credential_mode", "") or "") == "custom":
+                            override_note = "；已覆盖 api_credential_mode=custom（避免自建凭证与 Expert/api_id=4 路径冲突）"
                         await manager.append_log(
                             task_id,
                             f"[严格对齐] api_id 已从 {profile.get('api_id_pinned_from')} 钉死为 4 "
                             f"（hash={cls._api_hash_for_log(profile)}），禁止漂到 6/Payment"
+                            f"{override_note}"
                         )
 
                 if is_strict_alignment(config) and delivery_plan.attach_push_token:
