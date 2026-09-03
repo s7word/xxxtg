@@ -262,6 +262,22 @@ class AppConfigModel(BaseModel):
         default=True,
         description="是否启用 AntiSafety 作为 Attestation / Push 凭证提供源"
     )
+    antisafety_phone_filter_enabled: bool = Field(
+        default=True,
+        description=(
+            "是否启用 AntiSafety reporting `/check` 号码历史过滤（与 Push 主备路径无关）。"
+            "默认开启：即使 attestation_provider_mode=reghelp_primary/only，只要配置了 "
+            "antisafety_api_key 仍会在租号后过滤 BANNED / ALREADY_REGISTERED / FLOOD_WAIT 等。"
+            "REGHelp 无对等号码审计接口。"
+        ),
+    )
+    antisafety_phone_filter_statuses: List[str] = Field(
+        default_factory=lambda: ["BANNED", "ALREADY_REGISTERED", "FLOOD_WAIT"],
+        description=(
+            "AntiSafety `/check` 命中这些 statuses 时退号换号。"
+            "对齐 Telegram Expert 注册前过滤：封禁 / 已注册(含2FA) / FloodWait。"
+        ),
+    )
 
     # ---- REGHelp (reghelp.net) 高可用 Attestation / Push 凭证提供源 ----
     reghelp_api_key: str = Field(
@@ -331,8 +347,8 @@ class AppConfigModel(BaseModel):
             "握手写入 InitConnection.lang_pack（android / android_x）与号国 tz_offset；"
             "sendCode 后处理 SetUpEmailRequired / FirebaseSms / PaymentRequired，"
             "不再把非 App 通道一律当短信空等。猎号连续 App 强制 SMS 在此模式下关闭。"
-            "Push attach 仍走文档标为 iOS 的 CodeSettings.token（Android FCM 错槽兼容），"
-            "不是在跑 iOS 客户端。"
+            "Push attach 走 CodeSettings.token(fcm)（Android FCM 农场常规路径），"
+            "不是 APNS，也不表示切换平台客户端。"
             "vault 严格对齐开启时会覆盖为 api_id=4，避免漂到 6 触发 Payment。"
         ),
     )

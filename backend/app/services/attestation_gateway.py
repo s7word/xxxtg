@@ -26,6 +26,11 @@ class AttestationGatewayService:
     `reghelp_api_key` 的 REGHelpService；AntiSafety 仅作为备选，且不会把
     api.reghelp.net 放进 AntiSafety 的候选列表。
 
+    号码历史过滤（reporting `/check`）与 Push 主备路径解耦：只要配置了有效
+    `antisafety_api_key` 且 `antisafety_phone_filter_enabled=True`（默认），即使
+    Push 走 `reghelp_only` / `reghelp_primary`，仍会调用 AntiSafety 过滤烂号。
+    REGHelp 官方无对等 `/check` 接口。
+
     支持的调度策略 (`attestation_provider_mode`)：
         - reghelp_primary   REGHelp 优先，AntiSafety 备选 (默认推荐)
         - antisafety_primary AntiSafety 优先，REGHelp 备选
@@ -35,6 +40,7 @@ class AttestationGatewayService:
 
     PROVIDER_REGHELP = "reghelp"
     PROVIDER_ANTISAFETY = "antisafety"
+    DEFAULT_PHONE_FILTER_STATUSES = ("BANNED", "ALREADY_REGISTERED", "FLOOD_WAIT")
 
     def __init__(self, config: Any, proxy: Optional[Dict[str, Any]] = None):
         self.config = config
@@ -65,7 +71,16 @@ class AttestationGatewayService:
                 total_timeout=getattr(config, "reghelp_total_timeout", 20.0)
             )
 
-        if getattr(config, "antisafety_enabled", True) and has_valid_api_key(antisafety_key):
+        self._antisafety_push_enabled = bool(
+            getattr(config, "antisafety_enabled", True)
+        ) and has_valid_api_key(antisafety_key)
+        self._antisafety_phone_filter_enabled = bool(
+            getattr(config, "antisafety_phone_filter_enabled", True)
+        )
+        # Push 关闭 AntiSafety 时仍可为号码过滤单独拉起 reporting 客户端
+        if has_valid_api_key(antisafety_key) and (
+            self._antisafety_push_enabled or self._antisafety_phone_filter_enabled
+        ):
             self.antisafety = AntiSafetyService(
                 antisafety_key,
                 proxy=proxy,
@@ -79,7 +94,12 @@ class AttestationGatewayService:
 
     def _provider_order(self) -> List[Tuple[str, Any]]:
         mode = getattr(self.config, "attestation_provider_mode", "reghelp_primary") or "reghelp_primary"
-        candidates = {self.PROVIDER_REGHELP: self.reghelp, self.PROVIDER_ANTISAFETY: self.antisafety}
+        # 号码过滤专用的 AntiSafety 客户端不参与 Push 调度
+        antisafety_for_push = self.antisafety if self._antisafety_push_enabled else None
+        candidates = {
+            self.PROVIDER_REGHELP: self.reghelp,
+            self.PROVIDER_ANTISAFETY: antisafety_for_push,
+        }
 
         if mode == "reghelp_only":
             order = [self.PROVIDER_REGHELP]
@@ -92,6 +112,51 @@ class AttestationGatewayService:
 
         return [(name, candidates[name]) for name in order if candidates.get(name)]
 
+    def phone_filter_reject_statuses(self) -> List[str]:
+        raw = getattr(self.config, "antisafety_phone_filter_statuses", None)
+        if not raw:
+            return list(self.DEFAULT_PHONE_FILTER_STATUSES)
+        out: List[str] = []
+        for item in raw:
+            token = str(item or "").strip().upper()
+            if token and token not in out:
+                out.append(token)
+        return out or list(self.DEFAULT_PHONE_FILTER_STATUSES)
+
+    @staticmethod
+    def matched_phone_filter_statuses(
+        check_data: Optional[Dict[str, Any]],
+        reject_statuses: Optional[List[str]] = None,
+    ) -> List[str]:
+        if not check_data:
+            return []
+        wanted = {
+            str(x).strip().upper()
+            for x in (reject_statuses or AttestationGatewayService.DEFAULT_PHONE_FILTER_STATUSES)
+            if str(x).strip()
+        }
+        hit: List[str] = []
+        raw_statuses = check_data.get("statuses")
+        if raw_statuses is None:
+            # 兼容个别响应把列表放在 status 字段的情况
+            alt = check_data.get("status")
+            raw_statuses = alt if isinstance(alt, list) else None
+        for status in raw_statuses or []:
+            token = str(status or "").strip().upper()
+            if token in wanted and token not in hit:
+                hit.append(token)
+        return hit
+
+    # 供 MagicMock 网关实例直接绑定；静态方法在 class patch 后会丢失
+    def match_phone_filter_statuses(
+        self,
+        check_data: Optional[Dict[str, Any]],
+        reject_statuses: Optional[List[str]] = None,
+    ) -> List[str]:
+        return AttestationGatewayService.matched_phone_filter_statuses(
+            check_data, reject_statuses or self.phone_filter_reject_statuses()
+        )
+
     async def close(self):
         if self.reghelp:
             await self.reghelp.close()
@@ -100,15 +165,50 @@ class AttestationGatewayService:
 
     async def check_phone_history(self, phone_number: str, aid: Optional[str], log_callback=None) -> Optional[Dict[str, Any]]:
         """端点历史安全审计。目前仅 AntiSafety 提供 `/check` 号码历史审计能力，
-        REGHelp 官方接口暂无等价能力，故该职责始终路由至 AntiSafety (若已启用)。
+        REGHelp 官方接口暂无等价能力，故该职责始终路由至 AntiSafety。
+
+        与 Push 主备无关：`reghelp_primary/only` 下只要配了 AntiSafety Key 且
+        `antisafety_phone_filter_enabled`（默认 True）仍会执行。
         """
+        if not self._antisafety_phone_filter_enabled:
+            if log_callback:
+                await log_callback(
+                    "[AntiSafety 号码过滤] 已关闭（antisafety_phone_filter_enabled=false），跳过 /check"
+                )
+            return None
         if not self.antisafety:
+            if log_callback:
+                await log_callback(
+                    "[AntiSafety 号码过滤] ⚠️ 未生效：缺少有效 antisafety_api_key "
+                    "（Push 走 REGHelp 时仍需单独配置 AntiSafety Key；REGHelp 无对等 /check）"
+                )
             return None
         try:
-            return await self.antisafety.check_phone_history(phone_number, aid)
+            if log_callback:
+                await log_callback(
+                    f"[AntiSafety 号码过滤] 正在请求 reporting `/check`（number={phone_number}）…"
+                )
+            data = await self.antisafety.check_phone_history(phone_number, aid)
+            if log_callback:
+                if data:
+                    raw = data.get("statuses")
+                    if raw is None and isinstance(data.get("status"), list):
+                        raw = data.get("status")
+                    status_label = (
+                        "/".join(str(s) for s in (raw or []) if str(s).strip()) or "空"
+                    )
+                    await log_callback(
+                        f"[AntiSafety 号码过滤] `/check` 响应 ok："
+                        f"statuses={status_label} check_id={data.get('id') or '无'}"
+                    )
+                else:
+                    await log_callback(
+                        "[AntiSafety 号码过滤] `/check` 无有效 payload（非 ok 或空响应），将放行"
+                    )
+            return data
         except Exception as e:
             if log_callback:
-                await log_callback(f"⚠️ AntiSafety 历史安全审计请求异常，跳过: {e}")
+                await log_callback(f"[AntiSafety 号码过滤] ⚠️ `/check` 请求异常，跳过放行: {e}")
             return None
 
     async def get_push_token(

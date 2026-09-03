@@ -306,8 +306,17 @@
           <input type="checkbox" v-model="config.antisafety_enabled" />
           启用 AntiSafety 作为 Attestation / Push 凭证提供源
         </label>
+        <label class="ce-check">
+          <input type="checkbox" v-model="config.antisafety_phone_filter_enabled" />
+          启用 AntiSafety 号码历史过滤（默认开；与 Push 主备无关，REGHelp 无对等接口）
+        </label>
+        <p class="ce-tiny ce-muted">
+          Push 即使走 <code>reghelp_primary/only</code>，只要填写了下方 AntiSafety API Key，
+          租号后仍会查询 reporting <code>/check</code>，按
+          <code>BANNED / ALREADY_REGISTERED / FLOOD_WAIT</code> 退号换号。
+        </p>
         <div>
-          <label class="ce-label">Attestation API Key</label>
+          <label class="ce-label">Attestation API Key（Push 备选 + 号码过滤共用）</label>
           <input v-model="config.antisafety_api_key" type="password" class="ce-input mono" />
         </div>
         <div>
@@ -566,8 +575,8 @@
           <code>android_x</code> + 号国 tz）。处理 SetUpEmailRequired（REGHelp Email）、
           FirebaseSms（Play Integrity）、PaymentRequired（标记需官方 App 内购并快退）。
           猎号连续 App 强制 SMS 在此模式下关闭。
-          Push attach 仍把 Android FCM 塞进文档标为 iOS 的 <code>CodeSettings.token</code>
-          （错槽兼容，<strong>不是</strong> iOS 客户端）。
+          Push attach 走农场常规路径：Android FCM → <code>CodeSettings.token(fcm)</code>
+          （不是 APNS，也不表示切换平台客户端）。
           <strong>vault 严格对齐开启时会钉死 api_id=4</strong>，不会漂到 6（Payment 路径）。
         </p>
         <label class="ce-check">

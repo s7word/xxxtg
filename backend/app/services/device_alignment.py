@@ -39,12 +39,12 @@ EMU_DEVICE_MARKERS = (
     "desktop",
 )
 
-# 官方 TL 文档把 CodeSettings.token / app_sandbox 标成 iOS Firebase 专用；
-# 本仓实际塞的是 Android REGHelp FCM（api_id=4 过 published 闸的历史做法）。
-# 日志用 android_fcm_in_ios_doc_slot，避免被误读成「在跑 iOS 客户端」。
-PUSH_SLOT_ANDROID_FCM_IN_IOS_DOC = "CodeSettings.token(android_fcm_in_ios_doc_slot)"
-# 旧日志关键字，仅兼容历史报告检索
-PUSH_SLOT_IOS_CODESETTINGS = PUSH_SLOT_ANDROID_FCM_IN_IOS_DOC
+# 农场路径：Android FCM 写入 CodeSettings.token（与 Expert/REGHelp 同构）。
+# 运行日志槽位名刻意不提 iOS，避免后续 AI/人误判成「跑错成 iOS 客户端」。
+PUSH_SLOT_CODESETTINGS_TOKEN_FCM = "CodeSettings.token(fcm)"
+# 历史别名（检索旧日志用）；新日志不要再依赖这些名字。
+PUSH_SLOT_ANDROID_FCM_IN_IOS_DOC = PUSH_SLOT_CODESETTINGS_TOKEN_FCM
+PUSH_SLOT_IOS_CODESETTINGS = PUSH_SLOT_CODESETTINGS_TOKEN_FCM
 PUSH_SLOT_NONE = "none"
 
 
@@ -170,7 +170,7 @@ def classify_push_token(token: Optional[str]) -> Dict[str, Any]:
 
 
 def describe_push_slot(attached: bool) -> str:
-    return PUSH_SLOT_ANDROID_FCM_IN_IOS_DOC if attached else PUSH_SLOT_NONE
+    return PUSH_SLOT_CODESETTINGS_TOKEN_FCM if attached else PUSH_SLOT_NONE
 
 
 def profile_platform_markers(profile: Optional[Dict[str, Any]]) -> str:
@@ -199,7 +199,7 @@ def detect_push_slot_conflicts(
     *,
     attached: bool,
 ) -> List[str]:
-    """发现指纹/Token/文档槽位自相矛盾。返回人类可读冲突列表（可为空）。"""
+    """只报告真实类型交叉；Android+FCM→CodeSettings.token 是农场常规路径，不算冲突。"""
     if not attached or not push_token:
         return []
     info = classify_push_token(push_token)
@@ -207,20 +207,22 @@ def detect_push_slot_conflicts(
     android = profile_looks_android(profile)
     ios = profile_looks_ios(profile)
     kind = str(info.get("kind") or "")
-    if android and not ios:
+    # Android FCM 写入 CodeSettings.token = 本仓/Expert 常规做法：不告警、不提 iOS。
+    if android and not ios and kind == "apns_hex":
         conflicts.append(
-            "错槽：Android 指纹 + FCM 写入文档标为 iOS 的 CodeSettings.token"
-            f"（token_kind={kind}，槽位={PUSH_SLOT_ANDROID_FCM_IN_IOS_DOC}）"
+            "类型冲突：Android 指纹却拿到 APNS 形态 token（网关 appDevice 与指纹不一致）"
+            f"（token_kind={kind}，槽位={PUSH_SLOT_CODESETTINGS_TOKEN_FCM}）"
         )
-        if kind == "apns_hex":
-            conflicts.append(
-                "类型冲突：Android 指纹却拿到 APNS 形态 token（疑似按 iOS 向网关要号）"
-            )
     if ios and kind in {"fcm_legacy", "fcm_colon"}:
         conflicts.append(
-            "类型冲突：iOS 指纹却拿到 FCM 形态 token（网关 appDevice 与指纹不一致）"
+            "类型冲突：指纹平台与 Push token 形态不一致（FCM token + 非 Android 指纹）"
+            f"（token_kind={kind}）"
         )
-    if info.get("suspicious"):
+    if kind == "apns_hex" and info.get("suspicious"):
+        conflicts.append(
+            f"Token 形态可疑：kind={kind} len={info.get('length')}"
+        )
+    elif info.get("suspicious") and kind not in {"fcm_legacy", "fcm_colon", "long_opaque"}:
         conflicts.append(
             f"Token 形态可疑：kind={kind} len={info.get('length')}"
         )

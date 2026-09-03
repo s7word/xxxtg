@@ -148,7 +148,7 @@ backend/app/
 
 失败时：SMS `cancel` +（若 REGHelp）`setStatus` 退款（#26 已实现，需 `ref=task_id`）。预检已注册 / `SENT_CODE_TYPE_APP` / `PHONE_NUMBER_BANNED` 会写入本地黑名单，防止平台二次下发。
 
-**严格设备对齐**（`device_alignment_mode`，默认 `loose`；Settings 可开 `strict`）：详见 [STRICT_DEVICE_AND_PUSH.md](./STRICT_DEVICE_AND_PUSH.md)。开启后钉死 api_id=4、InitConnection 写 `lang_pack=android` + 号国 tz、vault 机型/12.7.3、缺字段拒绝发码、App-only 快丢号、FLOOD 换 Token。Push 日志槽位是 `CodeSettings.token(android_fcm_in_ios_doc_slot)`（Android FCM 塞进文档标为 iOS 的字段，**不是** iOS 客户端）。`API_ID_PUBLISHED_FLOOD` 默认只结束本号/本任务，**不拦**后续新测试；省钱硬停需显式 `flood_block_new_sends=true`。
+**严格设备对齐**（`device_alignment_mode`，默认 `loose`；Settings 可开 `strict`）：详见 [STRICT_DEVICE_AND_PUSH.md](./STRICT_DEVICE_AND_PUSH.md)。开启后钉死 api_id=4、InitConnection 写 `lang_pack=android` + 号国 tz、vault 机型/12.7.3、缺字段拒绝发码、App-only 快丢号、FLOOD 换 Token。Push 日志槽位是 `CodeSettings.token(fcm)`（Android FCM 农场常规路径，不是 APNS）。`API_ID_PUBLISHED_FLOOD` 默认只结束本号/本任务，**不拦**后续新测试；省钱硬停需显式 `flood_block_new_sends=true`。
 
 **验证码通道策略**（`code_delivery_mode`，默认 `balanced`）：
 - `balanced`：非泄露 effective api_id（如已配置 custom）→ 不申请/不 attach Push Token，提高 SMS 概率
@@ -156,10 +156,10 @@ backend/app/
 - `push_required`：legacy，始终 attach Push Token
 - `hunt_sms_first_after_app_streak`：猎号连续 App 达到该值后强制 SMS 优先
 
-`CodeSettings` 里唯一影响 App/SMS 通道选择的是 `token`/`app_sandbox`（官方文档标为 **iOS Firebase** 槽；
-本仓历史做法是把 **Android FCM** 塞进去，属错槽兼容，不是 APNS、也不是 iOS 客户端。
-带上就等于给服务端一条推送通道）。`allow_app_hash` 是 Android SMS Retriever 的**短信正文**
-协商位，官方 Android 客户端恒设，因此按设备平台决定，不参与通道策略。
+`CodeSettings.token` / `app_sandbox`：本仓与 Expert 一样写入 **Android FCM**（日志
+`push_slot=CodeSettings.token(fcm)`），给服务端一条推送通道；不是 APNS。
+`allow_app_hash` 是 Android SMS Retriever 的**短信正文**协商位，官方 Android 客户端恒设，
+因此按设备平台决定，不参与通道策略。
 
 规律：复用号池导致的 App（`next_type=None`，号码在 Telegram 侧仍有已授权会话）是主因，
 代码无法消除，只能换号源；attach Push Token 带来的推送投递可通过上述策略消除。
