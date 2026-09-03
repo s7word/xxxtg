@@ -28,6 +28,7 @@ from telethon.errors import (
 from backend.app.config import ConfigManager, SESSIONS_DIR
 from backend.app.services.code_delivery import (
     escalation_plan_after_published_flood,
+    reconcile_delivery_plan_after_credentials,
     resolve_code_delivery_plan,
 )
 from backend.app.services.device_alignment import (
@@ -1866,7 +1867,9 @@ class RegistrationOrchestrator:
         raw = str(profile.get("api_hash") or "").strip()
         if not raw:
             return "-"
-        return raw
+        if len(raw) <= 12:
+            return raw
+        return f"{raw[:8]}…{raw[-4:]}"
 
     @classmethod
     def _log_push_token_slot(
@@ -3187,7 +3190,7 @@ class RegistrationOrchestrator:
                         task_id, "running", hunt_attempt=attempt_idx, hunt_max=max_attempts
                     )
 
-                # 猎号取消钩子：外部请求取消后不再开新一轮（完整 cancel API 另行接入）
+                # 猎号取消钩子：外部 POST cancel 置 cancel_requested，下一轮取号前收住
                 if cls._hunt_cancel_requested(task_id, manager):
                     hunt_stop_reason = "HUNT_CANCELED"
                     await manager.append_log(
@@ -3466,6 +3469,22 @@ class RegistrationOrchestrator:
                             f"（hash={cls._api_hash_for_log(profile)}），禁止漂到 6/Payment"
                             f"{override_note}"
                         )
+                    if profile.get("api_hash_corrected"):
+                        await manager.append_log(
+                            task_id,
+                            f"⚠️ api_id={profile.get('api_id')} 的 api_hash 与官方固定配对不符，已纠正 "
+                            f"（was={cls._api_hash_for_log({'api_hash': profile.get('api_hash_was')})} → "
+                            f"{cls._api_hash_for_log(profile)}），避免 4 配 6 的 hash"
+                        )
+                    reconciled = reconcile_delivery_plan_after_credentials(
+                        config,
+                        profile,
+                        delivery_plan,
+                        hunt_app_streak=hunt_app_streak if hunt_enabled else 0,
+                    )
+                    if reconciled is not delivery_plan:
+                        delivery_plan = reconciled
+                        await cls._log_code_delivery_plan(task_id, manager, delivery_plan)
 
                 if is_strict_alignment(config) and delivery_plan.attach_push_token:
                     try:

@@ -201,6 +201,52 @@ class TestCodeDeliveryPlan(unittest.TestCase):
         self.assertEqual(plan.effective_mode, CODE_DELIVERY_SMS_FIRST)
         self.assertFalse(plan.attach_push_token)
 
+    def test_reconcile_after_auto_fallback_drops_attach(self):
+        """balanced 先按泄露 ID 去拉 Push；失败回退自建后必须重算，不能仍要求 attach。"""
+        from backend.app.services.code_delivery import reconcile_delivery_plan_after_credentials
+
+        prior = resolve_code_delivery_plan(
+            _config(
+                code_delivery_mode=CODE_DELIVERY_BALANCED,
+                api_credential_mode="auto",
+                custom_api_id=35337905,
+                custom_api_hash="deadbeefcafebabe",
+            ),
+            _profile(api_id=4),
+        )
+        self.assertTrue(prior.attach_push_token)
+        fallen_back = {
+            "api_id": 35337905,
+            "api_hash": "deadbeefcafebabe",
+            "credential_source": "custom_auto_fallback",
+            "app_device": "Android",
+            "lang_pack": "android",
+        }
+        reconciled = reconcile_delivery_plan_after_credentials(
+            _config(
+                code_delivery_mode=CODE_DELIVERY_BALANCED,
+                api_credential_mode="auto",
+                custom_api_id=35337905,
+                custom_api_hash="deadbeefcafebabe",
+            ),
+            fallen_back,
+            prior,
+        )
+        self.assertFalse(reconciled.attach_push_token)
+        self.assertEqual(reconciled.effective_mode, CODE_DELIVERY_SMS_FIRST)
+        self.assertTrue(any("凭证落地后重算通道" in n for n in reconciled.notes))
+
+    def test_reconcile_keeps_push_when_official_still_published(self):
+        from backend.app.services.code_delivery import reconcile_delivery_plan_after_credentials
+
+        cfg = _config(api_credential_mode="official")
+        prior = resolve_code_delivery_plan(cfg, _profile(api_id=6))
+        same = reconcile_delivery_plan_after_credentials(
+            cfg, {**_profile(api_id=6), "credential_source": "official"}, prior
+        )
+        self.assertIs(same, prior)
+        self.assertTrue(same.attach_push_token)
+
 class TestBuildCodeSettings(unittest.TestCase):
     def test_sms_first_settings_no_token(self):
         cs = RegistrationOrchestrator._build_code_settings(

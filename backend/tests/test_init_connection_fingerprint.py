@@ -159,6 +159,72 @@ class TestInitConnectionOverrides(unittest.TestCase):
         self.assertEqual(client._init_request.lang_pack, "android")
         self.assertEqual(inspect_tz_offset(client._init_request.params), 28800)
 
+    def test_api_id_6_writes_android_lang_pack_in_loose(self):
+        """官方 Android api_id=6 声称 lang_pack=android，握手不能再留 Telethon 空串。"""
+        client = FakeClient()
+        snap = apply_init_connection_overrides(
+            client,
+            {"api_id": 6, "lang_pack": "android", "tz_offset": 10800},
+            SimpleNamespace(
+                init_connection_set_lang_pack=False,
+                init_connection_set_tz_offset=False,
+                device_alignment_mode="loose",
+                strict_vault_device_alignment=False,
+                official_client_emulation=False,
+            ),
+        )
+        self.assertTrue(snap["lang_pack_set"])
+        self.assertTrue(snap["tz_offset_set"])
+        self.assertEqual(client._init_request.lang_pack, "android")
+        self.assertEqual(inspect_tz_offset(client._init_request.params), 10800)
+
+    def test_telegram_x_writes_android_x_lang_pack(self):
+        client = FakeClient()
+        snap = apply_init_connection_overrides(
+            client,
+            {"api_id": 21724, "lang_pack": "android_x", "tz_offset": 25200},
+            SimpleNamespace(
+                init_connection_set_lang_pack=False,
+                init_connection_set_tz_offset=False,
+                device_alignment_mode="loose",
+                strict_vault_device_alignment=False,
+            ),
+        )
+        self.assertTrue(snap["lang_pack_set"])
+        self.assertEqual(client._init_request.lang_pack, "android_x")
+        self.assertEqual(inspect_tz_offset(client._init_request.params), 25200)
+
+    def test_official_emulation_writes_handshake_for_api6(self):
+        client = FakeClient()
+        snap = apply_init_connection_overrides(
+            client,
+            {"api_id": 6, "lang_pack": "android", "tz_offset": -14400},
+            SimpleNamespace(
+                init_connection_set_lang_pack=False,
+                init_connection_set_tz_offset=False,
+                device_alignment_mode="loose",
+                official_client_emulation=True,
+            ),
+        )
+        self.assertTrue(snap["lang_pack_set"])
+        self.assertTrue(snap["tz_offset_set"])
+        self.assertEqual(client._init_request.lang_pack, "android")
+
+    def test_custom_unpublished_api_id_leaves_telethon_empty(self):
+        client = FakeClient()
+        apply_init_connection_overrides(
+            client,
+            {"api_id": 35337905, "lang_pack": "android", "tz_offset": 25200},
+            SimpleNamespace(
+                init_connection_set_lang_pack=False,
+                init_connection_set_tz_offset=False,
+                device_alignment_mode="loose",
+                official_client_emulation=False,
+            ),
+        )
+        self.assertEqual(client._init_request.lang_pack, "")
+        self.assertIsNone(client._init_request.params)
+
     def test_missing_init_request_is_blocked(self):
         client = FakeClient(with_init=False)
         snap = apply_init_connection_overrides(client, {}, SimpleNamespace())

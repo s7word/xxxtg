@@ -156,7 +156,8 @@ backend/app/
 - `push_required`：legacy，始终 attach Push Token
 - `hunt_sms_first_after_app_streak`：猎号连续 App 达到该值后强制 SMS 优先
 
-`CodeSettings` 里唯一影响 App/SMS 通道选择的是 `token`/`app_sandbox`（iOS APNS 推送凭证，
+`CodeSettings` 里唯一影响 App/SMS 通道选择的是 `token`/`app_sandbox`（官方文档标为 **iOS Firebase** 槽；
+本仓历史做法是把 **Android FCM** 塞进去，属错槽兼容，不是 APNS、也不是 iOS 客户端。
 带上就等于给服务端一条推送通道）。`allow_app_hash` 是 Android SMS Retriever 的**短信正文**
 协商位，官方 Android 客户端恒设，因此按设备平台决定，不参与通道策略。
 

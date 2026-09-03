@@ -129,6 +129,62 @@ class TestStrictAlignmentGate(unittest.TestCase):
         self.assertEqual(out["api_id"], 4)
         self.assertEqual(out["api_hash"], OFFICIAL_API_CREDENTIALS[4])
 
+    def test_normalize_rejects_api4_paired_with_api6_hash(self):
+        from backend.app.services.device_profile import normalize_official_api_credentials
+
+        mixed = normalize_official_api_credentials({
+            "api_id": 4,
+            "api_hash": OFFICIAL_API_CREDENTIALS[6],
+        })
+        self.assertEqual(mixed["api_id"], 4)
+        self.assertEqual(mixed["api_hash"], OFFICIAL_API_CREDENTIALS[4])
+        self.assertTrue(mixed["api_hash_corrected"])
+        self.assertEqual(mixed["api_hash_was"], OFFICIAL_API_CREDENTIALS[6])
+
+    def test_telegram_x_keeps_android_x_lang_pack_when_pack_says_android(self):
+        sampled = {
+            "row": {
+                "device_model": "samsungSM-S918B",
+                "system_version": "SDK 33",
+                "perf_cat": 2,
+                "lang_pack": "android",
+                "app_version": "12.9.1 (69792)",
+                "app_version_pure": "12.9.1",
+                "app_build": "69792",
+                "api_id": 6,
+                "api_hash": OFFICIAL_API_CREDENTIALS[6],
+                "lang_code": "en",
+                "system_lang_code": "en-us",
+                "tz_offset": 0,
+            },
+            "pack": {"id": "p1", "alias": "gb", "country": "gb"},
+            "match": "country",
+            "created": False,
+        }
+        cfg = SimpleNamespace(
+            device_alignment_mode="loose",
+            strict_vault_device_alignment=False,
+            pin_app_version_substr="",
+            force_country_locale=False,
+            vault_fingerprint_replay=False,
+            official_client_emulation=False,
+            antisafety_aids={},
+            inject_vault_device_secret=False,
+            vault_attestation_persist_secrets=False,
+        )
+        with patch(
+            "backend.app.services.device_profile.ConfigManager.get_instance",
+            return_value=SimpleNamespace(config=cfg),
+        ), patch.object(
+            DeviceProfileManager,
+            "_manager",
+            return_value=SimpleNamespace(select_sample=lambda country: sampled),
+        ):
+            profile = DeviceProfileManager.get_resolved_profile("telegram_x", "gb")
+        self.assertEqual(profile["api_id"], 21724)
+        self.assertEqual(profile["api_hash"], OFFICIAL_API_CREDENTIALS[21724])
+        self.assertEqual(profile["lang_pack"], "android_x")
+
 
 class TestPushTokenClassify(unittest.TestCase):
     def test_empty_rejected(self):
@@ -273,6 +329,16 @@ class TestPushSlotConflicts(unittest.TestCase):
             attached=True,
         )
         self.assertTrue(any("类型冲突" in c for c in conflicts))
+
+
+class TestApiHashLogMask(unittest.TestCase):
+    def test_masks_full_hash(self):
+        shown = RegistrationOrchestrator._api_hash_for_log(
+            {"api_hash": OFFICIAL_API_CREDENTIALS[4]}
+        )
+        self.assertNotEqual(shown, OFFICIAL_API_CREDENTIALS[4])
+        self.assertTrue(shown.startswith("014b35b6"))
+        self.assertIn("…", shown)
 
 
 if __name__ == "__main__":

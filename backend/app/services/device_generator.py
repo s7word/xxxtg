@@ -25,7 +25,7 @@ from backend.app.services.device_db_manager import (
     country_dial_code,
     normalize_country,
 )
-from backend.app.services.device_profile import DeviceProfileManager
+from backend.app.services.device_profile import DeviceProfileManager, OFFICIAL_API_CREDENTIALS
 
 GENERIC_BRAND_WEIGHTS = {
     "samsung": 30, "xiaomi": 16, "other": 12, "oppo": 10,
@@ -33,8 +33,10 @@ GENERIC_BRAND_WEIGHTS = {
 }
 
 
+# 合成指纹包默认打官方 Android 主流凭证（api_id=6）。vault/严格对齐走 api_id=4，
+# get_resolved_profile 不会把包里的 6 盖到 telegram_android_public 上。
 OFFICIAL_API_ID = 6
-OFFICIAL_API_HASH = "eb06d4abfb49dc3eeb1aeb98ae0f581e"
+OFFICIAL_API_HASH = OFFICIAL_API_CREDENTIALS[6]
 
 # 近年官方 Telegram Android 发布矩阵（版本号 + 构建号）。
 # 只收录公开客户端可见的格式，避免生成不存在的 build。

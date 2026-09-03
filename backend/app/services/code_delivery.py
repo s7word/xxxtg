@@ -332,6 +332,57 @@ def resolve_code_delivery_plan(
     )
 
 
+def reconcile_delivery_plan_after_credentials(
+    config: Any,
+    profile: Dict[str, Any],
+    prior_plan: CodeDeliveryPlan,
+    *,
+    hunt_app_streak: int = 0,
+) -> CodeDeliveryPlan:
+    """凭证落地后按真实 api_id 重算通道计划。
+
+    第一阶段计划只决定「要不要去拉 Push」。若 auto 在无 Push 时回退到自建未泄露 ID，
+    仍沿用「必须 attach」的旧计划，会把 Settings 声称的 auto 回退变成永远发不出去。
+    """
+    fresh = resolve_code_delivery_plan(
+        config,
+        profile,
+        hunt_app_streak=hunt_app_streak,
+        force_sms_after_app=prior_plan.forced_sms,
+    )
+    if (
+        fresh.attach_push_token == prior_plan.attach_push_token
+        and fresh.effective_mode == prior_plan.effective_mode
+        and fresh.use_published_api_id == prior_plan.use_published_api_id
+        and fresh.should_request_push_token == prior_plan.should_request_push_token
+    ):
+        return prior_plan
+    extra = (
+        f"凭证落地后重算通道: {prior_plan.effective_mode}/attach="
+        f"{'是' if prior_plan.attach_push_token else '否'}"
+        f" → {fresh.effective_mode}/attach={'是' if fresh.attach_push_token else '否'}"
+        f"（api_id={profile.get('api_id')} source={profile.get('credential_source')}）"
+    )
+    return CodeDeliveryPlan(
+        mode=fresh.mode,
+        effective_mode=fresh.effective_mode,
+        should_request_push_token=fresh.should_request_push_token,
+        attach_push_token=fresh.attach_push_token,
+        allow_app_hash=fresh.allow_app_hash,
+        can_escalate_on_published_flood=fresh.can_escalate_on_published_flood,
+        use_published_api_id=fresh.use_published_api_id,
+        hunt_app_streak=fresh.hunt_app_streak,
+        forced_sms=fresh.forced_sms,
+        official_client_emulation=fresh.official_client_emulation,
+        emulation_label=fresh.emulation_label,
+        allow_firebase=fresh.allow_firebase,
+        unknown_number=fresh.unknown_number,
+        allow_flashcall=fresh.allow_flashcall,
+        allow_missed_call=fresh.allow_missed_call,
+        notes=fresh.notes + (extra,),
+    )
+
+
 def escalation_plan_after_published_flood(plan: CodeDeliveryPlan) -> CodeDeliveryPlan:
     """sms_first / 强制 SMS 遇 API_ID_PUBLISHED_FLOOD 后的一次性 Push escalate。"""
     return CodeDeliveryPlan(

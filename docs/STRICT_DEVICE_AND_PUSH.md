@@ -34,7 +34,7 @@ Settings →「严格设备对齐（vault 成功样本 + Telegram Expert）」�
 }
 ```
 
-关闭：把开关取消（`device_alignment_mode=loose`）。loose 下若实际 `api_id=4`，握手仍会写 `lang_pack=android` 与号国 tz（补生产缺口），但**不会**因缺字段拒绝发码，也不会钉死 4。
+关闭：把开关取消（`device_alignment_mode=loose`）。loose 下若实际官方 Android/X api_id（4/6/21724）或开启官方模拟，握手仍会写 `lang_pack` 与号国 tz（补生产缺口），但**不会**因缺字段拒绝发码，也不会钉死 4。
 
 严格模式缺字段 / 模拟器机型 → 日志 `严格设备对齐拒绝发码`，**不租号、不发码**。
 

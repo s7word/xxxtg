@@ -522,7 +522,14 @@ class DeviceProfileManager:
             profile["device_model"] = sampled_dev["device_model"]
             profile["system_version"] = sampled_dev["system_version"]
             profile["perf_cat"] = sampled_dev.get("perf_cat", 2)
-            profile["lang_pack"] = sampled_dev.get("lang_pack") or profile.get("lang_pack") or "android"
+            # 指纹包来自 Android Registrator，lang_pack 几乎总是 android。
+            # telegram_x 模板是 android_x，不能被包里的 android 覆盖，否则握手与 api_id=21724 自相矛盾。
+            sampled_lp = str(sampled_dev.get("lang_pack") or "").strip()
+            template_lp = str(profile.get("lang_pack") or "android").strip()
+            if sampled_lp and sampled_lp.lower() == template_lp.lower():
+                profile["lang_pack"] = sampled_lp
+            elif sampled_lp and template_lp.lower() in {"", "android"}:
+                profile["lang_pack"] = sampled_lp
             profile["device_pack_id"] = pack.get("id")
             profile["device_pack_alias"] = pack.get("alias")
             profile["device_pack_country"] = pack.get("country")

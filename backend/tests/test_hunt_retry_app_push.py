@@ -806,14 +806,20 @@ class TestHuntSwappableSendErrors(HuntRunMixin, unittest.IsolatedAsyncioTestCase
     """可换号的 sendCode 异常必须继续扫号，而不是烧掉剩余预算。"""
 
     async def asyncSetUp(self):
+        from backend.app.services.registrar import SendCodeFloodWindow
+
         self.manager = RegistrationTaskManager()
         self.manager.tasks = {}
         self.manager.batches = {}
         self._prev = RegistrationTaskManager._instance
         RegistrationTaskManager._instance = self.manager
         self.task_id = self.manager.create_task()
+        SendCodeFloodWindow.get().reset()
 
     async def asyncTearDown(self):
+        from backend.app.services.registrar import SendCodeFloodWindow
+
+        SendCodeFloodWindow.get().reset()
         RegistrationTaskManager._instance = self._prev
 
     async def test_invalid_phone_continues_hunting(self):
@@ -850,8 +856,8 @@ class TestHuntSwappableSendErrors(HuntRunMixin, unittest.IsolatedAsyncioTestCase
         # 只申请过一次 Push Token：坏号不该连带把 Token 换掉
         self.assertEqual(gw.get_push_token.await_count, 1)
 
-    async def test_api_id_published_flood_still_terminates(self):
-        """凭证层的全局故障换号也救不了，保持终止而不是继续烧预算。"""
+    async def test_api_id_published_flood_continues_hunt_by_default(self):
+        """API_ID_PUBLISHED_FLOOD 默认只丢本号；猎号继续下一号，不拦后续测试。"""
         from telethon.errors import ApiIdPublishedFloodError
 
         sms = FakeSms([
@@ -862,6 +868,39 @@ class TestHuntSwappableSendErrors(HuntRunMixin, unittest.IsolatedAsyncioTestCase
         with self._run_ctx(
             sms=sms,
             gw=gw,
+            send_code=AsyncMock(side_effect=ApiIdPublishedFloodError(request=None)),
+            extra=[
+                patch.object(RegistrationOrchestrator, "_resolve_custom_proxy", new=AsyncMock(return_value=None)),
+                patch("backend.app.services.registrar.BannedPhonesCache.remember"),
+            ],
+        ):
+            await RegistrationOrchestrator.run_registration(
+                task_id=self.task_id,
+                country="cl",
+                max_number_attempts=2,
+                no_number_retries=0,
+            )
+
+        task = self.manager.get_task(self.task_id)
+        self.assertEqual(sms.cancel_calls, ["act-1", "act-2"])
+        self.assertEqual(task["status"], "failed")
+        self.assertIn("HUNT_EXHAUSTED", task.get("error", ""))
+        logs = "\n".join(task.get("logs") or [])
+        self.assertIn("丢本号换号继续", logs)
+
+    async def test_api_id_published_flood_hard_stop_when_block_new(self):
+        """省钱硬停 flood_block_new_sends=true 才不再租下一号。"""
+        from telethon.errors import ApiIdPublishedFloodError
+
+        sms = FakeSms([
+            ("act-1", "+56911110001"),
+            ("act-2", "+56911110002"),
+        ])
+        gw = make_gateway()
+        with self._run_ctx(
+            sms=sms,
+            gw=gw,
+            config=make_config(flood_block_new_sends=True),
             send_code=AsyncMock(side_effect=ApiIdPublishedFloodError(request=None)),
             extra=[
                 patch.object(RegistrationOrchestrator, "_resolve_custom_proxy", new=AsyncMock(return_value=None)),

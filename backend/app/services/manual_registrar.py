@@ -39,6 +39,7 @@ from backend.app.services.attestation_gateway import AttestationGatewayService
 from backend.app.services.banned_phones import BannedPhonesCache, SOURCE_TELEGRAM_RPC
 from backend.app.services.code_delivery import (
     escalation_plan_after_published_flood,
+    reconcile_delivery_plan_after_credentials,
     resolve_code_delivery_plan,
 )
 from backend.app.services.device_alignment import (
@@ -662,6 +663,20 @@ class ManualRegistrationOrchestrator:
                     task_id,
                     f"⚠️ 未获取到有效 Push Token，且官方 api_id={original_api_id} "
                     f"属于已知公开泄露 ID，已自动回退至自建开发者凭证 (api_id={profile.get('api_id')})",
+                )
+            if profile.get("api_hash_corrected"):
+                await manager.append_log(
+                    task_id,
+                    f"⚠️ api_id={profile.get('api_id')} 的 api_hash 与官方固定配对不符，已纠正 "
+                    f"（避免 4 配 6 的 hash）"
+                )
+            reconciled = reconcile_delivery_plan_after_credentials(
+                config, profile, delivery_plan
+            )
+            if reconciled is not delivery_plan:
+                delivery_plan = reconciled
+                await RegistrationOrchestrator._log_code_delivery_plan(
+                    task_id, manager, delivery_plan
                 )
 
             session_path, meta_path, session_filename = session_artifact_paths(normalized)

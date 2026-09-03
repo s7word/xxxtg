@@ -14,6 +14,7 @@ from typing import Any, Dict, Optional
 from backend.app.services.device_alignment import (
     init_connection_should_set_lang_pack,
     init_connection_should_set_tz_offset,
+    official_lang_pack_for_api_id,
 )
 from telethon.tl import types
 
@@ -113,7 +114,9 @@ def apply_init_connection_overrides(
         return out
 
     if init_connection_should_set_lang_pack(config, profile):
-        lang_pack = str(profile.get("lang_pack") or "android").strip() or "android"
+        lang_pack = str(profile.get("lang_pack") or "").strip() or official_lang_pack_for_api_id(
+            profile.get("api_id")
+        )
         req.lang_pack = lang_pack
         out["lang_pack_set"] = True
         out["lang_pack"] = lang_pack

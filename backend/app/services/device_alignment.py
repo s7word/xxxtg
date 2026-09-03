@@ -10,6 +10,10 @@ from typing import Any, Dict, List, Optional, Tuple
 VAULT_STRICT_APP_VERSION_PIN = "12.7.3"
 VAULT_STRICT_API_ID = 4
 VAULT_STRICT_LANG_PACK = "android"
+# 官方 Android / Telegram X 握手必须带 lang_pack；仅钉 api_id=4 会漏掉 6 与 21724。
+OFFICIAL_ANDROID_INIT_API_IDS = frozenset({4, 6, 21724})
+OFFICIAL_TELEGRAM_X_API_ID = 21724
+OFFICIAL_TELEGRAM_X_LANG_PACK = "android_x"
 
 # Expert / vault 成功样本要求在发码前齐套的字段。
 STRICT_REQUIRED_FIELDS: Tuple[str, ...] = (
@@ -83,17 +87,44 @@ def is_strict_alignment(config: Any) -> bool:
     return False
 
 
+def official_lang_pack_for_api_id(api_id: Any) -> str:
+    """官方客户端 InitConnection.lang_pack：Android=android，Telegram X=android_x。"""
+    try:
+        aid = int(api_id or 0)
+    except (TypeError, ValueError):
+        aid = 0
+    if aid == OFFICIAL_TELEGRAM_X_API_ID:
+        return OFFICIAL_TELEGRAM_X_LANG_PACK
+    return VAULT_STRICT_LANG_PACK
+
+
+def _profile_api_id(profile: Optional[Dict[str, Any]]) -> int:
+    try:
+        return int((profile or {}).get("api_id") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def init_connection_should_patch_official_fingerprint(
+    config: Any,
+    profile: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """官方 Android/X 指纹、官方模拟、严格对齐：握手必须写 lang_pack / tz_offset。"""
+    if config is None:
+        return False
+    if is_strict_alignment(config):
+        return True
+    if bool(getattr(config, "official_client_emulation", False)):
+        return True
+    return _profile_api_id(profile) in OFFICIAL_ANDROID_INIT_API_IDS
+
+
 def init_connection_should_set_lang_pack(config: Any, profile: Optional[Dict[str, Any]] = None) -> bool:
     if config is None:
         return False
     if bool(getattr(config, "init_connection_set_lang_pack", False)):
         return True
-    if is_strict_alignment(config):
-        return True
-    try:
-        return int((profile or {}).get("api_id") or 0) == VAULT_STRICT_API_ID
-    except (TypeError, ValueError):
-        return False
+    return init_connection_should_patch_official_fingerprint(config, profile)
 
 
 def init_connection_should_set_tz_offset(config: Any, profile: Optional[Dict[str, Any]] = None) -> bool:
@@ -101,12 +132,7 @@ def init_connection_should_set_tz_offset(config: Any, profile: Optional[Dict[str
         return False
     if bool(getattr(config, "init_connection_set_tz_offset", False)):
         return True
-    if is_strict_alignment(config):
-        return True
-    try:
-        return int((profile or {}).get("api_id") or 0) == VAULT_STRICT_API_ID
-    except (TypeError, ValueError):
-        return False
+    return init_connection_should_patch_official_fingerprint(config, profile)
 
 
 def is_emulator_device(profile: Optional[Dict[str, Any]]) -> bool:

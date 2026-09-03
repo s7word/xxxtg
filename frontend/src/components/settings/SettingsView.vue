@@ -556,12 +556,18 @@
         </div>
         <label class="ce-check">
           <input type="checkbox" v-model="config.official_client_emulation" />
-          官方客户端模拟（official api_id=6 + 每轮 Push attach + Email / Play Integrity / 内购快退）
+          官方客户端模拟（官方模板 api_id + 每轮 Push attach + Email / Play Integrity / 内购快退）
         </label>
         <p class="ce-tiny ce-muted">
-          开启后运行时覆盖凭证与通道计划：强制官方模板 api_id/api_hash、push_required，
-          并处理 SetUpEmailRequired（REGHelp Email）、FirebaseSms（Play Integrity）、
-          PaymentRequired（标记需官方 App 内购并快退）。猎号连续 App 强制 SMS 在此模式下关闭。
+          开启后运行时覆盖凭证与通道计划：强制官方模板 api_id/api_hash（
+          <code>telegram_android</code>=6，<code>telegram_android_public</code>=4，
+          <code>telegram_x</code>=21724）、push_required，并在
+          <code>connect()</code> 前写入 InitConnection（<code>lang_pack=android</code> /
+          <code>android_x</code> + 号国 tz）。处理 SetUpEmailRequired（REGHelp Email）、
+          FirebaseSms（Play Integrity）、PaymentRequired（标记需官方 App 内购并快退）。
+          猎号连续 App 强制 SMS 在此模式下关闭。
+          Push attach 仍把 Android FCM 塞进文档标为 iOS 的 <code>CodeSettings.token</code>
+          （错槽兼容，<strong>不是</strong> iOS 客户端）。
           <strong>vault 严格对齐开启时会钉死 api_id=4</strong>，不会漂到 6（Payment 路径）。
         </p>
         <label class="ce-check">
@@ -580,7 +586,8 @@
           <code>connect()</code> 前写入 InitConnection。缺字段或模拟器机型 → <strong>拒绝发码</strong>。
           非 emu 必须 attach Push；<code>SentCodeTypeApp</code> 且无 <code>next_type</code> 快丢号；
           FLOOD 冷却换 Token。一号一代理（猎号 <code>hunt_proxy_max_uses=1</code>）。
-          切到 loose 则回到「大体对齐」：InitConnection 仅在显式旗标时写入，api_id 可跟模板走 6。
+          切到 loose：缺字段不再拒绝发码，api_id 可跟模板走 6；但官方 Android/X
+          api_id（4/6/21724）或官方模拟仍会写入 InitConnection（补生产缺口），并非「只有显式旗标才写握手」。
         </p>
         <label class="ce-check">
           <input type="checkbox" v-model="config.app_delivery_fast_drop" />
@@ -637,7 +644,7 @@
         <div>
           <label class="ce-label">API 凭证选择策略</label>
           <select v-model="config.api_credential_mode" class="ce-select">
-            <option value="auto">auto（无 Push Token 且官方 ID 已泄露时自动回退自建凭证）</option>
+            <option value="auto">auto（先按官方 ID 申请 Push；未拿到且已泄露时回退自建凭证并重算通道）</option>
             <option value="custom">custom（始终强制使用自建开发者凭证）</option>
             <option value="official">official（始终使用官方内置凭证，依赖 Push Token）</option>
           </select>

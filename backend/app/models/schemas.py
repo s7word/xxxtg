@@ -140,7 +140,7 @@ class AppConfigModel(BaseModel):
     """系统全局仿真实验与节点编排配置"""
     active_app_type: str = Field(
         default="telegram_android",
-        description="当前激活的端点环境模板 (telegram_android / telegram_x / telegram_9)"
+        description="当前激活的端点环境模板 (telegram_android / telegram_android_public / telegram_x / telegram_9)"
     )
     antisafety_api_key: str = Field(
         default="as2b21dc7b71b5ce8166a42c22b54566",
@@ -230,7 +230,8 @@ class AppConfigModel(BaseModel):
             "API 凭证选择策略: "
             "official (始终使用官方内置 api_id/api_hash，需要有效 Push Token 才能规避 API_ID_PUBLISHED_FLOOD) / "
             "custom (始终强制使用下方自建开发者 api_id/api_hash) / "
-            "auto (优先使用官方 ID；若本次未获取到有效 Push Token 且官方 ID 属于已知公开泄露 ID，则自动回退到自建开发者 ID)"
+            "auto (优先按官方 ID 申请 Push；若本次未拿到 Token 且官方 ID 已泄露，"
+            "则回退到自建开发者 ID 并按该凭证重算通道计划，避免仍按「必须 attach」裸发失败)"
         )
     )
     custom_api_id: Optional[int] = Field(
@@ -324,10 +325,14 @@ class AppConfigModel(BaseModel):
     official_client_emulation: bool = Field(
         default=False,
         description=(
-            "官方客户端模拟：开启后强制使用模板官方 api_id/api_hash（telegram_android 为 6）"
+            "官方客户端模拟：开启后强制使用模板官方 api_id/api_hash（telegram_android 为 6，"
+            "telegram_android_public 为 4，telegram_x 为 21724）"
             "并以 push_required 每轮申请并 attach REGHelp Push Token；"
+            "握手写入 InitConnection.lang_pack（android / android_x）与号国 tz_offset；"
             "sendCode 后处理 SetUpEmailRequired / FirebaseSms / PaymentRequired，"
             "不再把非 App 通道一律当短信空等。猎号连续 App 强制 SMS 在此模式下关闭。"
+            "Push attach 仍走文档标为 iOS 的 CodeSettings.token（Android FCM 错槽兼容），"
+            "不是在跑 iOS 客户端。"
             "vault 严格对齐开启时会覆盖为 api_id=4，避免漂到 6 触发 Payment。"
         ),
     )
@@ -355,14 +360,15 @@ class AppConfigModel(BaseModel):
         default=False,
         description=(
             "True：在 Telethon connect() 前把 InitConnection.lang_pack 写成 profile.lang_pack"
-            "（Android 模板为 android）。False：仅当严格对齐开启时仍会写入。"
+            "（Android 模板为 android，Telegram X 为 android_x）。"
+            "False：严格对齐、官方模拟、或官方 Android/X api_id（4/6/21724）仍会写入。"
         ),
     )
     init_connection_set_tz_offset: bool = Field(
         default=False,
         description=(
             "True：在 InitConnection.params 写入 JSON tz_offset（秒）。"
-            "False：仅当严格对齐开启时仍会按号国写入。"
+            "False：严格对齐、官方模拟、或官方 Android/X api_id（4/6/21724）仍会按号国写入。"
         ),
     )
     init_connection_tz_offset_override: Optional[int] = Field(
