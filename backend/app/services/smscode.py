@@ -621,7 +621,11 @@ class SmsCodeService:
         self,
         products: List[Dict[str, Any]],
         max_price: Optional[float],
+        *,
+        min_price: Optional[float] = None,
+        product_id: Optional[int] = None,
     ) -> Dict[str, Any]:
+        want_id = _as_int(product_id)
         candidates: List[Tuple[float, int, Dict[str, Any]]] = []
         for item in products:
             if not isinstance(item, dict) or item.get("active") is False:
@@ -629,9 +633,14 @@ class SmsCodeService:
             available = _as_int(item.get("available"), 0) or 0
             if available <= 0:
                 continue
+            item_id = _as_int(item.get("id"))
+            if want_id is not None and item_id != want_id:
+                continue
             cost = parse_money_usd(item.get("price"))
             if cost is None:
                 cost = 0.0
+            if min_price is not None and cost < min_price:
+                continue
             if max_price is not None and cost > max_price:
                 continue
             candidates.append((cost, -available, item))
@@ -640,6 +649,53 @@ class SmsCodeService:
         candidates.sort(key=lambda row: (row[0], row[1]))
         return candidates[0][2]
 
+    async def list_priced_products(
+        self,
+        country: Union[str, int] = "id",
+        service: str = DEFAULT_SERVICE,
+        *,
+        max_price: Optional[float] = None,
+        min_price: Optional[float] = None,
+        operator: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """列出某国某服务的可租产品档位（按价格升序），便于切换供应商通道。"""
+        country_id = await self.resolve_country_id(country)
+        platform = await self._resolve_telegram_platform(service, country_id=country_id)
+        platform_id = _as_int(platform.get("id"))
+        operator_id = _as_int(operator) if operator and str(operator).strip().isdigit() else None
+        products = await self.list_products(
+            country_id=country_id,
+            platform_id=platform_id,
+            operator_id=operator_id,
+        )
+        rows: List[Dict[str, Any]] = []
+        for item in products:
+            if not isinstance(item, dict) or item.get("active") is False:
+                continue
+            available = _as_int(item.get("available"), 0) or 0
+            if available <= 0:
+                continue
+            cost = parse_money_usd(item.get("price"))
+            if cost is None:
+                continue
+            if min_price is not None and cost < min_price:
+                continue
+            if max_price is not None and cost > max_price:
+                continue
+            rows.append(
+                {
+                    "product_id": _as_int(item.get("id")),
+                    "catalog_product_id": _as_int(item.get("catalog_product_id")),
+                    "price": cost,
+                    "available": available,
+                    "name": item.get("name") or item.get("title"),
+                    "operator_id": item.get("operator_id"),
+                    "raw": item,
+                }
+            )
+        rows.sort(key=lambda r: (float(r["price"]), -int(r["available"] or 0)))
+        return rows
+
     async def get_number(
         self,
         country: Union[str, int] = "id",
@@ -647,6 +703,8 @@ class SmsCodeService:
         operator: Optional[str] = None,
         provider_ids: Optional[Union[str, List[str]]] = None,
         max_price: Optional[float] = None,
+        min_price: Optional[float] = None,
+        product_id: Optional[int] = None,
     ) -> Tuple[str, str]:
         iso = await self.resolve_country_iso2(country)
         country_id = await self.resolve_country_id(country)
@@ -660,28 +718,48 @@ class SmsCodeService:
         )
         bid = normalize_sms_max_price(max_price)
         bid_str = format_sms_max_price(bid)
+        floor = normalize_sms_max_price(min_price)
+        floor_str = format_sms_max_price(floor)
+        want_product_id = _as_int(product_id)
         try:
-            picked = self._pick_product(products, bid)
+            picked = self._pick_product(
+                products,
+                bid,
+                min_price=floor,
+                product_id=want_product_id,
+            )
         except KeyError:
+            hint = f"max_price={bid_str or '未设置'}"
+            if floor_str:
+                hint = f"min_price={floor_str},{hint}"
+            if want_product_id is not None:
+                hint = f"product_id={want_product_id},{hint}"
             raise NoNumberAvailableError(
                 iso or str(country),
-                f"no free phones under max_price={bid_str or '未设置'}",
+                f"no free phones under {hint}",
             )
         catalog_product_id = _as_int(picked.get("catalog_product_id"))
-        product_id = _as_int(picked.get("id"))
-        body: Dict[str, Any] = {"quantity": 1, "policy": "cheapest"}
-        if catalog_product_id is not None:
+        picked_product_id = _as_int(picked.get("id"))
+        # 指定 product_id：直接锁通道（API 不允许再附 max_price/prefer_provider）。
+        # 否则走 catalog_product_id + 价格带，可轮换不同供应商档位。
+        body: Dict[str, Any] = {"quantity": 1}
+        if want_product_id is not None and picked_product_id is not None:
+            body["product_id"] = picked_product_id
+        elif catalog_product_id is not None:
             body["catalog_product_id"] = catalog_product_id
+            body["policy"] = "cheapest"
+            if floor_str is not None:
+                body["min_price"] = floor_str
             if bid_str is not None:
                 body["max_price"] = bid_str
-        elif product_id is not None:
-            body["product_id"] = product_id
+        elif picked_product_id is not None:
+            body["product_id"] = picked_product_id
         else:
             raise SmsCodeError(f"产品缺少 catalog_product_id/product_id: {picked}")
         if operator_id is not None and "catalog_product_id" in body:
             body["operator_id"] = operator_id
         prefer = None
-        if provider_ids:
+        if provider_ids and "catalog_product_id" in body:
             if isinstance(provider_ids, (list, tuple, set)):
                 prefer = next((str(x).strip() for x in provider_ids if str(x).strip()), None)
             else:
@@ -689,10 +767,13 @@ class SmsCodeService:
         if prefer:
             body["prefer_provider"] = prefer
         logger.info(
-            "向 SMSCode 申请租号 (country=%s/%s, catalog_product_id=%s, maxPrice=%s, key=%s)...",
+            "向 SMSCode 申请租号 (country=%s/%s, product_id=%s, catalog_product_id=%s, "
+            "minPrice=%s, maxPrice=%s, key=%s)...",
             country_id,
             (iso or "?").upper(),
-            body.get("catalog_product_id") or body.get("product_id"),
+            body.get("product_id"),
+            body.get("catalog_product_id"),
+            floor_str if floor_str is not None else "未设置",
             bid_str if bid_str is not None else "未设置",
             mask_api_key(self.api_key),
         )

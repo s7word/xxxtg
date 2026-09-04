@@ -11,7 +11,7 @@
 
     python /app/backend/scripts/batch_rebind_ve_smscode.py \\
         --account-dir lod_user/10_91 \\
-        --tries-per-account 5 --concurrency 10 --max-price 1.5 --fresh-results
+        --tries-per-account 3 --concurrency 10 --max-price 0.8 --fresh-results
 """
 from __future__ import annotations
 
@@ -299,7 +299,7 @@ async def preflight_account(account_json: Path, proxy: Dict[str, Any]) -> Dict[s
 
 
 class RentGate:
-    """租号闸：仅对单次 getNumber API 持锁，sleep 放锁外，保证 10 路真正并发。"""
+    """租号闸：在 ≤max_price 的 SMSCode 产品通道间轮换；API 调用串行，sleep 放锁外。"""
 
     def __init__(self, sms: SmsCodeService, country: str = TARGET_COUNTRY) -> None:
         self._lock = asyncio.Lock()
@@ -308,27 +308,107 @@ class RentGate:
         self.rented = 0
         self.no_stock_hits = 0
         self.failures = 0
+        self._products: List[Dict[str, Any]] = []
+        self._cursor = 0
+        self._product_stats: Counter = Counter()
+        self.rotate_products = True
 
-    async def rent(self, max_price: float) -> Tuple[str, str]:
+    async def refresh_products(self, max_price: float) -> List[Dict[str, Any]]:
+        rows = await self.sms.list_priced_products(
+            self.country, service="tg", max_price=max_price
+        )
+        self._products = [r for r in rows if r.get("product_id")]
+        self._cursor = 0
+        logger.info(
+            "[租号闸] 刷新产品通道 max_price=%.4f count=%d → %s",
+            max_price,
+            len(self._products),
+            [
+                f"{r.get('product_id')}@${float(r.get('price') or 0):.4f}/stk={r.get('available')}"
+                for r in self._products
+            ],
+        )
+        return self._products
+
+    def _next_product(self) -> Optional[Dict[str, Any]]:
+        if not self._products:
+            return None
+        prod = self._products[self._cursor % len(self._products)]
+        self._cursor += 1
+        return prod
+
+    def demote_product(self, product_id: Any, reason: str = "") -> None:
+        """某通道接码失败后暂时移出轮换，优先试其它供应商档位。"""
+        if product_id is None:
+            return
+        before = len(self._products)
+        self._products = [p for p in self._products if p.get("product_id") != product_id]
+        if len(self._products) != before:
+            logger.warning(
+                "[租号闸] 降级通道 product_id=%s reason=%s 剩余=%d",
+                product_id,
+                reason or "n/a",
+                len(self._products),
+            )
+
+    async def rent(self, max_price: float) -> Tuple[str, str, Dict[str, Any]]:
         last_err: Optional[BaseException] = None
+        meta: Dict[str, Any] = {}
         for i in range(1, RENT_INNER_RETRIES + 1):
             try:
                 async with self._lock:
-                    act_id, phone = await self.sms.get_number(
-                        self.country, service="tg", max_price=max_price
-                    )
+                    if self.rotate_products and not self._products:
+                        await self.refresh_products(max_price)
+                    product = self._next_product() if self.rotate_products else None
+                    if product and product.get("product_id"):
+                        meta = {
+                            "product_id": product.get("product_id"),
+                            "catalog_product_id": product.get("catalog_product_id"),
+                            "product_price": product.get("price"),
+                            "product_name": product.get("name"),
+                            "product_available": product.get("available"),
+                        }
+                        act_id, phone = await self.sms.get_number(
+                            self.country,
+                            service="tg",
+                            product_id=int(product["product_id"]),
+                        )
+                    else:
+                        meta = {"product_id": None, "mode": "catalog_cheapest"}
+                        act_id, phone = await self.sms.get_number(
+                            self.country, service="tg", max_price=max_price
+                        )
                 self.rented += 1
+                pid = meta.get("product_id")
+                if pid is not None:
+                    self._product_stats[str(pid)] += 1
                 logger.info(
-                    "[租号闸] 成功 #%d order=%s phone=%s (inner=%d)",
+                    "[租号闸] 成功 #%d order=%s phone=%s product_id=%s price=%s (inner=%d)",
                     self.rented,
                     act_id,
                     phone,
+                    meta.get("product_id"),
+                    meta.get("product_price"),
                     i,
                 )
-                return str(act_id), _normalize_plus(phone)
+                return str(act_id), _normalize_plus(phone), meta
             except NoNumberAvailableError as exc:
                 self.no_stock_hits += 1
                 last_err = exc
+                # 当前通道无号：刷新目录并跳过该 product
+                async with self._lock:
+                    dead = meta.get("product_id")
+                    if dead is not None:
+                        self._products = [
+                            p for p in self._products if p.get("product_id") != dead
+                        ]
+                        logger.warning(
+                            "[租号闸] 通道 product_id=%s 无号，剩余通道 %d",
+                            dead,
+                            len(self._products),
+                        )
+                    else:
+                        await self.refresh_products(max_price)
                 logger.warning(
                     "[租号闸] VE 无库存 inner=%d/%d: %s",
                     i,
@@ -647,10 +727,18 @@ async def one_attempt(
         else:
             last_occupied: Optional[BaseException] = None
             for rent_i in range(1, OCCUPIED_RENT_RETRIES + 1):
-                order_id, new_phone = await rent_gate.rent(max_price)
-                rent_trail.append({"order_id": order_id, "phone": new_phone})
+                order_id, new_phone, product_meta = await rent_gate.rent(max_price)
+                rent_trail.append({
+                    "order_id": order_id,
+                    "phone": new_phone,
+                    "product_id": product_meta.get("product_id"),
+                    "product_price": product_meta.get("product_price"),
+                })
                 record["order_id"] = order_id
                 record["new_phone"] = new_phone
+                record["product_id"] = product_meta.get("product_id")
+                record["product_price"] = product_meta.get("product_price")
+                record["catalog_product_id"] = product_meta.get("catalog_product_id")
                 record["rent_index"] = rent_i
                 record["occupied_skips"] = occupied_skips
                 try:
@@ -744,6 +832,8 @@ async def one_attempt(
 
     record["elapsed_s"] = round(time.time() - t0, 1)
     record["class"] = classify_error(record)
+    if record.get("class") == "SMS_TIMEOUT" and record.get("product_id") is not None:
+        rent_gate.demote_product(record.get("product_id"), reason="SMS_TIMEOUT")
     logger.info(
         "→ [%s] #%d class=%s stage=%s elapsed=%ss error=%s",
         label,
@@ -802,15 +892,27 @@ async def probe_smscode(sms: SmsCodeService) -> Dict[str, Any]:
         cid = await sms.resolve_country_id(TARGET_COUNTRY)
         info["country_id"] = cid
         try:
-            products = await sms.list_products(country_id=cid)
-            info["products"] = len(products) if isinstance(products, list) else None
+            priced = await sms.list_priced_products(
+                TARGET_COUNTRY, service="tg", max_price=0.8
+            )
+            info["products"] = len(priced)
+            info["channels_le_0_8"] = [
+                {
+                    "product_id": r.get("product_id"),
+                    "price": r.get("price"),
+                    "available": r.get("available"),
+                    "name": r.get("name"),
+                }
+                for r in priced
+            ]
         except Exception as exc:
             info["products_error"] = f"{type(exc).__name__}: {exc}"
         logger.info(
-            "[SMSCode] 余额=%s VE country_id=%s products=%s",
+            "[SMSCode] 余额=%s VE country_id=%s channels(≤0.8)=%s detail=%s",
             bal,
             cid,
             info.get("products"),
+            info.get("channels_le_0_8"),
         )
     except Exception as exc:
         info["error"] = f"{type(exc).__name__}: {exc}"
@@ -863,6 +965,7 @@ async def main_async(args: argparse.Namespace) -> int:
 
     sms = SmsCodeService(key)
     rent_gate = RentGate(sms, TARGET_COUNTRY)
+    await rent_gate.refresh_products(args.max_price)
     sms_info = await probe_smscode(sms)
     if sms_info.get("error") and not args.dry_run:
         logger.error("SMSCode 不可用，中止: %s", sms_info["error"])
@@ -1003,6 +1106,16 @@ async def main_async(args: argparse.Namespace) -> int:
         "tries_per_account": args.tries_per_account,
         "concurrency": args.concurrency,
         "max_price": args.max_price,
+        "product_channels": [
+            {
+                "product_id": r.get("product_id"),
+                "price": r.get("price"),
+                "available": r.get("available"),
+                "name": r.get("name"),
+            }
+            for r in getattr(rent_gate, "_products", []) or []
+        ],
+        "product_rent_stats": dict(getattr(rent_gate, "_product_stats", {}) or {}),
         "target_rents": len(ok_pairs) * args.tries_per_account,
         "rented": rent_gate.rented,
         "no_stock_hits": rent_gate.no_stock_hits,
@@ -1044,7 +1157,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--tries-per-account", type=int, default=5)
     p.add_argument("--concurrency", type=int, default=10)
     p.add_argument("--max-accounts", type=int, default=0)
-    p.add_argument("--max-price", type=float, default=1.5, help="SMSCode 租号最高出价（账户结算币种）")
+    p.add_argument("--max-price", type=float, default=0.8, help="SMSCode 租号最高出价 USD；会在 ≤该价的产品通道间轮换")
     p.add_argument("--sms-attempts", type=int, default=60, help="每轮 SMS 轮询次数（×约4s）")
     p.add_argument("--pause-between", type=float, default=1.0)
     p.add_argument("--skip-proxy-probe", action="store_true")
