@@ -1,16 +1,13 @@
 #!/usr/bin/env python3
-"""委内瑞拉换绑并发探测：账号与 VE 代理 1:1，每账号申请 N 个 SMSCode 号。
+"""换绑并发探测：账号与目标国住宅代理 1:1，每账号申请 N 个 SMSCode 号。
 
-默认 lod_user/10_91 × 10 并发 × 每号 5 次（共申请 50 个号码）。
-跑满配额，不因个别成功提前退出全部任务。
-
-接码：SMSCode（smscode.gg）；遇 RECAPTCHA_CHECK 走 REGHelp。
-代理：Proxy-Seller 住宅/TG 列表 VE_tg，发码/MTProto 禁止直连。
+默认 lod_user/10_91 × 10 并发。用 --country 切换国家（代理走 {CC}_tg，与号码国对齐）。
+接码：SMSCode；遇 RECAPTCHA_CHECK 走 REGHelp。发码/MTProto 禁止直连。
 
 用法（必须在 edgenode-backend 容器内）::
 
-    python /app/backend/scripts/batch_rebind_ve_smscode.py \\
-        --account-dir lod_user/10_91 \\
+    python /app/backend/scripts/batch_rebind_ve_smscode.py \
+        --country co --account-dir lod_user/10_91 \
         --tries-per-account 3 --concurrency 10 --max-price 0.8 --fresh-results
 """
 from __future__ import annotations
@@ -78,6 +75,19 @@ TARGET_COUNTRY = "ve"
 RESULT_JSONL = "rebind_ve_smscode_results.jsonl"
 SUMMARY_JSON = "rebind_ve_smscode_summary.json"
 RUN_LOG = "rebind_ve_smscode_run.log"
+
+
+def set_target_country(country: str) -> str:
+    """切换目标国，并同步默认产物文件名 rebind_{cc}_smscode_*。"""
+    global TARGET_COUNTRY, RESULT_JSONL, SUMMARY_JSON, RUN_LOG
+    cc = (country or "ve").strip().lower()
+    if len(cc) != 2 or not cc.isalpha():
+        raise ValueError(f"国家码必须是 ISO-2，收到: {country!r}")
+    TARGET_COUNTRY = cc
+    RESULT_JSONL = f"rebind_{cc}_smscode_results.jsonl"
+    SUMMARY_JSON = f"rebind_{cc}_smscode_summary.json"
+    RUN_LOG = f"rebind_{cc}_smscode_run.log"
+    return cc
 RENT_INNER_RETRIES = 8
 RENT_NO_STOCK_SLEEP = 12.0
 RENT_ERROR_SLEEP = 6.0
@@ -126,7 +136,7 @@ def discover_accounts(account_dir: Path) -> List[Path]:
     return rows
 
 
-async def fetch_ve_proxy_pool(need: int, probe: bool = True) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+async def fetch_country_proxy_pool(need: int, probe: bool = True) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     cfg = ConfigManager.get_instance().config
     if not (cfg.proxy_seller_key or "").strip():
         raise RuntimeError("config.proxy_seller_key 为空")
@@ -137,7 +147,8 @@ async def fetch_ve_proxy_pool(need: int, probe: bool = True) -> Tuple[List[Dict[
         ensured = await svc.ensure_tg_resident_list(TARGET_COUNTRY, create=True, ports=ports)
         raw = list(ensured.get("proxies") or [])
         logger.info(
-            "[代理池] ensure VE_tg success=%s created=%s count=%s msg=%s",
+            "[代理池] ensure %s_tg success=%s created=%s count=%s msg=%s",
+            TARGET_COUNTRY.upper(),
             ensured.get("success"),
             ensured.get("created"),
             len(raw),
@@ -153,7 +164,7 @@ async def fetch_ve_proxy_pool(need: int, probe: bool = True) -> Tuple[List[Dict[
             "hint": ensured.get("hint"),
         }
         if not raw:
-            raise RuntimeError(ensured.get("message") or "VE_tg 代理池为空")
+            raise RuntimeError(ensured.get("message") or "目标国 _tg 代理池为空")
 
         unique: List[Dict[str, Any]] = []
         seen: set[str] = set()
@@ -204,15 +215,35 @@ async def fetch_ve_proxy_pool(need: int, probe: bool = True) -> Tuple[List[Dict[
                 row.setdefault("healthy", True)
                 probed.append(row)
 
+        def _egress_cc(item: Dict[str, Any]) -> str:
+            return str(
+                item.get("egress_country_code")
+                or item.get("country_code")
+                or ""
+            ).strip().upper()
+
+        want = TARGET_COUNTRY.upper()
         healthy = [p for p in probed if p.get("healthy")]
         weak = [p for p in probed if not p.get("healthy")]
-        selected = (healthy + weak)[:need]
+        healthy_aligned = [p for p in healthy if _egress_cc(p) == want]
+        healthy_other = [p for p in healthy if _egress_cc(p) != want]
+        weak_aligned = [p for p in weak if _egress_cc(p) == want]
+        weak_other = [p for p in weak if _egress_cc(p) != want]
+        selected = (healthy_aligned + healthy_other + weak_aligned + weak_other)[:need]
+        logger.info(
+            "[代理池] 对齐筛选 want=%s healthy_aligned=%d/%d selected=%d",
+            want,
+            len(healthy_aligned),
+            len(healthy),
+            len(selected),
+        )
         if len(selected) < need:
             logger.warning(
-                "VE 代理不足：需要 %s 个不同 identity，实际 %s（healthy=%s）",
+                "目标国代理不足：需要 %s 个不同 identity，实际 %s（healthy=%s aligned=%s）",
                 need,
                 len(selected),
                 len(healthy),
+                len(healthy_aligned),
             )
         for i, p in enumerate(selected, 1):
             logger.info(
@@ -908,8 +939,9 @@ async def probe_smscode(sms: SmsCodeService) -> Dict[str, Any]:
         except Exception as exc:
             info["products_error"] = f"{type(exc).__name__}: {exc}"
         logger.info(
-            "[SMSCode] 余额=%s VE country_id=%s channels(≤0.8)=%s detail=%s",
+            "[SMSCode] 余额=%s country=%s country_id=%s channels(≤0.8)=%s detail=%s",
             bal,
+            TARGET_COUNTRY.upper(),
             cid,
             info.get("products"),
             info.get("channels_le_0_8"),
@@ -940,6 +972,7 @@ def _setup_logging(log_path: Path) -> None:
 
 
 async def main_async(args: argparse.Namespace) -> int:
+    set_target_country(getattr(args, "country", None) or TARGET_COUNTRY)
     data_dir = REPO_ROOT / "data"
     log_path = Path(args.log_file) if args.log_file else data_dir / RUN_LOG
     if not log_path.is_absolute():
@@ -984,7 +1017,7 @@ async def main_async(args: argparse.Namespace) -> int:
         key_source,
     )
 
-    proxies, proxy_meta = await fetch_ve_proxy_pool(need, probe=not args.skip_proxy_probe)
+    proxies, proxy_meta = await fetch_country_proxy_pool(need, probe=not args.skip_proxy_probe)
     n_bind = min(len(accounts), len(proxies), args.concurrency)
     pairs = list(zip(accounts[:n_bind], proxies[:n_bind]))
     skipped_no_proxy = accounts[n_bind:]
@@ -1152,7 +1185,8 @@ async def main_async(args: argparse.Namespace) -> int:
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="委内瑞拉换绑 10 并发 × 每号 5 次（SMSCode）")
+    p = argparse.ArgumentParser(description="换绑并发探测（SMSCode + 目标国对齐代理）")
+    p.add_argument("--country", default="co", help="目标国 ISO-2（号码+代理对齐，默认 co）")
     p.add_argument("--account-dir", default=DEFAULT_ACCOUNT_DIR)
     p.add_argument("--tries-per-account", type=int, default=5)
     p.add_argument("--concurrency", type=int, default=10)
