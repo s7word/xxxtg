@@ -94,6 +94,78 @@ RENT_ERROR_SLEEP = 6.0
 SMS_POLL_INTERVAL = 4.0
 # 单次 attempt 内遇 PHONE_NUMBER_OCCUPIED 自动 cancel+重租，不消耗外层 tries 配额浪费。
 OCCUPIED_RENT_RETRIES = 8
+WAIT_SUPPLIER_POLL_SEC = 15.0
+
+
+async def wait_for_priced_suppliers(
+    sms: SmsCodeService,
+    *,
+    country: str,
+    max_price: float,
+    need: int,
+    timeout_sec: float,
+    probe_rent: bool = False,
+) -> List[Dict[str, Any]]:
+    """轮询 SMSCode 目录，直到出现 need 个 ≤max_price 的供应商（可选实测可租）。"""
+    if need <= 0:
+        return []
+    deadline = time.time() + max(0.0, float(timeout_sec))
+    round_i = 0
+    last_snapshot: List[Dict[str, Any]] = []
+    while True:
+        round_i += 1
+        rows = await sms.list_priced_products(
+            country=country, service="tg", max_price=max_price
+        )
+        last_snapshot = list(rows)
+        logger.info(
+            "[等供应商] round=%d under_max=%.4f count=%d need=%d → %s",
+            round_i,
+            max_price,
+            len(rows),
+            need,
+            [
+                f"{r.get('product_id')}@${float(r.get('price') or 0):.4f}/stk={r.get('available')}"
+                for r in rows[:12]
+            ],
+        )
+        picked: List[Dict[str, Any]] = []
+        if not probe_rent:
+            picked = rows[:need]
+        else:
+            for r in rows:
+                if len(picked) >= need:
+                    break
+                pid = r.get("product_id")
+                if pid is None:
+                    continue
+                try:
+                    act_id, phone = await sms.get_number(
+                        country, service="tg", product_id=int(pid)
+                    )
+                    logger.info(
+                        "[等供应商] 探活成功 product_id=%s price=%s phone=%s order=%s",
+                        pid,
+                        r.get("price"),
+                        phone,
+                        act_id,
+                    )
+                    picked.append(dict(r))
+                    try:
+                        await sms.cancel(str(act_id), wait_if_too_early=True, max_wait=150.0)
+                    except Exception as ce:
+                        logger.warning("[等供应商] 探活号取消失败 order=%s: %s", act_id, ce)
+                except Exception as exc:
+                    logger.warning("[等供应商] 探活失败 product_id=%s: %s", pid, exc)
+        if len(picked) >= need:
+            return picked[:need]
+        if time.time() >= deadline:
+            raise RuntimeError(
+                f"等待 ≤${max_price:.4f} 供应商超时：目录可见 {len(last_snapshot)} 个，"
+                f"可用/探活 {len(picked)} 个，需要 {need} 个。"
+                f" 当前={[(r.get('product_id'), r.get('price'), r.get('available')) for r in last_snapshot[:10]]}"
+            )
+        await asyncio.sleep(WAIT_SUPPLIER_POLL_SEC)
 
 
 def _utc_now() -> str:
@@ -372,17 +444,25 @@ class RentGate:
             prod = self._products[self._cursor % len(self._products)]
             self._cursor += 1
             return prod
-        # 固定配额：仅在仍有剩余额度的供应商间轮询
+        # 固定配额：只挑选仍有额度的供应商；额度在租号成功后再扣减
         n = len(self._products)
         for _ in range(n):
             prod = self._products[self._cursor % n]
             self._cursor += 1
             pid = str(prod.get("product_id"))
             if self._quota.get(pid, 0) > 0:
-                self._quota[pid] -= 1
-                self._quota_used += 1
                 return prod
         return None
+
+    def _consume_quota(self, product_id: Any) -> None:
+        if not self.fixed_quota_mode or product_id is None:
+            return
+        pid = str(product_id)
+        left = int(self._quota.get(pid, 0) or 0)
+        if left <= 0:
+            return
+        self._quota[pid] = left - 1
+        self._quota_used += 1
 
     def set_fixed_product_quota(self, products: List[Dict[str, Any]], per_product: int) -> int:
         """锁定供应商列表，每个 product_id 固定测 per_product 次（合计 len*per）。"""
@@ -464,6 +544,8 @@ class RentGate:
                 pid = meta.get("product_id")
                 if pid is not None:
                     self._product_stats[str(pid)] += 1
+                async with self._lock:
+                    self._consume_quota(pid)
                 logger.info(
                     "[租号闸] 成功 #%d order=%s phone=%s product_id=%s price=%s (inner=%d)",
                     self.rented,
@@ -477,10 +559,10 @@ class RentGate:
             except NoNumberAvailableError as exc:
                 self.no_stock_hits += 1
                 last_err = exc
-                # 当前通道无号：刷新目录并跳过该 product
+                # 当前通道无号：非固定配额才踢出；固定配额保留通道以便凑满每供应商次数
                 async with self._lock:
                     dead = meta.get("product_id")
-                    if dead is not None:
+                    if dead is not None and not self.fixed_quota_mode:
                         self._products = [
                             p for p in self._products if p.get("product_id") != dead
                         ]
@@ -489,7 +571,12 @@ class RentGate:
                             dead,
                             len(self._products),
                         )
-                    else:
+                    elif dead is not None and self.fixed_quota_mode:
+                        logger.warning(
+                            "[租号闸] 固定配额保留通道 product_id=%s（暂无号，稍后重试）",
+                            dead,
+                        )
+                    elif not self.fixed_quota_mode:
                         await self.refresh_products(max_price)
                 logger.warning(
                     "[租号闸] %s 无库存 inner=%d/%d: %s",
@@ -1055,7 +1142,26 @@ async def main_async(args: argparse.Namespace) -> int:
 
     sms = SmsCodeService(key)
     rent_gate = RentGate(sms, TARGET_COUNTRY)
-    await rent_gate.refresh_products(args.max_price)
+    wait_n = int(getattr(args, "wait_suppliers", 0) or 0)
+    suppliers_cap = int(getattr(args, "suppliers", 0) or 0)
+    if wait_n > 0:
+        waited = await wait_for_priced_suppliers(
+            sms,
+            country=TARGET_COUNTRY,
+            max_price=float(args.max_price),
+            need=wait_n,
+            timeout_sec=float(getattr(args, "wait_timeout_sec", 1800) or 1800),
+            probe_rent=bool(getattr(args, "probe_rent", False)),
+        )
+        rent_gate._products = list(waited)
+        rent_gate._cursor = 0
+        logger.info(
+            "[等供应商] 已锁定 %d 个通道: %s",
+            len(waited),
+            [f"{r.get('product_id')}@${float(r.get('price') or 0):.4f}" for r in waited],
+        )
+    else:
+        await rent_gate.refresh_products(args.max_price)
     if int(getattr(args, "per_product", 0) or 0) > 0:
         products = list(rent_gate._products)
         raw_ids = [x.strip() for x in str(getattr(args, "product_ids", "") or "").split(",") if x.strip()]
@@ -1065,6 +1171,12 @@ async def main_async(args: argparse.Namespace) -> int:
             missing = want - {str(r.get("product_id")) for r in products}
             if missing:
                 logger.warning("指定 product_id 未在 ≤max_price 通道中找到: %s", sorted(missing))
+        if suppliers_cap > 0:
+            products = products[:suppliers_cap]
+        if wait_n > 0 and len(products) < wait_n:
+            raise RuntimeError(
+                f"锁定供应商不足：got={len(products)} need={wait_n} max_price={args.max_price}"
+            )
         total_quota = rent_gate.set_fixed_product_quota(products, int(args.per_product))
         # 10 账号均分：向上取整，保证能跑满配额
         n_acc = max(1, len(accounts))
@@ -1288,6 +1400,29 @@ def parse_args() -> argparse.Namespace:
         "--product-ids",
         default="",
         help="可选，逗号分隔 product_id；空则使用 ≤max-price 全部通道",
+    )
+    p.add_argument(
+        "--suppliers",
+        type=int,
+        default=0,
+        help=">0 时：只取 ≤max-price 最便宜的 N 个供应商（配合 --per-product）",
+    )
+    p.add_argument(
+        "--wait-suppliers",
+        type=int,
+        default=0,
+        help=">0 时：开跑前轮询目录，等到出现 N 个 ≤max-price 供应商再锁定",
+    )
+    p.add_argument(
+        "--wait-timeout-sec",
+        type=float,
+        default=1800,
+        help="--wait-suppliers 最长等待秒数",
+    )
+    p.add_argument(
+        "--probe-rent",
+        action="store_true",
+        help="等待供应商时实测租号（成功后 cancel）；默认只看目录",
     )
     p.add_argument("--sms-attempts", type=int, default=60, help="每轮 SMS 轮询次数（×约4s）")
     p.add_argument("--pause-between", type=float, default=1.0)
