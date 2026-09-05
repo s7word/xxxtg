@@ -343,6 +343,10 @@ class RentGate:
         self._cursor = 0
         self._product_stats: Counter = Counter()
         self.rotate_products = True
+        self.fixed_quota_mode = False
+        self._quota: Dict[str, int] = {}
+        self._quota_total = 0
+        self._quota_used = 0
 
     async def refresh_products(self, max_price: float) -> List[Dict[str, Any]]:
         rows = await self.sms.list_priced_products(
@@ -364,13 +368,58 @@ class RentGate:
     def _next_product(self) -> Optional[Dict[str, Any]]:
         if not self._products:
             return None
-        prod = self._products[self._cursor % len(self._products)]
-        self._cursor += 1
-        return prod
+        if not self.fixed_quota_mode:
+            prod = self._products[self._cursor % len(self._products)]
+            self._cursor += 1
+            return prod
+        # 固定配额：仅在仍有剩余额度的供应商间轮询
+        n = len(self._products)
+        for _ in range(n):
+            prod = self._products[self._cursor % n]
+            self._cursor += 1
+            pid = str(prod.get("product_id"))
+            if self._quota.get(pid, 0) > 0:
+                self._quota[pid] -= 1
+                self._quota_used += 1
+                return prod
+        return None
+
+    def set_fixed_product_quota(self, products: List[Dict[str, Any]], per_product: int) -> int:
+        """锁定供应商列表，每个 product_id 固定测 per_product 次（合计 len*per）。"""
+        rows = [dict(r) for r in products if r.get("product_id")]
+        if not rows:
+            raise RuntimeError("固定配额模式：没有可用产品通道")
+        if per_product <= 0:
+            raise RuntimeError("per_product 必须 > 0")
+        self.fixed_quota_mode = True
+        self.rotate_products = True
+        self._products = rows
+        self._cursor = 0
+        self._quota = {str(r["product_id"]): int(per_product) for r in rows}
+        self._quota_total = int(per_product) * len(rows)
+        self._quota_used = 0
+        logger.info(
+            "[租号闸] 固定供应商配额 per=%d suppliers=%d total=%d → %s",
+            per_product,
+            len(rows),
+            self._quota_total,
+            [
+                f"{r.get('product_id')}@${float(r.get('price') or 0):.4f}/stk={r.get('available')}/q={per_product}"
+                for r in rows
+            ],
+        )
+        return self._quota_total
 
     def demote_product(self, product_id: Any, reason: str = "") -> None:
-        """某通道接码失败后暂时移出轮换，优先试其它供应商档位。"""
+        """某通道接码失败后暂时移出轮换；固定配额模式不降级，保证每供应商测满次数。"""
         if product_id is None:
+            return
+        if self.fixed_quota_mode:
+            logger.info(
+                "[租号闸] 固定配额模式忽略降级 product_id=%s reason=%s",
+                product_id,
+                reason or "n/a",
+            )
             return
         before = len(self._products)
         self._products = [p for p in self._products if p.get("product_id") != product_id]
@@ -388,9 +437,11 @@ class RentGate:
         for i in range(1, RENT_INNER_RETRIES + 1):
             try:
                 async with self._lock:
-                    if self.rotate_products and not self._products:
+                    if self.rotate_products and not self._products and not self.fixed_quota_mode:
                         await self.refresh_products(max_price)
                     product = self._next_product() if self.rotate_products else None
+                    if product is None and self.fixed_quota_mode:
+                        raise RuntimeError("PRODUCT_QUOTA_EXHAUSTED")
                     if product and product.get("product_id"):
                         meta = {
                             "product_id": product.get("product_id"),
@@ -441,7 +492,8 @@ class RentGate:
                     else:
                         await self.refresh_products(max_price)
                 logger.warning(
-                    "[租号闸] VE 无库存 inner=%d/%d: %s",
+                    "[租号闸] %s 无库存 inner=%d/%d: %s",
+                    self.country.upper(),
                     i,
                     RENT_INNER_RETRIES,
                     exc,
@@ -477,6 +529,8 @@ def classify_error(record: Dict[str, Any]) -> str:
         return "RECAPTCHA"
     if stage == "sms_wait" or "等待 SMSCode" in err or "等待 SMS" in err or err.startswith("TimeoutError"):
         return "SMS_TIMEOUT"
+    if "PRODUCT_QUOTA_EXHAUSTED" in upper:
+        return "QUOTA_DONE"
     if "租号失败" in err or "NoNumber" in err or "noNumber" in err or "NO_STOCK" in upper or "NO_NUMBERS" in upper:
         return "NO_STOCK"
     if "NO_BALANCE" in upper or "余额不足" in err:
@@ -899,6 +953,9 @@ async def account_worker(
                 rent_gate, sms, result_path, dry_run,
             )
             rows.append(row)
+            if "PRODUCT_QUOTA_EXHAUSTED" in str(row.get("error") or ""):
+                logger.info("[%s] 供应商配额已用尽，停止该账号剩余尝试", account_json.stem)
+                break
             flood = int(row.get("flood_seconds") or 0)
             if flood > 300:
                 logger.warning(
@@ -999,6 +1056,27 @@ async def main_async(args: argparse.Namespace) -> int:
     sms = SmsCodeService(key)
     rent_gate = RentGate(sms, TARGET_COUNTRY)
     await rent_gate.refresh_products(args.max_price)
+    if int(getattr(args, "per_product", 0) or 0) > 0:
+        products = list(rent_gate._products)
+        raw_ids = [x.strip() for x in str(getattr(args, "product_ids", "") or "").split(",") if x.strip()]
+        if raw_ids:
+            want = {str(x) for x in raw_ids}
+            products = [r for r in products if str(r.get("product_id")) in want]
+            missing = want - {str(r.get("product_id")) for r in products}
+            if missing:
+                logger.warning("指定 product_id 未在 ≤max_price 通道中找到: %s", sorted(missing))
+        total_quota = rent_gate.set_fixed_product_quota(products, int(args.per_product))
+        # 10 账号均分：向上取整，保证能跑满配额
+        n_acc = max(1, len(accounts))
+        need_tries = (total_quota + n_acc - 1) // n_acc
+        if int(args.tries_per_account) < need_tries:
+            logger.info(
+                "按供应商配额调整 tries_per_account %d → %d (suppliers×per=%d)",
+                args.tries_per_account,
+                need_tries,
+                total_quota,
+            )
+            args.tries_per_account = need_tries
     sms_info = await probe_smscode(sms)
     if sms_info.get("error") and not args.dry_run:
         logger.error("SMSCode 不可用，中止: %s", sms_info["error"])
@@ -1007,11 +1085,12 @@ async def main_async(args: argparse.Namespace) -> int:
 
     need = min(args.concurrency, len(accounts))
     logger.info(
-        "并发换绑启动: accounts=%d tries_each=%d concurrency=%d target=VE sms=SMSCode "
+        "并发换绑启动: accounts=%d tries_each=%d concurrency=%d target=%s sms=SMSCode "
         "max_price=%.2f → 目标租号 %d key_source=%s",
         len(accounts),
         args.tries_per_account,
         args.concurrency,
+        TARGET_COUNTRY.upper(),
         args.max_price,
         len(accounts) * args.tries_per_account,
         key_source,
@@ -1149,6 +1228,13 @@ async def main_async(args: argparse.Namespace) -> int:
             for r in getattr(rent_gate, "_products", []) or []
         ],
         "product_rent_stats": dict(getattr(rent_gate, "_product_stats", {}) or {}),
+        "product_quota": {
+            "enabled": bool(getattr(rent_gate, "fixed_quota_mode", False)),
+            "per_product": int(getattr(args, "per_product", 0) or 0),
+            "total": int(getattr(rent_gate, "_quota_total", 0) or 0),
+            "used": int(getattr(rent_gate, "_quota_used", 0) or 0),
+            "remaining": dict(getattr(rent_gate, "_quota", {}) or {}),
+        },
         "target_rents": len(ok_pairs) * args.tries_per_account,
         "rented": rent_gate.rented,
         "no_stock_hits": rent_gate.no_stock_hits,
@@ -1192,6 +1278,17 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--concurrency", type=int, default=10)
     p.add_argument("--max-accounts", type=int, default=0)
     p.add_argument("--max-price", type=float, default=0.8, help="SMSCode 租号最高出价 USD；会在 ≤该价的产品通道间轮换")
+    p.add_argument(
+        "--per-product",
+        type=int,
+        default=0,
+        help=">0 时：对 ≤max-price 的每个供应商各测 N 次（固定配额，不因超时降级）",
+    )
+    p.add_argument(
+        "--product-ids",
+        default="",
+        help="可选，逗号分隔 product_id；空则使用 ≤max-price 全部通道",
+    )
     p.add_argument("--sms-attempts", type=int, default=60, help="每轮 SMS 轮询次数（×约4s）")
     p.add_argument("--pause-between", type=float, default=1.0)
     p.add_argument("--skip-proxy-probe", action="store_true")
