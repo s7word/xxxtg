@@ -494,7 +494,10 @@ class DeviceProfileManager:
             is_strict_alignment,
             strict_app_version_pin,
         )
-        from backend.app.services.vault_attestation import attach_attestation_metadata
+        try:
+            from backend.app.services.vault_attestation import attach_attestation_metadata
+        except ImportError:
+            attach_attestation_metadata = None
 
         config = ConfigManager.get_instance().config
         strict = is_strict_alignment(config)
@@ -624,9 +627,10 @@ class DeviceProfileManager:
         if strict:
             profile["lang_pack"] = VAULT_STRICT_LANG_PACK
             profile = apply_official_api_id(profile, VAULT_STRICT_API_ID)
-            profile = attach_attestation_metadata(
-                profile, config, source_file=profile.get("vault_fingerprint_source")
-            )
+            if attach_attestation_metadata is not None:
+                profile = attach_attestation_metadata(
+                    profile, config, source_file=profile.get("vault_fingerprint_source")
+                )
 
         try:
             official_id = int(profile.get("api_id") or 0)
