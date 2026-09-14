@@ -1876,10 +1876,11 @@ class RegistrationOrchestrator:
         cls,
         push_token: Optional[str],
         plan,
+        profile: Optional[Dict[str, Any]] = None,
     ) -> str:
         attached = bool(getattr(plan, "attach_push_token", False) and push_token)
         info = classify_push_token(push_token)
-        slot = describe_push_slot(attached)
+        slot = describe_push_slot(attached, profile=profile, token=push_token)
         return (
             f"push_slot={slot} token_kind={info['kind']} "
             f"token_len={info['length']} suspicious={'是' if info['suspicious'] else '否'}"
@@ -1907,7 +1908,7 @@ class RegistrationOrchestrator:
             f"unknown={'是' if getattr(code_settings, 'unknown_number', None) else '否'} "
             f"flashcall={'是' if getattr(code_settings, 'allow_flashcall', None) else '否'} "
             f"missed={'是' if getattr(code_settings, 'allow_missed_call', None) else '否'} "
-            f"{cls._log_push_token_slot(push_token, plan)}"
+            f"{cls._log_push_token_slot(push_token, plan, profile)}"
         )
 
     @classmethod

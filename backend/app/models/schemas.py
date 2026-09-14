@@ -140,7 +140,7 @@ class AppConfigModel(BaseModel):
     """系统全局仿真实验与节点编排配置"""
     active_app_type: str = Field(
         default="telegram_android",
-        description="当前激活的端点环境模板 (telegram_android / telegram_android_public / telegram_x / telegram_9)"
+        description="当前激活的端点环境模板 (telegram_android / telegram_android_public / telegram_ios / telegram_x / telegram_9)"
     )
     antisafety_api_key: str = Field(
         default="as2b21dc7b71b5ce8166a42c22b54566",
@@ -343,14 +343,14 @@ class AppConfigModel(BaseModel):
         default=False,
         description=(
             "官方客户端模拟：开启后强制使用模板官方 api_id/api_hash（telegram_android 为 6，"
-            "telegram_android_public 为 4，telegram_x 为 21724）"
+            "telegram_android_public 为 4，telegram_ios 为 8，telegram_x 为 21724）"
             "并以 push_required 每轮申请并 attach REGHelp Push Token；"
-            "握手写入 InitConnection.lang_pack（android / android_x）与号国 tz_offset；"
+            "握手写入 InitConnection.lang_pack（android / ios / android_x）与号国 tz_offset；"
             "sendCode 后处理 SetUpEmailRequired / FirebaseSms / PaymentRequired，"
             "不再把非 App 通道一律当短信空等。猎号连续 App 强制 SMS 在此模式下关闭。"
-            "Push attach 仍走文档标为 iOS 的 CodeSettings.token（Android FCM 错槽兼容），"
-            "不是在跑 iOS 客户端。"
-            "vault 严格对齐开启时会覆盖为 api_id=4，避免漂到 6 触发 Payment。"
+            "Android 路径 Push 仍走文档标为 iOS 的 CodeSettings.token（FCM 错槽兼容）；"
+            "telegram_ios 路径按官方 iOS 申请 appDevice=iOS 的 Push，token 槽位对本。"
+            "vault 严格对齐只钉 Android api_id=4，不会覆盖 telegram_ios。"
         ),
     )
     device_alignment_mode: str = Field(

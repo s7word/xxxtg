@@ -43,6 +43,7 @@ APPLY = {
     "ignore_published_flood_window": True,
     "email_provider_mode": "smsbower_primary",
     "email_smsbower_fallback_enabled": True,
+    "device_alignment_mode": "loose",
 }
 
 
@@ -113,6 +114,7 @@ def main() -> int:
     snapshot = client.get_config()
     patched = dict(snapshot)
     patched.update(APPLY)
+    patched["active_app_type"] = args.app_type
     client.put_config(patched)
     saved = client.get_config()
     print(
@@ -152,19 +154,23 @@ def main() -> int:
             "summary": summarize(all_rows),
             "rows": all_rows,
             "hypothesis": {
-                "claim": "沿 90aa174f 配方再测 30 路：push_required + official emu / api_id=6",
+                "claim": (
+                    "官方 iOS api_id=8 / lang_pack=ios"
+                    if args.app_type == "telegram_ios"
+                    else "push_required + official emu"
+                ),
                 "follow_task": "90aa174f",
                 "warp_hop": True,
                 "country": "ph",
                 "sms_provider": "smscode",
-                "app_type": "telegram_android",
+                "app_type": args.app_type,
                 "api_credential_mode": "official",
                 "official_client_emulation": True,
                 "code_delivery_mode": "push_required",
                 "email_provider_mode": "smsbower_primary",
                 "waves": args.waves,
                 "count_per_wave": args.count,
-                "push": "antisafety_primary then REGHelp",
+                "push": "REGHelp appDevice=iOS" if args.app_type == "telegram_ios" else "antisafety_primary then REGHelp",
                 "email": "SMS Bower Google gmail.com",
             },
         }

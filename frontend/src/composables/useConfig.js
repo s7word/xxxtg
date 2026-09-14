@@ -7,6 +7,7 @@ const config = reactive({
   antisafety_api_key: '',
   antisafety_aids: {
     telegram_android: '',
+    telegram_ios: '',
     telegram_x: '',
     telegram_9: ''
   },
