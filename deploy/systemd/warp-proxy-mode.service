@@ -1,0 +1,14 @@
+[Unit]
+Description=Cloudflare WARP local SOCKS proxy mode (no default route)
+After=network-online.target warp-svc.service
+Wants=network-online.target
+Requires=warp-svc.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/opt/xxxtg/deploy/warp-proxy-mode.sh
+Environment=WARP_PROXY_PORT=41080
+
+[Install]
+WantedBy=multi-user.target

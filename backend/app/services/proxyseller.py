@@ -998,7 +998,13 @@ class ProxySellerService:
         self.api_key = (api_key or "").strip()
         self.cache_ttl = cache_ttl
         self.include_static = include_static
-        self.client = httpx.AsyncClient(timeout=30.0, follow_redirects=True)
+        # Proxy-Seller 管理 API 经常拒绝本机 IPv6（IP not allowed / 503 Engineering works）。
+        # 钉 IPv4，避免容器解析到 Cloudflare AAAA 后整表读失败、批次预分配成空。
+        self.client = httpx.AsyncClient(
+            timeout=30.0,
+            follow_redirects=True,
+            transport=httpx.AsyncHTTPTransport(local_address="0.0.0.0"),
+        )
 
     async def close(self):
         try:
