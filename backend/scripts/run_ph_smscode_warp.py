@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""菲律宾 SMSCode 小批量：验证 WARP hop 对齐后 sendCode 走 SMS 还是 App。"""
+"""菲律宾 SMSCode 小批量：官方公开 api_id=4 + WARP hop 后看 SMS/App。"""
 from __future__ import annotations
 
 import argparse
@@ -9,7 +9,7 @@ import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
@@ -17,11 +17,9 @@ if str(REPO_ROOT) not in sys.path:
 
 from backend.scripts.run_code_delivery_ab import (  # noqa: E402
     ApiClient,
-    collect_round,
     parse_task,
     run_round,
     utc_now,
-    wait_batch,
 )
 
 COUNTRY_RE = re.compile(r"国家=([A-Za-z]{2})")
@@ -34,6 +32,10 @@ APPLY = {
     "proxy_require_country_match": True,
     "use_proxy_seller_auto": True,
     "code_delivery_mode": "balanced",
+    "api_credential_mode": "official",
+    "active_app_type": "telegram_android_public",
+    "official_client_emulation": True,
+    "ignore_published_flood_window": True,
 }
 
 
@@ -62,7 +64,7 @@ def main() -> int:
     parser.add_argument("--max-number-attempts", type=int, default=3)
     parser.add_argument("--poll", type=float, default=15.0)
     parser.add_argument("--batch-timeout", type=float, default=1500.0)
-    parser.add_argument("--app-type", default="telegram_android")
+    parser.add_argument("--app-type", default="telegram_android_public")
     parser.add_argument("--out-dir", default="data/ab_reports")
     args = parser.parse_args()
 
@@ -74,8 +76,10 @@ def main() -> int:
     saved = client.get_config()
     print(
         f"config attest={saved.get('attestation_provider_mode')} "
-        f"delivery={saved.get('code_delivery_mode')} "
-        f"match={saved.get('proxy_require_country_match')} @ {utc_now()}",
+        f"cred={saved.get('api_credential_mode')} "
+        f"app={saved.get('active_app_type')} "
+        f"emu={saved.get('official_client_emulation')} "
+        f"delivery={saved.get('code_delivery_mode')} @ {utc_now()}",
         flush=True,
     )
     try:
@@ -100,10 +104,13 @@ def main() -> int:
             detailed.append(enrich(parse_task(full), full))
         report["rows"] = detailed
         report["hypothesis"] = {
-            "claim": "APP 投递与 Hostinger→印度 出口错配有关；WARP hop 对齐 PH 后应看到更多 SMS",
+            "claim": "私有 api_id 无法完成注册；改用公开 api_id=4 + Push 再测 PH",
             "warp_hop": True,
             "country": "ph",
             "sms_provider": "smscode",
+            "api_id": 4,
+            "app_type": "telegram_android_public",
+            "api_credential_mode": "official",
             "push": "antisafety_primary",
             "recaptcha": "REGHelp RecaptchaMobile only",
         }
