@@ -25,17 +25,20 @@ from backend.scripts.run_code_delivery_ab import (  # noqa: E402
 COUNTRY_RE = re.compile(r"国家=([A-Za-z]{2})")
 ALIGN_RE = re.compile(r"出口拓扑对齐: IP=(\S+) 国家=([A-Za-z]{2}|-)")
 ORIGIN_RE = re.compile(r"成功从 (.+?) 自动匹配到")
+API_ID_RE = re.compile(r"api_id=(\d+)")
+PUSH_RE = re.compile(r"Push Token|attach_token=是|跳过 Push")
 
 
 APPLY = {
     "attestation_provider_mode": "antisafety_primary",
     "proxy_require_country_match": True,
     "use_proxy_seller_auto": True,
-    "code_delivery_mode": "balanced",
+    "code_delivery_mode": "push_required",
     "api_credential_mode": "official",
     "active_app_type": "telegram_android_public",
-    "official_client_emulation": True,
+    "official_client_emulation": False,
     "ignore_published_flood_window": True,
+    "pin_app_version_substr": "12.7.3",
 }
 
 
@@ -50,6 +53,9 @@ def enrich(row: Dict[str, Any], task: Dict[str, Any]) -> Dict[str, Any]:
     out["proxy_origin"] = origin.group(1) if origin else None
     out["sentcode_app"] = any(s.get("bucket") == "app" for s in row.get("samples") or [])
     out["sentcode_sms"] = any(s.get("bucket") == "sms" for s in row.get("samples") or [])
+    api_ids = API_ID_RE.findall(blob)
+    out["api_ids"] = sorted({int(x) for x in api_ids}) if api_ids else []
+    out["push_mentioned"] = bool(PUSH_RE.search(blob))
     return out
 
 
@@ -96,7 +102,7 @@ def main() -> int:
             poll = args.poll
             batch_timeout = args.batch_timeout
 
-        report = run_round(client, "balanced", NS)
+        report = run_round(client, "push_required", NS)
         tasks = client.list_tasks(report["batch_id"])
         detailed = []
         for t in tasks:
