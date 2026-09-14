@@ -39,6 +39,8 @@ APPLY = {
     "official_client_emulation": False,
     "ignore_published_flood_window": True,
     "pin_app_version_substr": "12.7.3",
+    "device_alignment_mode": "strict",
+    "strict_vault_device_alignment": True,
 }
 
 
