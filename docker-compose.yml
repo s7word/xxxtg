@@ -20,12 +20,13 @@ services:
       - EDGENODE_AUTH_SECRET=${EDGENODE_AUTH_SECRET:-}
       - EDGENODE_AUTH_DISABLED=${EDGENODE_AUTH_DISABLED:-}
     extra_hosts:
-      # Residential gateway goes to the host WARP hop (SOCKS proxy mode, not full tunnel).
-      - "host.docker.internal:host-gateway"
-      - "res.proxy-seller.com:host-gateway"
-      - "us.res.proxy-seller.com:host-gateway"
-      - "asia.res.proxy-seller.com:host-gateway"
-      - "asia2.res.proxy-seller.com:host-gateway"
+      # host-gateway is docker0 (often down). Pin to xxxtg_edgenode-mesh gateway
+      # where warp-ps-hop listens (127.0.0.1 + 172.22.0.1 only, never 0.0.0.0).
+      - "host.docker.internal:172.22.0.1"
+      - "res.proxy-seller.com:172.22.0.1"
+      - "us.res.proxy-seller.com:172.22.0.1"
+      - "asia.res.proxy-seller.com:172.22.0.1"
+      - "asia2.res.proxy-seller.com:172.22.0.1"
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/api/health"]
       interval: 15s
