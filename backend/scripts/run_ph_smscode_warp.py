@@ -41,6 +41,8 @@ APPLY = {
     "active_app_type": "telegram_android",
     "official_client_emulation": True,
     "ignore_published_flood_window": True,
+    "email_provider_mode": "smsbower_primary",
+    "email_smsbower_fallback_enabled": True,
 }
 
 
@@ -159,9 +161,11 @@ def main() -> int:
                 "api_credential_mode": "official",
                 "official_client_emulation": True,
                 "code_delivery_mode": "push_required",
+                "email_provider_mode": "smsbower_primary",
                 "waves": args.waves,
                 "count_per_wave": args.count,
                 "push": "antisafety_primary then REGHelp",
+                "email": "SMS Bower Google gmail.com",
             },
         }
     finally:

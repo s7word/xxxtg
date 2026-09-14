@@ -19,6 +19,7 @@ services:
       - EDGENODE_AUTH_PASSWORD=${EDGENODE_AUTH_PASSWORD:-}
       - EDGENODE_AUTH_SECRET=${EDGENODE_AUTH_SECRET:-}
       - EDGENODE_AUTH_DISABLED=${EDGENODE_AUTH_DISABLED:-}
+      - SMSBOWER_API_KEY=${SMSBOWER_API_KEY:-}
     extra_hosts:
       # host-gateway is docker0 (often down). Pin to xxxtg_edgenode-mesh gateway
       # where warp-ps-hop listens (127.0.0.1 + 172.22.0.1 only, never 0.0.0.0).
