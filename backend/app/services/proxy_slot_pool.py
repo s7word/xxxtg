@@ -237,7 +237,7 @@ async def prepare_batch_proxy_pool(
     if mode == "auto" and not picked:
         msg = (
             f"[代理槽位] 批次 {batch_id}: 目标区域 {target.upper()} 无法预分配任何同国代理，"
-            "已禁止跨区 fallback；请补充 ZA 住宅列表/自建池或降低并发。"
+            f"已禁止跨区 fallback；请补充 {target.upper()} 住宅列表/自建池或降低并发。"
         )
         logs.append(msg)
         return None, 0, logs
