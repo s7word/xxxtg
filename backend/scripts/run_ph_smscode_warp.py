@@ -35,12 +35,9 @@ APPLY = {
     "use_proxy_seller_auto": True,
     "code_delivery_mode": "push_required",
     "api_credential_mode": "official",
-    "active_app_type": "telegram_android_public",
-    "official_client_emulation": False,
+    "active_app_type": "telegram_android",
+    "official_client_emulation": True,
     "ignore_published_flood_window": True,
-    "pin_app_version_substr": "12.7.3",
-    "device_alignment_mode": "strict",
-    "strict_vault_device_alignment": True,
 }
 
 
@@ -72,7 +69,7 @@ def main() -> int:
     parser.add_argument("--max-number-attempts", type=int, default=3)
     parser.add_argument("--poll", type=float, default=15.0)
     parser.add_argument("--batch-timeout", type=float, default=1500.0)
-    parser.add_argument("--app-type", default="telegram_android_public")
+    parser.add_argument("--app-type", default="telegram_android")
     parser.add_argument("--out-dir", default="data/ab_reports")
     args = parser.parse_args()
 
@@ -112,15 +109,15 @@ def main() -> int:
             detailed.append(enrich(parse_task(full), full))
         report["rows"] = detailed
         report["hypothesis"] = {
-            "claim": "私有 api_id 无法完成注册；改用公开 api_id=4 + Push 再测 PH",
+            "claim": "push_required + 官方可申请 Push 的 api_id（official emu / api_id=6）",
             "warp_hop": True,
             "country": "ph",
             "sms_provider": "smscode",
-            "api_id": 4,
-            "app_type": "telegram_android_public",
+            "app_type": "telegram_android",
             "api_credential_mode": "official",
-            "push": "antisafety_primary",
-            "recaptcha": "REGHelp RecaptchaMobile only",
+            "official_client_emulation": True,
+            "code_delivery_mode": "push_required",
+            "push": "antisafety_primary then REGHelp",
         }
     finally:
         client.put_config(snapshot)
