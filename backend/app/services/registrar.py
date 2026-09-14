@@ -38,6 +38,7 @@ from backend.app.services.device_alignment import (
     describe_push_slot,
     detect_push_slot_conflicts,
     is_strict_alignment,
+    profile_looks_ios,
     validate_strict_device_profile,
 )
 from backend.app.services.device_profile import DeviceProfileManager
@@ -284,6 +285,15 @@ SMS_NEXT_TYPE_NAMES = frozenset({
     "CodeTypeSms",
     "SentCodeTypeSms",
 })
+# 短信窗口走尽后仍值得立刻 resendCode 的 next_type（Call/漏接来电能再给一次码）。
+RESEND_AFTER_OTP_TIMEOUT_NEXT_TYPES = frozenset({
+    "CodeTypeSms",
+    "SentCodeTypeSms",
+    "CodeTypeCall",
+    "CodeTypeMissedCall",
+    "CodeTypeFlashCall",
+})
+SMS_POLL_TIMEOUT_BUFFER_SECONDS = 30.0
 PAYMENT_REQUIRED_TYPE_NAMES = frozenset({
     "SentCodePaymentRequired",
 })
@@ -923,6 +933,37 @@ class RegistrationOrchestrator:
         if remain <= interval:
             return floor
         return min(requested, max(floor, int(remain // interval)))
+
+    @classmethod
+    def _sms_poll_attempts_for_sent_code(
+        cls,
+        sent_code: Any,
+        requested_attempts: int,
+        interval: float = SMS_POLL_INTERVAL_SECONDS,
+        extra_seconds: float = SMS_POLL_TIMEOUT_BUFFER_SECONDS,
+    ) -> int:
+        """按 Telegram sent_code.timeout 保底收码轮询次数，不被 REGHelp 退款窗口砍短。
+
+        官方 iOS 过邮箱后常见 timeout=90：30 次×4s=120s 才能覆盖 90s + 余量。
+        退款只是成本；真 SMS 号收不到码是白扫。
+        """
+        requested = max(1, int(requested_attempts or 1))
+        timeout = getattr(sent_code, "timeout", None)
+        try:
+            timeout_s = float(timeout) if timeout is not None else 0.0
+        except (TypeError, ValueError):
+            timeout_s = 0.0
+        if timeout_s <= 0:
+            return requested
+        needed = int((timeout_s + max(0.0, float(extra_seconds))) // interval)
+        return max(requested, max(1, needed))
+
+    @classmethod
+    def _next_type_allows_otp_resend(cls, sent_code: Any) -> bool:
+        name = cls._tl_type_name(getattr(sent_code, "next_type", None))
+        if not name:
+            return False
+        return name in RESEND_AFTER_OTP_TIMEOUT_NEXT_TYPES or "Sms" in name or "Call" in name
 
     @classmethod
     def _push_token_age_seconds(
@@ -1879,7 +1920,7 @@ class RegistrationOrchestrator:
         profile: Optional[Dict[str, Any]] = None,
     ) -> str:
         attached = bool(getattr(plan, "attach_push_token", False) and push_token)
-        info = classify_push_token(push_token)
+        info = classify_push_token(push_token, profile)
         slot = describe_push_slot(attached, profile=profile, token=push_token)
         return (
             f"push_slot={slot} token_kind={info['kind']} "
@@ -2020,6 +2061,7 @@ class RegistrationOrchestrator:
         task_id: str,
         manager: RegistrationTaskManager,
         wait_timeout: Optional[float] = None,
+        reason: Optional[str] = None,
     ) -> Tuple[Optional[Any], Optional[Exception]]:
         """等待 next_type 冷却窗口后调用 auth.resendCode，尝试强制切换到短信通道。"""
         timeout = wait_timeout if wait_timeout is not None else getattr(sent_code, "timeout", None)
@@ -2049,6 +2091,7 @@ class RegistrationOrchestrator:
             resent = await client(functions.auth.ResendCodeRequest(
                 phone_number=phone,
                 phone_code_hash=phone_code_hash,
+                reason=reason,
             ))
         except Exception as exc:
             await manager.append_log(
@@ -2361,6 +2404,45 @@ class RegistrationOrchestrator:
             )
 
         if cls._is_firebase_sms(sent_code):
+            if profile_looks_ios(profile):
+                await manager.append_log(
+                    task_id,
+                    f"[{emulation_label}] iOS SentCodeTypeFirebaseSms 需要 APNS ios_push_secret；"
+                    "本机没有真机推送收件箱，立即 auth.resendCode 降级到 next_type（通常是 SMS）",
+                )
+                resent, resend_err = await cls._maybe_resend_to_sms(
+                    client=client,
+                    phone=phone,
+                    sent_code=sent_code,
+                    task_id=task_id,
+                    manager=manager,
+                    wait_timeout=0.0,
+                    reason="ios_push_secret_unavailable",
+                )
+                if resent is not None:
+                    if cls._is_firebase_sms(resent):
+                        await manager.append_log(
+                            task_id,
+                            "iOS FirebaseSms resend 后仍是 FirebaseSms，不再循环，按短信通道轮询",
+                        )
+                        return resent, DEFAULT_SMS_POLL_ATTEMPTS
+                    return await cls.resolve_sent_code_channel(
+                        client,
+                        phone,
+                        resent,
+                        task_id,
+                        manager,
+                        wait_timeout=wait_timeout,
+                        bypass_svc=bypass_svc,
+                        profile=profile,
+                        emulation_label=emulation_label,
+                        _email_depth=_email_depth,
+                    )
+                await manager.append_log(
+                    task_id,
+                    f"⚠️ iOS FirebaseSms resendCode 失败: {resend_err}，仍按短信通道轮询",
+                )
+                return sent_code, DEFAULT_SMS_POLL_ATTEMPTS
             await cls._complete_firebase_sms(
                 client=client,
                 phone=phone,
@@ -2597,7 +2679,7 @@ class RegistrationOrchestrator:
             )
             if push_token:
                 push_token_obtained_at = time.monotonic()
-                info = classify_push_token(push_token)
+                info = classify_push_token(push_token, profile)
                 manager.update_task_status(
                     task_id,
                     "running",
@@ -2667,7 +2749,7 @@ class RegistrationOrchestrator:
                 api_id=api_id if isinstance(api_id, int) else None,
             )
         if plan.attach_push_token and push_token:
-            info = classify_push_token(push_token)
+            info = classify_push_token(push_token, profile)
             config = ConfigManager.get_instance().config
             conflicts = detect_push_slot_conflicts(
                 profile, push_token, attached=True
@@ -3893,13 +3975,19 @@ class RegistrationOrchestrator:
 
                 hunt_app_streak = 0
 
-                # 猎号收码保底：宁可放弃这枚 Token 的退款，也不能把真 SMS 号的
-                # OTP 窗口截到收不到码（上面已在进轮前轮换过老 Token，这里只兜底）
+                # 已经进入短信/OTP：按 Telegram timeout 保底轮询。
+                # REGHelp 180s 退款窗口不能再把 90s SMS 窗砍到 60~80s（实测 iOS 过邮箱后就是这样丢码）。
+                sms_poll_attempts = cls._sms_poll_attempts_for_sent_code(
+                    sent_code, sms_poll_attempts
+                )
+                refund_floor = sms_poll_attempts if (
+                    hunt_enabled or cls._is_sms_delivery(sent_code)
+                ) else (HUNT_MIN_SMS_POLL_ATTEMPTS if hunt_enabled else 1)
                 capped_attempts = cls._sms_poll_attempts_for_push_window(
                     sms_poll_attempts,
                     push_provider,
                     push_token_obtained_at,
-                    min_attempts=HUNT_MIN_SMS_POLL_ATTEMPTS if hunt_enabled else 1,
+                    min_attempts=refund_floor,
                 )
                 if capped_attempts < sms_poll_attempts:
                     elapsed = (
@@ -3910,6 +3998,12 @@ class RegistrationOrchestrator:
                         task_id,
                         f"[REGHelp 退款] 短信轮询由 {sms_poll_attempts} 次截断为 {capped_attempts} 次"
                         f"（Token 已签发 {elapsed:.0f}s，需在 {int(PUSH_REFUND_WINDOW_SECONDS)}s 内 setStatus）"
+                    )
+                elif cls._is_sms_delivery(sent_code):
+                    await manager.append_log(
+                        task_id,
+                        f"短信通道已确认，按 Telegram timeout 保底轮询 {sms_poll_attempts} 次"
+                        f"（约 {sms_poll_attempts * SMS_POLL_INTERVAL_SECONDS:.0f}s，不因 REGHelp 退款窗口缩短）"
                     )
                 sms_poll_attempts = capped_attempts
                 phone_code_hash = sent_code.phone_code_hash
@@ -3942,13 +4036,49 @@ class RegistrationOrchestrator:
                 )
                 return
 
-            # 7. 异步等待带外挑战证明
+            # 7. 异步等待带外挑战证明；窗口走尽且仍有 next_type 时立刻 resendCode 再等一轮
             await manager.append_log(task_id, "正在等待带外遥测通道下发瞬时挑战证明 (OTP)...")
-            sms_code = await sms_svc.wait_for_code(
-                act_id,
-                max_attempts=sms_poll_attempts,
-                log_callback=lambda msg: manager.append_log(task_id, msg)
-            )
+            sms_code = None
+            last_otp_timeout: Optional[BaseException] = None
+            for otp_round in range(2):
+                try:
+                    sms_code = await sms_svc.wait_for_code(
+                        act_id,
+                        max_attempts=sms_poll_attempts,
+                        log_callback=lambda msg: manager.append_log(task_id, msg),
+                    )
+                    last_otp_timeout = None
+                    break
+                except TimeoutError as otp_exc:
+                    last_otp_timeout = otp_exc
+                    if otp_round >= 1 or not cls._next_type_allows_otp_resend(sent_code):
+                        break
+                    next_name = cls._tl_type_name(getattr(sent_code, "next_type", None)) or "None"
+                    await manager.append_log(
+                        task_id,
+                        f"短信窗口已尽仍无码，立即 auth.resendCode 切换 next_type={next_name} 再收一轮"
+                    )
+                    resent, resend_err = await cls._maybe_resend_to_sms(
+                        client=client,
+                        phone=phone,
+                        sent_code=sent_code,
+                        task_id=task_id,
+                        manager=manager,
+                        wait_timeout=0.0,
+                    )
+                    if resent is None:
+                        await manager.append_log(
+                            task_id,
+                            f"⚠️ OTP 超时后 resendCode 失败: {resend_err}，不再空等"
+                        )
+                        break
+                    sent_code = resent
+                    phone_code_hash = getattr(resent, "phone_code_hash", None) or phone_code_hash
+                    sms_poll_attempts = cls._sms_poll_attempts_for_sent_code(
+                        resent, DEFAULT_SMS_POLL_ATTEMPTS
+                    )
+            if sms_code is None:
+                raise last_otp_timeout or TimeoutError("等待带外挑战证明超时 (NO_CODE)")
             await manager.append_log(task_id, f"带外挑战证明获取成功: {sms_code}")
 
             # 8. 状态机迁移与鉴权验证：新号 SignUp 与已存在旧号 SignIn 明确分离

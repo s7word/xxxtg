@@ -18,6 +18,7 @@ from backend.app.services.device_alignment import (  # noqa: E402
     OFFICIAL_IOS_API_ID,
     PUSH_SLOT_IOS_APNS,
     PUSH_SLOT_IOS_NON_APNS,
+    classify_push_token,
     describe_push_slot,
     official_lang_pack_for_api_id,
 )
@@ -26,6 +27,11 @@ from backend.app.services.device_profile import (  # noqa: E402
     DeviceProfileManager,
     OFFICIAL_API_CREDENTIALS,
     apply_official_api_id,
+)
+from backend.app.services.registrar import (  # noqa: E402
+    DEFAULT_SMS_POLL_ATTEMPTS,
+    SMS_POLL_INTERVAL_SECONDS,
+    RegistrationOrchestrator,
 )
 
 
@@ -66,6 +72,33 @@ class TestTelegramIosProfile(unittest.TestCase):
             PUSH_SLOT_IOS_NON_APNS,
         )
         self.assertIn("android_fcm", describe_push_slot(True, profile=DEFAULT_PROFILES["telegram_android"]))
+
+    def test_apns_hex_not_suspicious_on_ios(self):
+        ios = DEFAULT_PROFILES["telegram_ios"]
+        token = "a" * 64
+        info = classify_push_token(token, ios)
+        self.assertEqual(info["kind"], "apns_hex")
+        self.assertTrue(info["ok"])
+        self.assertFalse(info["suspicious"])
+        android = classify_push_token(token, DEFAULT_PROFILES["telegram_android"])
+        self.assertTrue(android["suspicious"])
+
+    def test_sms_poll_honors_telegram_timeout(self):
+        sent = SimpleNamespace(timeout=90)
+        attempts = RegistrationOrchestrator._sms_poll_attempts_for_sent_code(
+            sent, DEFAULT_SMS_POLL_ATTEMPTS
+        )
+        self.assertGreaterEqual(attempts * SMS_POLL_INTERVAL_SECONDS, 90)
+        self.assertGreaterEqual(attempts, DEFAULT_SMS_POLL_ATTEMPTS)
+
+    def test_otp_resend_allows_call_next_type(self):
+        class CodeTypeCall:
+            pass
+
+        sent = SimpleNamespace(next_type=CodeTypeCall())
+        self.assertTrue(RegistrationOrchestrator._next_type_allows_otp_resend(sent))
+        empty = SimpleNamespace(next_type=None)
+        self.assertFalse(RegistrationOrchestrator._next_type_allows_otp_resend(empty))
 
 
 if __name__ == "__main__":

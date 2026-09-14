@@ -553,6 +553,18 @@ class TestSmsPollAttemptsForPushWindow(unittest.TestCase):
         )
         self.assertEqual(capped, 1)
 
+    def test_sms_channel_floor_blocks_refund_cap(self):
+        import time as time_mod
+
+        obtained_at = time_mod.monotonic() - 80.0
+        capped = RegistrationOrchestrator._sms_poll_attempts_for_push_window(
+            DEFAULT_SMS_POLL_ATTEMPTS,
+            "reghelp",
+            obtained_at,
+            min_attempts=DEFAULT_SMS_POLL_ATTEMPTS,
+        )
+        self.assertEqual(capped, DEFAULT_SMS_POLL_ATTEMPTS)
+
 
 class TestRunRegistrationRefundIntegration(unittest.IsolatedAsyncioTestCase):
     """端到端：PHONE_NUMBER_BANNED 失败分支在 REGHelp 路径下触发 setStatus，AntiSafety 路径不触发。"""

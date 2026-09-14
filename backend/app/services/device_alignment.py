@@ -152,8 +152,15 @@ def is_emulator_device(profile: Optional[Dict[str, Any]]) -> bool:
     return any(marker in blob for marker in EMU_DEVICE_MARKERS)
 
 
-def classify_push_token(token: Optional[str]) -> Dict[str, Any]:
-    """REGHelp FCM 形态启发式。不把 token 原文写入返回值。"""
+def classify_push_token(
+    token: Optional[str],
+    profile: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Push Token 形态启发式。不把 token 原文写入返回值。
+
+    Android 路径把 APNS hex 标可疑（FCM 错槽）。iOS 官方槽位就是 APNS，
+    64 位 hex 是合法形态，不能再当异常。
+    """
     raw = str(token or "").strip()
     length = len(raw)
     if not raw:
@@ -168,7 +175,13 @@ def classify_push_token(token: Optional[str]) -> Dict[str, Any]:
     elif length >= 100:
         kind = "long_opaque"
     ok = length >= 32
-    suspicious = (not ok) or kind == "apns_hex" or length < 48
+    ios = profile_looks_ios(profile)
+    if ios and kind == "apns_hex":
+        suspicious = False
+    elif ios and kind in {"fcm_legacy", "fcm_colon"}:
+        suspicious = True
+    else:
+        suspicious = (not ok) or kind == "apns_hex" or length < 48
     return {
         "ok": ok,
         "kind": kind,
@@ -185,7 +198,7 @@ def describe_push_slot(
     if not attached:
         return PUSH_SLOT_NONE
     if profile_looks_ios(profile):
-        kind = str(classify_push_token(token).get("kind") or "")
+        kind = str(classify_push_token(token, profile).get("kind") or "")
         return PUSH_SLOT_IOS_APNS if kind == "apns_hex" else PUSH_SLOT_IOS_NON_APNS
     return PUSH_SLOT_ANDROID_FCM_IN_IOS_DOC
 
@@ -219,7 +232,7 @@ def detect_push_slot_conflicts(
     """发现指纹/Token/文档槽位自相矛盾。返回人类可读冲突列表（可为空）。"""
     if not attached or not push_token:
         return []
-    info = classify_push_token(push_token)
+    info = classify_push_token(push_token, profile)
     conflicts: List[str] = []
     android = profile_looks_android(profile)
     ios = profile_looks_ios(profile)
