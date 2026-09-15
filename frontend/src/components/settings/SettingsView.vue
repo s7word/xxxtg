@@ -161,6 +161,27 @@
           接码源仍用全局 {{ smsProviderLabel(config.sms_provider) }}，不跟随上游平台切换。
         </div>
       </div>
+      <div class="stack">
+        <label class="ce-label">一键测试 · 注册途径</label>
+        <div class="ce-seg">
+          <button
+            v-for="opt in APP_TYPE_SHORTCUTS"
+            :key="opt.value"
+            type="button"
+            :class="{ 'is-on': trialAppType === opt.value }"
+            @click="setTrialAppType(opt.value)"
+          >{{ opt.label }}</button>
+        </div>
+        <select v-model="trialAppType" class="ce-select" @change="setTrialAppType(trialAppType)">
+          <option v-for="opt in APP_TYPE_OPTIONS" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+        </select>
+        <div v-if="isIosAppType(trialAppType)" class="ce-alert is-ok">
+          官方 iOS：固定 <code>api_id=8</code>，REGHelp <code>tgiOS</code> + <code>appDevice=iOS</code>，
+          不走 AID / Play Integrity。语言时区跟出口国 overlay，DC 跟 <code>GetNearestDc</code>。
+          葡萄牙基线 10/10 走这条途径。
+        </div>
+        <p v-else class="ce-tiny">Android / TDLib 仍吃全局 custom App ID 与 AntiSafety AID。全自动/狙击保存后仍用全局 <code>active_app_type</code>；一键测试以这里选的途径为准。</p>
+      </div>
       <div class="grid-2">
         <div>
           <label class="ce-label">一键测试 · 任务数</label>
@@ -171,7 +192,7 @@
           <input v-model.number="trialConcurrency" type="number" min="1" max="10" class="ce-input mono" />
         </div>
       </div>
-      <div class="ce-tiny">当前接码源 {{ smsProviderLabel(config.sms_provider) }} · 改完开关请点右上角保存 · 通知 {{ smsallEventCount }} 条</div>
+      <div class="ce-tiny">当前接码源 {{ smsProviderLabel(config.sms_provider) }} · 途径 {{ trialAppTypeLabel }} · 改完开关请点右上角保存 · 通知 {{ smsallEventCount }} 条</div>
       <div v-if="smsallEvents.length" class="stack">
         <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
           <button class="ce-btn-danger ce-btn-sm" :disabled="!selectedEventIds.length || deleteBusy" @click="deleteSelected">
@@ -227,7 +248,7 @@
                       :disabled="!ev.country || trialBusy[ev.id]"
                       @click="trialRegister(ev)"
                     >
-                      {{ trialBusy[ev.id] ? '提交中...' : '一键测试注册' }}
+                      {{ trialBusy[ev.id] ? '提交中...' : (isIosAppType(trialAppType) ? '一键测试 iOS' : '一键测试注册') }}
                     </button>
                     <button class="ce-btn-ghost ce-btn-sm" :disabled="!ev.country" @click="openInConsole(ev)">
                       去控制台
@@ -744,7 +765,7 @@
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useConfig, smsProviderLabel } from '../../composables/useConfig'
 import { useProbes } from '../../composables/useProbes'
-import { countryFlag } from '../../composables/useShared'
+import { APP_TYPE_OPTIONS, APP_TYPE_SHORTCUTS, countryFlag, isIosAppType } from '../../composables/useShared'
 import { applyIncomingBatch, fetchTasks } from '../../composables/useTasks'
 import { goTab, pushToast } from '../../composables/useUi'
 import LiveStockCountryPicker from '../console/LiveStockCountryPicker.vue'
@@ -774,7 +795,16 @@ const selectedEventIds = ref([])
 const deleteBusy = ref(false)
 const trialCount = ref(1)
 const trialConcurrency = ref(1)
+const trialAppType = ref('telegram_ios')
 const trialBusy = reactive({})
+const trialAppTypeLabel = computed(() => {
+  const hit = APP_TYPE_OPTIONS.find((opt) => opt.value === trialAppType.value)
+  return hit?.label || trialAppType.value
+})
+const setTrialAppType = (value) => {
+  trialAppType.value = value
+  form.app_type = value
+}
 const smsallWebhookUrl = computed(() => `${window.location.origin}/hooks/smsall`)
 let smsallPoll = null
 
@@ -949,12 +979,14 @@ const trialRegister = async (ev) => {
         event_id: ev.id || null,
         country,
         count,
-        concurrency
+        concurrency,
+        app_type: trialAppType.value
       })
     })
     const data = await res.json()
     if (!res.ok) throw new Error(data.detail || data.message || '提交失败')
     form.country = country
+    form.app_type = trialAppType.value
     applyIncomingBatch(data)
     pushToast('ok', data.message || `${country.toUpperCase()} 测试已提交`)
     await Promise.all([refreshSmsallStatus(), fetchTasks()])
@@ -969,6 +1001,7 @@ const trialRegister = async (ev) => {
 const openInConsole = (ev) => {
   const country = String(ev?.country || '').toLowerCase()
   if (country) form.country = country
+  form.app_type = trialAppType.value
   goTab('console')
 }
 

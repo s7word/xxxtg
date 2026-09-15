@@ -218,7 +218,7 @@ async def smsall_delete_events(req: SmsallDeleteEventsRequest):
 
 @router.post("/smsall/trial", summary="对通知列表中的国家一键测试注册")
 async def smsall_trial_register(req: SmsallTrialRequest, background_tasks: BackgroundTasks):
-    from backend.app.api.smsall_hooks import start_country_batch
+    from backend.app.api.smsall_hooks import resolve_batch_app_type, start_country_batch
 
     country = normalize_country(req.country)
     event = get_event(req.event_id or "") if req.event_id else None
@@ -234,6 +234,10 @@ async def smsall_trial_register(req: SmsallTrialRequest, background_tasks: Backg
             provider_ids = [str(item).strip() for item in supplier_ids if str(item).strip()]
         elif event.get("provider_ref"):
             provider_ids = [str(event.get("provider_ref")).strip()]
+    try:
+        app_type = resolve_batch_app_type(req.app_type, config)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="不支持的注册途径，请选择官方 iOS 或 Android 模板")
     started = start_country_batch(
         country=country,
         count=req.count,
@@ -241,6 +245,7 @@ async def smsall_trial_register(req: SmsallTrialRequest, background_tasks: Backg
         background_tasks=background_tasks,
         config=config,
         provider_ids=provider_ids,
+        app_type=app_type,
     )
     remembered = attach_batch(
         event_id=req.event_id,
@@ -254,6 +259,7 @@ async def smsall_trial_register(req: SmsallTrialRequest, background_tasks: Backg
         "message": (
             f"{country.upper()} 测试注册已提交："
             f"{started['count']} 任务 / 线程 {started['concurrency']} "
+            f"/ {started.get('app_type') or app_type} "
             f"（batch_id={started['batch_id']}）"
         ),
         **started,

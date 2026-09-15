@@ -1157,6 +1157,13 @@ class SmsallTrialRequest(BaseModel):
     country: Optional[str] = Field(default=None, description="ISO2 国家码；缺省时按 event_id 回填")
     count: int = Field(default=1, ge=1, le=10, description="测试任务数")
     concurrency: int = Field(default=1, ge=1, le=10, description="测试线程 / 并发")
+    app_type: Optional[str] = Field(
+        default=None,
+        description=(
+            "注册途径：telegram_ios / telegram_android / telegram_android_public / "
+            "telegram_x / telegram_9。缺省时用全局 active_app_type"
+        ),
+    )
 
 
 class SmsallDeleteEventsRequest(BaseModel):

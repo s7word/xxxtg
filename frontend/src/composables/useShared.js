@@ -74,12 +74,19 @@ export const COUNTRY_GROUPS = COUNTRY_GROUP_META.map((group) => ({
 export const COUNTRY_OPTIONS = COUNTRY_GROUPS.flatMap((group) => group.options)
 
 export const APP_TYPE_OPTIONS = [
+  { value: 'telegram_ios', label: '📱 官方 iOS 注册（api_id=8 / tgiOS / 无 AID）' },
   { value: 'telegram_android', label: '📱 MTProto Android (官方主版 SDK 33 / AID: 308a...)' },
   { value: 'telegram_android_public', label: '📱 MTProto Android Public api_id=4（vault/严格对齐）' },
-  { value: 'telegram_ios', label: '📱 MTProto iOS Official api_id=8 / lang_pack=ios' },
   { value: 'telegram_x', label: '⚡ MTProto TDLib (官方极速版 / AID: 47f7...)' },
   { value: 'telegram_9', label: '🕰️ MTProto Legacy (经典稳定版 SDK 32 / AID: 59e5...)' }
 ]
+
+export const APP_TYPE_SHORTCUTS = [
+  { value: 'telegram_ios', label: '官方 iOS' },
+  { value: 'telegram_android', label: 'Android 主版' }
+]
+
+export const isIosAppType = (appType) => String(appType || '').trim() === 'telegram_ios'
 
 export const maskHash = (hash) => {
   if (!hash) return '未配置'
