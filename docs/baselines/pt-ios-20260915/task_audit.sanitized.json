@@ -1,0 +1,533 @@
+{
+  "summary": {
+    "batch_id": "1e213443",
+    "when_utc": "2026-09-15T10:44:40Z",
+    "country": "pt",
+    "app_type": "telegram_ios",
+    "success": 10,
+    "tasks": 10,
+    "sent_first": {
+      "SentCodeTypeSms": 10
+    },
+    "resend": {
+      "SentCodeTypeCall": 1
+    },
+    "ports": [
+      10000,
+      10001,
+      10002,
+      10003,
+      10004,
+      10005,
+      10006,
+      10007,
+      10008,
+      10009
+    ],
+    "dcs": {
+      "4": 10
+    }
+  },
+  "tasks": [
+    {
+      "task_id": "528598fd",
+      "status": "success",
+      "phone_masked": "+351*******",
+      "dc_suggested": "4",
+      "proxy_port": 10000,
+      "alignment": "语言/时区/出口对齐: country=PT lang=pt system_lang=pt-PT tz=0 source=ios_country_overlay aligned=是 bundle=ph.telegra.Telegraph store=appstore/686449807",
+      "device": {
+        "model": "iPhone 17 Pro Max",
+        "sdk": "18.6.2",
+        "app": "12.9.3"
+      },
+      "sendcode_samples": [
+        {
+          "type": "SentCodeTypeSms",
+          "next": "CodeTypeCall",
+          "timeout": "90"
+        }
+      ],
+      "resend_types": [],
+      "excerpt": [
+        "[10:44:42] [代理槽位] 批次 1e213443: 预分配 10/10 条 PT 同国代理（来源: xxxtg 专用住宅列表），单线消耗不复用",
+        "[10:44:42] [代理槽位] 槽 1/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10000",
+        "[10:44:42] [代理槽位] 槽 2/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10001",
+        "[10:44:42] [代理槽位] 槽 3/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10002",
+        "[10:44:42] [代理槽位] 槽 4/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10003",
+        "[10:44:42] [代理槽位] 槽 5/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10004",
+        "[10:44:42] [代理槽位] 槽 6/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10005",
+        "[10:44:42] [代理槽位] 槽 7/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10006",
+        "[10:44:42] [代理槽位] 槽 8/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10007",
+        "[10:44:42] [代理槽位] 槽 9/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10008",
+        "[10:44:42] [代理槽位] 槽 10/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10009",
+        "[10:44:42] [代理槽位] 1:1 绑定预分配出口 socks5://res.proxy-seller.com:10000（同国 PT，禁止跨区 fallback）",
+        "[10:44:42] 选定端点模板: MTProto iOS Official (api_id=8 / lang_pack=ios) (REGHelp appName=tgiOS / appDevice=iOS；iOS 不使用 AntiSafety AID)",
+        "[10:44:42] 硬件指纹包: iOS 备用 葡萄牙 PT · 48.db [PT] · 国家精确匹配",
+        "[10:44:42] 语言/时区/出口对齐: country=PT lang=pt system_lang=pt-PT tz=0 source=ios_country_overlay aligned=是 bundle=ph.telegra.Telegraph store=appstore/686449807",
+        "[10:44:42] 设备对齐模式=loose api_id=8 model=iPhone 17 Pro Max sdk=18.6.2 app=12.9.3 lang_pack=ios lang=pt-PT tz=0 emu=否",
+        "[10:44:50] 预检通过：号码 +351******* 在 Telegram 官方库中未注册（白号），继续申请 Push Token 并发送 auth.sendCode",
+        "[10:44:50] [验证码通道] iOS CodeSettings call_flags=grammers：unknown_number=否 flashcall=是 missed=是（unknown 固定否；闪信/漏接可 A/B，不改 Android）",
+        "[10:44:50] iOS 线路不走 AntiSafety（无 iOS Push / 无 AID），仅 REGHelp appName=tgiOS / appDevice=iOS",
+        "[10:44:54] [official] 官方客户端模拟生效：api_id=8 credential_source=official",
+        "[10:44:54] InitConnection 指纹: lang_pack=ios tz_offset=0 params=[tz_offset,bundleId]",
+        "[10:45:00] GetNearestDc 按出口 IP 建议 DC4；Telethon 默认从 DC2 起连。官方 iOS 会切到建议 DC，正在迁移以免 DC/出口地理不一致。",
+        "[10:45:10] sendCode 凭证核对: api_id=8 api_hash=<redacted> attach_token=是 push_token=有 code_settings.token=有 firebase=是 unknown=否 flashcall=是 missed=是 app_sandbox=False push_slot=CodeSettings.token(ios_apns) token_kind=apns_hex token_len=64 suspicious=否",
+        "[10:45:15] 挑战已由服务端下发! 分发通道类型: SentCodeTypeSms (type=SentCodeTypeSms next_type=CodeTypeCall timeout=90) [模式=official]",
+        "[10:45:15] 分发通道为运营商短信，带外遥测网关可正常接收",
+        "[10:45:41] 虚拟节点状态机初始化成功! 节点 UID: <redacted>, 句柄: +351*******, 账号类型: new"
+      ]
+    },
+    {
+      "task_id": "f13c29db",
+      "status": "success",
+      "phone_masked": "+351*******",
+      "dc_suggested": "4",
+      "proxy_port": 10001,
+      "alignment": "语言/时区/出口对齐: country=PT lang=pt system_lang=pt-PT tz=0 source=ios_country_overlay aligned=是 bundle=ph.telegra.Telegraph store=appstore/686449807",
+      "device": {
+        "model": "iPhone 17 Pro",
+        "sdk": "18.6.2",
+        "app": "12.9.3"
+      },
+      "sendcode_samples": [
+        {
+          "type": "SentCodeTypeSms",
+          "next": "CodeTypeCall",
+          "timeout": "90"
+        }
+      ],
+      "resend_types": [],
+      "excerpt": [
+        "[10:44:42] [代理槽位] 批次 1e213443: 预分配 10/10 条 PT 同国代理（来源: xxxtg 专用住宅列表），单线消耗不复用",
+        "[10:44:42] [代理槽位] 槽 1/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10000",
+        "[10:44:42] [代理槽位] 槽 2/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10001",
+        "[10:44:42] [代理槽位] 槽 3/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10002",
+        "[10:44:42] [代理槽位] 槽 4/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10003",
+        "[10:44:42] [代理槽位] 槽 5/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10004",
+        "[10:44:42] [代理槽位] 槽 6/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10005",
+        "[10:44:42] [代理槽位] 槽 7/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10006",
+        "[10:44:42] [代理槽位] 槽 8/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10007",
+        "[10:44:42] [代理槽位] 槽 9/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10008",
+        "[10:44:42] [代理槽位] 槽 10/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10009",
+        "[10:44:42] [代理槽位] 1:1 绑定预分配出口 socks5://res.proxy-seller.com:10001（同国 PT，禁止跨区 fallback）",
+        "[10:44:42] 选定端点模板: MTProto iOS Official (api_id=8 / lang_pack=ios) (REGHelp appName=tgiOS / appDevice=iOS；iOS 不使用 AntiSafety AID)",
+        "[10:44:42] 硬件指纹包: iOS 备用 葡萄牙 PT · 48.db [PT] · 国家精确匹配",
+        "[10:44:42] 语言/时区/出口对齐: country=PT lang=pt system_lang=pt-PT tz=0 source=ios_country_overlay aligned=是 bundle=ph.telegra.Telegraph store=appstore/686449807",
+        "[10:44:42] 设备对齐模式=loose api_id=8 model=iPhone 17 Pro sdk=18.6.2 app=12.9.3 lang_pack=ios lang=pt-PT tz=0 emu=否",
+        "[10:44:49] 预检通过：号码 +351******* 在 Telegram 官方库中未注册（白号），继续申请 Push Token 并发送 auth.sendCode",
+        "[10:44:49] [验证码通道] iOS CodeSettings call_flags=grammers：unknown_number=否 flashcall=是 missed=是（unknown 固定否；闪信/漏接可 A/B，不改 Android）",
+        "[10:44:49] iOS 线路不走 AntiSafety（无 iOS Push / 无 AID），仅 REGHelp appName=tgiOS / appDevice=iOS",
+        "[10:44:53] [official] 官方客户端模拟生效：api_id=8 credential_source=official",
+        "[10:44:53] InitConnection 指纹: lang_pack=ios tz_offset=0 params=[tz_offset,bundleId]",
+        "[10:44:57] GetNearestDc 按出口 IP 建议 DC4；Telethon 默认从 DC2 起连。官方 iOS 会切到建议 DC，正在迁移以免 DC/出口地理不一致。",
+        "[10:45:09] sendCode 凭证核对: api_id=8 api_hash=<redacted> attach_token=是 push_token=有 code_settings.token=有 firebase=是 unknown=否 flashcall=是 missed=是 app_sandbox=False push_slot=CodeSettings.token(ios_apns) token_kind=apns_hex token_len=64 suspicious=否",
+        "[10:45:15] 挑战已由服务端下发! 分发通道类型: SentCodeTypeSms (type=SentCodeTypeSms next_type=CodeTypeCall timeout=90) [模式=official]",
+        "[10:45:15] 分发通道为运营商短信，带外遥测网关可正常接收",
+        "[10:45:36] 虚拟节点状态机初始化成功! 节点 UID: <redacted>, 句柄: +351*******, 账号类型: new"
+      ]
+    },
+    {
+      "task_id": "ee339f58",
+      "status": "success",
+      "phone_masked": "+351*******",
+      "dc_suggested": "4",
+      "proxy_port": 10002,
+      "alignment": "语言/时区/出口对齐: country=PT lang=pt system_lang=pt-PT tz=0 source=ios_country_overlay aligned=是 bundle=ph.telegra.Telegraph store=appstore/686449807",
+      "device": {
+        "model": "iPhone 16 Plus",
+        "sdk": "18.6.2",
+        "app": "12.9.3"
+      },
+      "sendcode_samples": [
+        {
+          "type": "SentCodeTypeSms",
+          "next": "CodeTypeCall",
+          "timeout": "90"
+        }
+      ],
+      "resend_types": [],
+      "excerpt": [
+        "[10:44:42] [代理槽位] 批次 1e213443: 预分配 10/10 条 PT 同国代理（来源: xxxtg 专用住宅列表），单线消耗不复用",
+        "[10:44:42] [代理槽位] 槽 1/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10000",
+        "[10:44:42] [代理槽位] 槽 2/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10001",
+        "[10:44:42] [代理槽位] 槽 3/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10002",
+        "[10:44:42] [代理槽位] 槽 4/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10003",
+        "[10:44:42] [代理槽位] 槽 5/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10004",
+        "[10:44:42] [代理槽位] 槽 6/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10005",
+        "[10:44:42] [代理槽位] 槽 7/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10006",
+        "[10:44:42] [代理槽位] 槽 8/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10007",
+        "[10:44:42] [代理槽位] 槽 9/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10008",
+        "[10:44:42] [代理槽位] 槽 10/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10009",
+        "[10:44:42] [代理槽位] 1:1 绑定预分配出口 socks5://res.proxy-seller.com:10002（同国 PT，禁止跨区 fallback）",
+        "[10:44:42] 选定端点模板: MTProto iOS Official (api_id=8 / lang_pack=ios) (REGHelp appName=tgiOS / appDevice=iOS；iOS 不使用 AntiSafety AID)",
+        "[10:44:42] 硬件指纹包: iOS 备用 葡萄牙 PT · 48.db [PT] · 国家精确匹配",
+        "[10:44:42] 语言/时区/出口对齐: country=PT lang=pt system_lang=pt-PT tz=0 source=ios_country_overlay aligned=是 bundle=ph.telegra.Telegraph store=appstore/686449807",
+        "[10:44:42] 设备对齐模式=loose api_id=8 model=iPhone 16 Plus sdk=18.6.2 app=12.9.3 lang_pack=ios lang=pt-PT tz=0 emu=否",
+        "[10:44:50] 预检通过：号码 +351******* 在 Telegram 官方库中未注册（白号），继续申请 Push Token 并发送 auth.sendCode",
+        "[10:44:50] [验证码通道] iOS CodeSettings call_flags=grammers：unknown_number=否 flashcall=是 missed=是（unknown 固定否；闪信/漏接可 A/B，不改 Android）",
+        "[10:44:50] iOS 线路不走 AntiSafety（无 iOS Push / 无 AID），仅 REGHelp appName=tgiOS / appDevice=iOS",
+        "[10:44:54] [official] 官方客户端模拟生效：api_id=8 credential_source=official",
+        "[10:44:54] InitConnection 指纹: lang_pack=ios tz_offset=0 params=[tz_offset,bundleId]",
+        "[10:44:58] GetNearestDc 按出口 IP 建议 DC4；Telethon 默认从 DC2 起连。官方 iOS 会切到建议 DC，正在迁移以免 DC/出口地理不一致。",
+        "[10:45:09] sendCode 凭证核对: api_id=8 api_hash=<redacted> attach_token=是 push_token=有 code_settings.token=有 firebase=是 unknown=否 flashcall=是 missed=是 app_sandbox=False push_slot=CodeSettings.token(ios_apns) token_kind=apns_hex token_len=64 suspicious=否",
+        "[10:45:14] 挑战已由服务端下发! 分发通道类型: SentCodeTypeSms (type=SentCodeTypeSms next_type=CodeTypeCall timeout=90) [模式=official]",
+        "[10:45:14] 分发通道为运营商短信，带外遥测网关可正常接收",
+        "[10:46:59] 虚拟节点状态机初始化成功! 节点 UID: <redacted>, 句柄: +351*******, 账号类型: new"
+      ]
+    },
+    {
+      "task_id": "68ec7a91",
+      "status": "success",
+      "phone_masked": "+351*******",
+      "dc_suggested": "4",
+      "proxy_port": 10003,
+      "alignment": "语言/时区/出口对齐: country=PT lang=pt system_lang=pt-PT tz=0 source=ios_country_overlay aligned=是 bundle=ph.telegra.Telegraph store=appstore/686449807",
+      "device": {
+        "model": "iPhone 17 Pro",
+        "sdk": "18.6.2",
+        "app": "12.9.3"
+      },
+      "sendcode_samples": [
+        {
+          "type": "SentCodeTypeSms",
+          "next": "CodeTypeCall",
+          "timeout": "90"
+        }
+      ],
+      "resend_types": [],
+      "excerpt": [
+        "[10:44:42] [代理槽位] 批次 1e213443: 预分配 10/10 条 PT 同国代理（来源: xxxtg 专用住宅列表），单线消耗不复用",
+        "[10:44:42] [代理槽位] 槽 1/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10000",
+        "[10:44:42] [代理槽位] 槽 2/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10001",
+        "[10:44:42] [代理槽位] 槽 3/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10002",
+        "[10:44:42] [代理槽位] 槽 4/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10003",
+        "[10:44:42] [代理槽位] 槽 5/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10004",
+        "[10:44:42] [代理槽位] 槽 6/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10005",
+        "[10:44:42] [代理槽位] 槽 7/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10006",
+        "[10:44:42] [代理槽位] 槽 8/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10007",
+        "[10:44:42] [代理槽位] 槽 9/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10008",
+        "[10:44:42] [代理槽位] 槽 10/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10009",
+        "[10:44:42] [代理槽位] 1:1 绑定预分配出口 socks5://res.proxy-seller.com:10003（同国 PT，禁止跨区 fallback）",
+        "[10:44:42] 选定端点模板: MTProto iOS Official (api_id=8 / lang_pack=ios) (REGHelp appName=tgiOS / appDevice=iOS；iOS 不使用 AntiSafety AID)",
+        "[10:44:42] 硬件指纹包: iOS 备用 葡萄牙 PT · 48.db [PT] · 国家精确匹配",
+        "[10:44:42] 语言/时区/出口对齐: country=PT lang=pt system_lang=pt-PT tz=0 source=ios_country_overlay aligned=是 bundle=ph.telegra.Telegraph store=appstore/686449807",
+        "[10:44:42] 设备对齐模式=loose api_id=8 model=iPhone 17 Pro sdk=18.6.2 app=12.9.3 lang_pack=ios lang=pt-PT tz=0 emu=否",
+        "[10:44:49] 预检通过：号码 +351******* 在 Telegram 官方库中未注册（白号），继续申请 Push Token 并发送 auth.sendCode",
+        "[10:44:49] [验证码通道] iOS CodeSettings call_flags=grammers：unknown_number=否 flashcall=是 missed=是（unknown 固定否；闪信/漏接可 A/B，不改 Android）",
+        "[10:44:49] iOS 线路不走 AntiSafety（无 iOS Push / 无 AID），仅 REGHelp appName=tgiOS / appDevice=iOS",
+        "[10:44:53] [official] 官方客户端模拟生效：api_id=8 credential_source=official",
+        "[10:44:53] InitConnection 指纹: lang_pack=ios tz_offset=0 params=[tz_offset,bundleId]",
+        "[10:44:58] GetNearestDc 按出口 IP 建议 DC4；Telethon 默认从 DC2 起连。官方 iOS 会切到建议 DC，正在迁移以免 DC/出口地理不一致。",
+        "[10:45:09] sendCode 凭证核对: api_id=8 api_hash=<redacted> attach_token=是 push_token=有 code_settings.token=有 firebase=是 unknown=否 flashcall=是 missed=是 app_sandbox=False push_slot=CodeSettings.token(ios_apns) token_kind=apns_hex token_len=64 suspicious=否",
+        "[10:45:15] 挑战已由服务端下发! 分发通道类型: SentCodeTypeSms (type=SentCodeTypeSms next_type=CodeTypeCall timeout=90) [模式=official]",
+        "[10:45:15] 分发通道为运营商短信，带外遥测网关可正常接收",
+        "[10:45:32] 虚拟节点状态机初始化成功! 节点 UID: <redacted>, 句柄: +351*******, 账号类型: new"
+      ]
+    },
+    {
+      "task_id": "73a6b83d",
+      "status": "success",
+      "phone_masked": "+351*******",
+      "dc_suggested": "4",
+      "proxy_port": 10004,
+      "alignment": "语言/时区/出口对齐: country=PT lang=pt system_lang=pt-PT tz=0 source=ios_country_overlay aligned=是 bundle=ph.telegra.Telegraph store=appstore/686449807",
+      "device": {
+        "model": "iPhone 16 Pro Max",
+        "sdk": "18.5.1",
+        "app": "12.9.3"
+      },
+      "sendcode_samples": [
+        {
+          "type": "SentCodeTypeSms",
+          "next": "CodeTypeCall",
+          "timeout": "90"
+        }
+      ],
+      "resend_types": [],
+      "excerpt": [
+        "[10:44:42] [代理槽位] 批次 1e213443: 预分配 10/10 条 PT 同国代理（来源: xxxtg 专用住宅列表），单线消耗不复用",
+        "[10:44:42] [代理槽位] 槽 1/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10000",
+        "[10:44:42] [代理槽位] 槽 2/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10001",
+        "[10:44:42] [代理槽位] 槽 3/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10002",
+        "[10:44:42] [代理槽位] 槽 4/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10003",
+        "[10:44:42] [代理槽位] 槽 5/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10004",
+        "[10:44:42] [代理槽位] 槽 6/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10005",
+        "[10:44:42] [代理槽位] 槽 7/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10006",
+        "[10:44:42] [代理槽位] 槽 8/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10007",
+        "[10:44:42] [代理槽位] 槽 9/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10008",
+        "[10:44:42] [代理槽位] 槽 10/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10009",
+        "[10:44:42] [代理槽位] 1:1 绑定预分配出口 socks5://res.proxy-seller.com:10004（同国 PT，禁止跨区 fallback）",
+        "[10:44:42] 选定端点模板: MTProto iOS Official (api_id=8 / lang_pack=ios) (REGHelp appName=tgiOS / appDevice=iOS；iOS 不使用 AntiSafety AID)",
+        "[10:44:42] 硬件指纹包: iOS 备用 葡萄牙 PT · 48.db [PT] · 国家精确匹配",
+        "[10:44:42] 语言/时区/出口对齐: country=PT lang=pt system_lang=pt-PT tz=0 source=ios_country_overlay aligned=是 bundle=ph.telegra.Telegraph store=appstore/686449807",
+        "[10:44:42] 设备对齐模式=loose api_id=8 model=iPhone 16 Pro Max sdk=18.5.1 app=12.9.3 lang_pack=ios lang=pt-PT tz=0 emu=否",
+        "[10:44:49] 预检通过：号码 +351******* 在 Telegram 官方库中未注册（白号），继续申请 Push Token 并发送 auth.sendCode",
+        "[10:44:49] [验证码通道] iOS CodeSettings call_flags=grammers：unknown_number=否 flashcall=是 missed=是（unknown 固定否；闪信/漏接可 A/B，不改 Android）",
+        "[10:44:49] iOS 线路不走 AntiSafety（无 iOS Push / 无 AID），仅 REGHelp appName=tgiOS / appDevice=iOS",
+        "[10:44:53] [official] 官方客户端模拟生效：api_id=8 credential_source=official",
+        "[10:44:53] InitConnection 指纹: lang_pack=ios tz_offset=0 params=[tz_offset,bundleId]",
+        "[10:44:57] GetNearestDc 按出口 IP 建议 DC4；Telethon 默认从 DC2 起连。官方 iOS 会切到建议 DC，正在迁移以免 DC/出口地理不一致。",
+        "[10:45:07] sendCode 凭证核对: api_id=8 api_hash=<redacted> attach_token=是 push_token=有 code_settings.token=有 firebase=是 unknown=否 flashcall=是 missed=是 app_sandbox=False push_slot=CodeSettings.token(ios_apns) token_kind=apns_hex token_len=64 suspicious=否",
+        "[10:45:12] 挑战已由服务端下发! 分发通道类型: SentCodeTypeSms (type=SentCodeTypeSms next_type=CodeTypeCall timeout=90) [模式=official]",
+        "[10:45:12] 分发通道为运营商短信，带外遥测网关可正常接收",
+        "[10:45:29] 虚拟节点状态机初始化成功! 节点 UID: <redacted>, 句柄: +351*******, 账号类型: new"
+      ]
+    },
+    {
+      "task_id": "bd1e4e01",
+      "status": "success",
+      "phone_masked": "+351*******",
+      "dc_suggested": "4",
+      "proxy_port": 10005,
+      "alignment": "语言/时区/出口对齐: country=PT lang=pt system_lang=pt-PT tz=0 source=ios_country_overlay aligned=是 bundle=ph.telegra.Telegraph store=appstore/686449807",
+      "device": {
+        "model": "iPhone 16 Pro",
+        "sdk": "18.6.2",
+        "app": "12.9.3"
+      },
+      "sendcode_samples": [
+        {
+          "type": "SentCodeTypeSms",
+          "next": "CodeTypeCall",
+          "timeout": "90"
+        }
+      ],
+      "resend_types": [],
+      "excerpt": [
+        "[10:44:42] [代理槽位] 批次 1e213443: 预分配 10/10 条 PT 同国代理（来源: xxxtg 专用住宅列表），单线消耗不复用",
+        "[10:44:42] [代理槽位] 槽 1/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10000",
+        "[10:44:42] [代理槽位] 槽 2/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10001",
+        "[10:44:42] [代理槽位] 槽 3/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10002",
+        "[10:44:42] [代理槽位] 槽 4/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10003",
+        "[10:44:42] [代理槽位] 槽 5/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10004",
+        "[10:44:42] [代理槽位] 槽 6/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10005",
+        "[10:44:42] [代理槽位] 槽 7/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10006",
+        "[10:44:42] [代理槽位] 槽 8/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10007",
+        "[10:44:42] [代理槽位] 槽 9/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10008",
+        "[10:44:42] [代理槽位] 槽 10/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10009",
+        "[10:44:42] [代理槽位] 1:1 绑定预分配出口 socks5://res.proxy-seller.com:10005（同国 PT，禁止跨区 fallback）",
+        "[10:44:42] 选定端点模板: MTProto iOS Official (api_id=8 / lang_pack=ios) (REGHelp appName=tgiOS / appDevice=iOS；iOS 不使用 AntiSafety AID)",
+        "[10:44:42] 硬件指纹包: iOS 备用 葡萄牙 PT · 48.db [PT] · 国家精确匹配",
+        "[10:44:42] 语言/时区/出口对齐: country=PT lang=pt system_lang=pt-PT tz=0 source=ios_country_overlay aligned=是 bundle=ph.telegra.Telegraph store=appstore/686449807",
+        "[10:44:42] 设备对齐模式=loose api_id=8 model=iPhone 16 Pro sdk=18.6.2 app=12.9.3 lang_pack=ios lang=pt-PT tz=0 emu=否",
+        "[10:44:49] 预检通过：号码 +351******* 在 Telegram 官方库中未注册（白号），继续申请 Push Token 并发送 auth.sendCode",
+        "[10:44:49] [验证码通道] iOS CodeSettings call_flags=grammers：unknown_number=否 flashcall=是 missed=是（unknown 固定否；闪信/漏接可 A/B，不改 Android）",
+        "[10:44:49] iOS 线路不走 AntiSafety（无 iOS Push / 无 AID），仅 REGHelp appName=tgiOS / appDevice=iOS",
+        "[10:44:54] [official] 官方客户端模拟生效：api_id=8 credential_source=official",
+        "[10:44:54] InitConnection 指纹: lang_pack=ios tz_offset=0 params=[tz_offset,bundleId]",
+        "[10:44:58] GetNearestDc 按出口 IP 建议 DC4；Telethon 默认从 DC2 起连。官方 iOS 会切到建议 DC，正在迁移以免 DC/出口地理不一致。",
+        "[10:45:08] sendCode 凭证核对: api_id=8 api_hash=<redacted> attach_token=是 push_token=有 code_settings.token=有 firebase=是 unknown=否 flashcall=是 missed=是 app_sandbox=False push_slot=CodeSettings.token(ios_apns) token_kind=apns_hex token_len=64 suspicious=否",
+        "[10:45:13] 挑战已由服务端下发! 分发通道类型: SentCodeTypeSms (type=SentCodeTypeSms next_type=CodeTypeCall timeout=90) [模式=official]",
+        "[10:45:13] 分发通道为运营商短信，带外遥测网关可正常接收",
+        "[10:45:34] 虚拟节点状态机初始化成功! 节点 UID: <redacted>, 句柄: +351*******, 账号类型: new"
+      ]
+    },
+    {
+      "task_id": "1183111c",
+      "status": "success",
+      "phone_masked": "+351*******",
+      "dc_suggested": "4",
+      "proxy_port": 10006,
+      "alignment": "语言/时区/出口对齐: country=PT lang=pt system_lang=pt-PT tz=0 source=ios_country_overlay aligned=是 bundle=ph.telegra.Telegraph store=appstore/686449807",
+      "device": {
+        "model": "iPhone 17",
+        "sdk": "18.6.2",
+        "app": "12.9.3"
+      },
+      "sendcode_samples": [
+        {
+          "type": "SentCodeTypeSms",
+          "next": "CodeTypeCall",
+          "timeout": "90"
+        }
+      ],
+      "resend_types": [],
+      "excerpt": [
+        "[10:44:42] [代理槽位] 批次 1e213443: 预分配 10/10 条 PT 同国代理（来源: xxxtg 专用住宅列表），单线消耗不复用",
+        "[10:44:42] [代理槽位] 槽 1/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10000",
+        "[10:44:42] [代理槽位] 槽 2/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10001",
+        "[10:44:42] [代理槽位] 槽 3/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10002",
+        "[10:44:42] [代理槽位] 槽 4/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10003",
+        "[10:44:42] [代理槽位] 槽 5/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10004",
+        "[10:44:42] [代理槽位] 槽 6/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10005",
+        "[10:44:42] [代理槽位] 槽 7/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10006",
+        "[10:44:42] [代理槽位] 槽 8/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10007",
+        "[10:44:42] [代理槽位] 槽 9/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10008",
+        "[10:44:42] [代理槽位] 槽 10/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10009",
+        "[10:44:42] [代理槽位] 1:1 绑定预分配出口 socks5://res.proxy-seller.com:10006（同国 PT，禁止跨区 fallback）",
+        "[10:44:42] 选定端点模板: MTProto iOS Official (api_id=8 / lang_pack=ios) (REGHelp appName=tgiOS / appDevice=iOS；iOS 不使用 AntiSafety AID)",
+        "[10:44:42] 硬件指纹包: iOS 备用 葡萄牙 PT · 48.db [PT] · 国家精确匹配",
+        "[10:44:42] 语言/时区/出口对齐: country=PT lang=pt system_lang=pt-PT tz=0 source=ios_country_overlay aligned=是 bundle=ph.telegra.Telegraph store=appstore/686449807",
+        "[10:44:42] 设备对齐模式=loose api_id=8 model=iPhone 17 sdk=18.6.2 app=12.9.3 lang_pack=ios lang=pt-PT tz=0 emu=否",
+        "[10:44:50] 预检通过：号码 +351******* 在 Telegram 官方库中未注册（白号），继续申请 Push Token 并发送 auth.sendCode",
+        "[10:44:50] [验证码通道] iOS CodeSettings call_flags=grammers：unknown_number=否 flashcall=是 missed=是（unknown 固定否；闪信/漏接可 A/B，不改 Android）",
+        "[10:44:50] iOS 线路不走 AntiSafety（无 iOS Push / 无 AID），仅 REGHelp appName=tgiOS / appDevice=iOS",
+        "[10:44:54] [official] 官方客户端模拟生效：api_id=8 credential_source=official",
+        "[10:44:54] InitConnection 指纹: lang_pack=ios tz_offset=0 params=[tz_offset,bundleId]",
+        "[10:44:58] GetNearestDc 按出口 IP 建议 DC4；Telethon 默认从 DC2 起连。官方 iOS 会切到建议 DC，正在迁移以免 DC/出口地理不一致。",
+        "[10:45:09] sendCode 凭证核对: api_id=8 api_hash=<redacted> attach_token=是 push_token=有 code_settings.token=有 firebase=是 unknown=否 flashcall=是 missed=是 app_sandbox=False push_slot=CodeSettings.token(ios_apns) token_kind=apns_hex token_len=64 suspicious=否",
+        "[10:45:14] 挑战已由服务端下发! 分发通道类型: SentCodeTypeSms (type=SentCodeTypeSms next_type=CodeTypeCall timeout=90) [模式=official]",
+        "[10:45:14] 分发通道为运营商短信，带外遥测网关可正常接收",
+        "[10:45:31] 虚拟节点状态机初始化成功! 节点 UID: <redacted>, 句柄: +351*******, 账号类型: new"
+      ]
+    },
+    {
+      "task_id": "3d3dba4f",
+      "status": "success",
+      "phone_masked": "+351*******",
+      "dc_suggested": "4",
+      "proxy_port": 10007,
+      "alignment": "语言/时区/出口对齐: country=PT lang=pt system_lang=pt-PT tz=0 source=ios_country_overlay aligned=是 bundle=ph.telegra.Telegraph store=appstore/686449807",
+      "device": {
+        "model": "iPhone 16 Pro",
+        "sdk": "18.6.2",
+        "app": "12.9.3"
+      },
+      "sendcode_samples": [
+        {
+          "type": "SentCodeTypeSms",
+          "next": "CodeTypeCall",
+          "timeout": "90"
+        }
+      ],
+      "resend_types": [],
+      "excerpt": [
+        "[10:44:42] [代理槽位] 批次 1e213443: 预分配 10/10 条 PT 同国代理（来源: xxxtg 专用住宅列表），单线消耗不复用",
+        "[10:44:42] [代理槽位] 槽 1/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10000",
+        "[10:44:42] [代理槽位] 槽 2/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10001",
+        "[10:44:42] [代理槽位] 槽 3/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10002",
+        "[10:44:42] [代理槽位] 槽 4/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10003",
+        "[10:44:42] [代理槽位] 槽 5/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10004",
+        "[10:44:42] [代理槽位] 槽 6/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10005",
+        "[10:44:42] [代理槽位] 槽 7/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10006",
+        "[10:44:42] [代理槽位] 槽 8/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10007",
+        "[10:44:42] [代理槽位] 槽 9/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10008",
+        "[10:44:42] [代理槽位] 槽 10/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10009",
+        "[10:44:42] [代理槽位] 1:1 绑定预分配出口 socks5://res.proxy-seller.com:10007（同国 PT，禁止跨区 fallback）",
+        "[10:44:42] 选定端点模板: MTProto iOS Official (api_id=8 / lang_pack=ios) (REGHelp appName=tgiOS / appDevice=iOS；iOS 不使用 AntiSafety AID)",
+        "[10:44:42] 硬件指纹包: iOS 备用 葡萄牙 PT · 48.db [PT] · 国家精确匹配",
+        "[10:44:42] 语言/时区/出口对齐: country=PT lang=pt system_lang=pt-PT tz=0 source=ios_country_overlay aligned=是 bundle=ph.telegra.Telegraph store=appstore/686449807",
+        "[10:44:42] 设备对齐模式=loose api_id=8 model=iPhone 16 Pro sdk=18.6.2 app=12.9.3 lang_pack=ios lang=pt-PT tz=0 emu=否",
+        "[10:44:50] 预检通过：号码 +351******* 在 Telegram 官方库中未注册（白号），继续申请 Push Token 并发送 auth.sendCode",
+        "[10:44:50] [验证码通道] iOS CodeSettings call_flags=grammers：unknown_number=否 flashcall=是 missed=是（unknown 固定否；闪信/漏接可 A/B，不改 Android）",
+        "[10:44:50] iOS 线路不走 AntiSafety（无 iOS Push / 无 AID），仅 REGHelp appName=tgiOS / appDevice=iOS",
+        "[10:44:54] [official] 官方客户端模拟生效：api_id=8 credential_source=official",
+        "[10:44:54] InitConnection 指纹: lang_pack=ios tz_offset=0 params=[tz_offset,bundleId]",
+        "[10:44:58] GetNearestDc 按出口 IP 建议 DC4；Telethon 默认从 DC2 起连。官方 iOS 会切到建议 DC，正在迁移以免 DC/出口地理不一致。",
+        "[10:45:10] sendCode 凭证核对: api_id=8 api_hash=<redacted> attach_token=是 push_token=有 code_settings.token=有 firebase=是 unknown=否 flashcall=是 missed=是 app_sandbox=False push_slot=CodeSettings.token(ios_apns) token_kind=apns_hex token_len=64 suspicious=否",
+        "[10:45:15] 挑战已由服务端下发! 分发通道类型: SentCodeTypeSms (type=SentCodeTypeSms next_type=CodeTypeCall timeout=90) [模式=official]",
+        "[10:45:15] 分发通道为运营商短信，带外遥测网关可正常接收",
+        "[10:45:37] 虚拟节点状态机初始化成功! 节点 UID: <redacted>, 句柄: +351*******, 账号类型: new"
+      ]
+    },
+    {
+      "task_id": "e9891fe3",
+      "status": "success",
+      "phone_masked": "+351*******",
+      "dc_suggested": "4",
+      "proxy_port": 10008,
+      "alignment": "语言/时区/出口对齐: country=PT lang=pt system_lang=pt-PT tz=0 source=ios_country_overlay aligned=是 bundle=ph.telegra.Telegraph store=appstore/686449807",
+      "device": {
+        "model": "iPhone 17 Pro",
+        "sdk": "18.6.2",
+        "app": "12.9.3"
+      },
+      "sendcode_samples": [
+        {
+          "type": "SentCodeTypeSms",
+          "next": "CodeTypeCall",
+          "timeout": "90"
+        }
+      ],
+      "resend_types": [],
+      "excerpt": [
+        "[10:44:42] [代理槽位] 批次 1e213443: 预分配 10/10 条 PT 同国代理（来源: xxxtg 专用住宅列表），单线消耗不复用",
+        "[10:44:42] [代理槽位] 槽 1/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10000",
+        "[10:44:42] [代理槽位] 槽 2/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10001",
+        "[10:44:42] [代理槽位] 槽 3/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10002",
+        "[10:44:42] [代理槽位] 槽 4/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10003",
+        "[10:44:42] [代理槽位] 槽 5/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10004",
+        "[10:44:42] [代理槽位] 槽 6/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10005",
+        "[10:44:42] [代理槽位] 槽 7/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10006",
+        "[10:44:42] [代理槽位] 槽 8/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10007",
+        "[10:44:42] [代理槽位] 槽 9/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10008",
+        "[10:44:42] [代理槽位] 槽 10/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10009",
+        "[10:44:42] [代理槽位] 1:1 绑定预分配出口 socks5://res.proxy-seller.com:10008（同国 PT，禁止跨区 fallback）",
+        "[10:44:42] 选定端点模板: MTProto iOS Official (api_id=8 / lang_pack=ios) (REGHelp appName=tgiOS / appDevice=iOS；iOS 不使用 AntiSafety AID)",
+        "[10:44:42] 硬件指纹包: iOS 备用 葡萄牙 PT · 48.db [PT] · 国家精确匹配",
+        "[10:44:42] 语言/时区/出口对齐: country=PT lang=pt system_lang=pt-PT tz=0 source=ios_country_overlay aligned=是 bundle=ph.telegra.Telegraph store=appstore/686449807",
+        "[10:44:42] 设备对齐模式=loose api_id=8 model=iPhone 17 Pro sdk=18.6.2 app=12.9.3 lang_pack=ios lang=pt-PT tz=0 emu=否",
+        "[10:44:50] 预检通过：号码 +351******* 在 Telegram 官方库中未注册（白号），继续申请 Push Token 并发送 auth.sendCode",
+        "[10:44:50] [验证码通道] iOS CodeSettings call_flags=grammers：unknown_number=否 flashcall=是 missed=是（unknown 固定否；闪信/漏接可 A/B，不改 Android）",
+        "[10:44:50] iOS 线路不走 AntiSafety（无 iOS Push / 无 AID），仅 REGHelp appName=tgiOS / appDevice=iOS",
+        "[10:44:54] [official] 官方客户端模拟生效：api_id=8 credential_source=official",
+        "[10:44:54] InitConnection 指纹: lang_pack=ios tz_offset=0 params=[tz_offset,bundleId]",
+        "[10:44:58] GetNearestDc 按出口 IP 建议 DC4；Telethon 默认从 DC2 起连。官方 iOS 会切到建议 DC，正在迁移以免 DC/出口地理不一致。",
+        "[10:45:09] sendCode 凭证核对: api_id=8 api_hash=<redacted> attach_token=是 push_token=有 code_settings.token=有 firebase=是 unknown=否 flashcall=是 missed=是 app_sandbox=False push_slot=CodeSettings.token(ios_apns) token_kind=apns_hex token_len=64 suspicious=否",
+        "[10:45:15] 挑战已由服务端下发! 分发通道类型: SentCodeTypeSms (type=SentCodeTypeSms next_type=CodeTypeCall timeout=90) [模式=official]",
+        "[10:45:15] 分发通道为运营商短信，带外遥测网关可正常接收",
+        "[10:45:32] 虚拟节点状态机初始化成功! 节点 UID: <redacted>, 句柄: +351*******, 账号类型: new"
+      ]
+    },
+    {
+      "task_id": "185e5072",
+      "status": "success",
+      "phone_masked": "+351*******",
+      "dc_suggested": "4",
+      "proxy_port": 10009,
+      "alignment": "语言/时区/出口对齐: country=PT lang=pt system_lang=pt-PT tz=0 source=ios_country_overlay aligned=是 bundle=ph.telegra.Telegraph store=appstore/686449807",
+      "device": {
+        "model": "iPhone 17",
+        "sdk": "18.6.2",
+        "app": "12.9.3"
+      },
+      "sendcode_samples": [
+        {
+          "type": "SentCodeTypeSms",
+          "next": "CodeTypeCall",
+          "timeout": "90"
+        },
+        {
+          "type": "SentCodeTypeCall",
+          "next": "None",
+          "timeout": "None"
+        }
+      ],
+      "resend_types": [
+        "SentCodeTypeCall"
+      ],
+      "excerpt": [
+        "[10:44:42] [代理槽位] 批次 1e213443: 预分配 10/10 条 PT 同国代理（来源: xxxtg 专用住宅列表），单线消耗不复用",
+        "[10:44:42] [代理槽位] 槽 1/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10000",
+        "[10:44:42] [代理槽位] 槽 2/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10001",
+        "[10:44:42] [代理槽位] 槽 3/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10002",
+        "[10:44:42] [代理槽位] 槽 4/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10003",
+        "[10:44:42] [代理槽位] 槽 5/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10004",
+        "[10:44:42] [代理槽位] 槽 6/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10005",
+        "[10:44:42] [代理槽位] 槽 7/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10006",
+        "[10:44:42] [代理槽位] 槽 8/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10007",
+        "[10:44:42] [代理槽位] 槽 9/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10008",
+        "[10:44:42] [代理槽位] 槽 10/10: xxxtg 专用住宅列表 socks5://res.proxy-seller.com:10009",
+        "[10:44:42] [代理槽位] 1:1 绑定预分配出口 socks5://res.proxy-seller.com:10009（同国 PT，禁止跨区 fallback）",
+        "[10:44:42] 选定端点模板: MTProto iOS Official (api_id=8 / lang_pack=ios) (REGHelp appName=tgiOS / appDevice=iOS；iOS 不使用 AntiSafety AID)",
+        "[10:44:42] 硬件指纹包: iOS 备用 葡萄牙 PT · 48.db [PT] · 国家精确匹配",
+        "[10:44:42] 语言/时区/出口对齐: country=PT lang=pt system_lang=pt-PT tz=0 source=ios_country_overlay aligned=是 bundle=ph.telegra.Telegraph store=appstore/686449807",
+        "[10:44:42] 设备对齐模式=loose api_id=8 model=iPhone 17 sdk=18.6.2 app=12.9.3 lang_pack=ios lang=pt-PT tz=0 emu=否",
+        "[10:44:56] 预检通过：号码 +351******* 在 Telegram 官方库中未注册（白号），继续申请 Push Token 并发送 auth.sendCode",
+        "[10:44:56] [验证码通道] iOS CodeSettings call_flags=grammers：unknown_number=否 flashcall=是 missed=是（unknown 固定否；闪信/漏接可 A/B，不改 Android）",
+        "[10:44:56] iOS 线路不走 AntiSafety（无 iOS Push / 无 AID），仅 REGHelp appName=tgiOS / appDevice=iOS",
+        "[10:45:01] [official] 官方客户端模拟生效：api_id=8 credential_source=official",
+        "[10:45:01] InitConnection 指纹: lang_pack=ios tz_offset=0 params=[tz_offset,bundleId]",
+        "[10:45:05] GetNearestDc 按出口 IP 建议 DC4；Telethon 默认从 DC2 起连。官方 iOS 会切到建议 DC，正在迁移以免 DC/出口地理不一致。",
+        "[10:45:15] sendCode 凭证核对: api_id=8 api_hash=<redacted> attach_token=是 push_token=有 code_settings.token=有 firebase=是 unknown=否 flashcall=是 missed=是 app_sandbox=False push_slot=CodeSettings.token(ios_apns) token_kind=apns_hex token_len=64 suspicious=否",
+        "[10:45:20] 挑战已由服务端下发! 分发通道类型: SentCodeTypeSms (type=SentCodeTypeSms next_type=CodeTypeCall timeout=90) [模式=official]",
+        "[10:45:20] 分发通道为运营商短信，带外遥测网关可正常接收",
+        "[10:47:27] 短信窗口已尽仍无码，立即 auth.resendCode 切换 next_type=CodeTypeCall 再收一轮",
+        "[10:47:27] next_type=CodeTypeCall 且无有效 timeout，立即尝试 auth.resendCode 探测短信通道...",
+        "[10:47:27] auth.resendCode 已返回，新分发通道类型: SentCodeTypeCall (type=SentCodeTypeCall next_type=None timeout=None)",
+        "[10:48:42] 虚拟节点状态机初始化成功! 节点 UID: <redacted>, 句柄: +351*******, 账号类型: new"
+      ]
+    }
+  ]
+}

@@ -140,7 +140,7 @@ class AppConfigModel(BaseModel):
     """系统全局仿真实验与节点编排配置"""
     active_app_type: str = Field(
         default="telegram_android",
-        description="当前激活的端点环境模板 (telegram_android / telegram_android_public / telegram_x / telegram_9)"
+        description="当前激活的端点环境模板 (telegram_android / telegram_android_public / telegram_ios / telegram_x / telegram_9)"
     )
     antisafety_api_key: str = Field(
         default="as2b21dc7b71b5ce8166a42c22b54566",
@@ -152,7 +152,10 @@ class AppConfigModel(BaseModel):
             "telegram_x": "47f7d612-fe1a-4167-a450-db8a52048e9c",
             "telegram_9": "59e59906-5177-4f6f-8f7e-ced3fe370997"
         },
-        description="各端点环境模板绑定的 Attestation 实例标识 (AID)"
+        description=(
+            "各 Android 端点模板绑定的 AntiSafety AID。"
+            "REGHelp 无 AID；telegram_ios 不使用 AntiSafety，不得填入 Android AID"
+        )
     )
     vak_sms_api_key: str = Field(
         default="16aa4499a3954317aaf002a55e354eed",
@@ -229,7 +232,7 @@ class AppConfigModel(BaseModel):
         description=(
             "API 凭证选择策略: "
             "official (始终使用官方内置 api_id/api_hash，需要有效 Push Token 才能规避 API_ID_PUBLISHED_FLOOD) / "
-            "custom (始终强制使用下方自建开发者 api_id/api_hash) / "
+            "custom (不再覆盖 Android / iOS 的 App ID 与设备参数；自建栏不干预指纹包) / "
             "auto (优先按官方 ID 申请 Push；若本次未拿到 Token 且官方 ID 已泄露，"
             "则回退到自建开发者 ID 并按该凭证重算通道计划，避免仍按「必须 attach」裸发失败)"
         )
@@ -294,6 +297,23 @@ class AppConfigModel(BaseModel):
             "reghelp_only (仅使用 REGHelp) / antisafety_only (仅使用 AntiSafety)"
         )
     )
+    email_provider_mode: str = Field(
+        default="smsbower_primary",
+        description=(
+            "SetUpEmailRequired 临时邮箱调度策略: "
+            "smsbower_primary (SMS Bower Google 邮箱优先，REGHelp 备选，默认) / "
+            "smsbower_only (仅 SMS Bower) / "
+            "reghelp_primary (REGHelp 优先，SMS Bower 备选) / "
+            "reghelp_only (仅 REGHelp)"
+        ),
+    )
+    email_smsbower_fallback_enabled: bool = Field(
+        default=True,
+        description=(
+            "smsbower_primary / reghelp_primary 模式下，主源失败"
+            "（SERVICE_DISABLED、超时、无库存）时是否自动切换候补提供源"
+        ),
+    )
     push_token_reuse_enabled: bool = Field(
         default=False,
         description=(
@@ -326,21 +346,21 @@ class AppConfigModel(BaseModel):
         default=False,
         description=(
             "官方客户端模拟：开启后强制使用模板官方 api_id/api_hash（telegram_android 为 6，"
-            "telegram_android_public 为 4，telegram_x 为 21724）"
+            "telegram_android_public 为 4，telegram_ios 为 8，telegram_x 为 21724）"
             "并以 push_required 每轮申请并 attach REGHelp Push Token；"
-            "握手写入 InitConnection.lang_pack（android / android_x）与号国 tz_offset；"
+            "握手写入 InitConnection.lang_pack（android / ios / android_x）与号国 tz_offset；"
             "sendCode 后处理 SetUpEmailRequired / FirebaseSms / PaymentRequired，"
             "不再把非 App 通道一律当短信空等。猎号连续 App 强制 SMS 在此模式下关闭。"
-            "Push attach 仍走文档标为 iOS 的 CodeSettings.token（Android FCM 错槽兼容），"
-            "不是在跑 iOS 客户端。"
-            "vault 严格对齐开启时会覆盖为 api_id=4，避免漂到 6 触发 Payment。"
+            "Android FCM 走 InitConnection.params.device_token，不写 CodeSettings.token；"
+            "telegram_ios 路径按官方 iOS 申请 appDevice=iOS 的 Push，token 槽位对本。"
+            "vault 严格对齐只钉 Android api_id=4，不会覆盖 telegram_ios。"
         ),
     )
     device_alignment_mode: str = Field(
         default="loose",
         description=(
             "设备指纹对齐: strict（对照 vault 成功样本 + Telegram Expert："
-            "api_id=4 正确 hash、钉 app_version=12.7.3、lang_pack=android、号国 tz/lang、"
+            "api_id=4 正确 hash、钉 app_version=12.8.3、lang_pack=android、号国 tz/lang、"
             "InitConnection 写入握手、非 emu Push attach、缺字段拒绝发码）/ "
             "loose（沿用指纹包抽样；api_id=4 路径仍会写入 InitConnection lang_pack/tz）"
         ),
@@ -352,8 +372,8 @@ class AppConfigModel(BaseModel):
     pin_app_version_substr: str = Field(
         default="",
         description=(
-            "设备指纹抽样时优先匹配 app_version 包含该子串的样本（如 12.7.3）。"
-            "空字符串在严格模式下回落到 12.7.3；loose 模式表示不钉死版本。"
+            "设备指纹抽样时优先匹配 app_version 包含该子串的样本（如 12.8.3）。"
+            "空字符串在严格模式下回落到 12.8.3；loose 模式表示不钉死版本。"
         ),
     )
     init_connection_set_lang_pack: bool = Field(
@@ -443,16 +463,32 @@ class AppConfigModel(BaseModel):
         description="auth.sendCode CodeSettings.allow_firebase。官方 Android 为 true。",
     )
     code_settings_unknown_number: bool = Field(
-        default=True,
-        description="CodeSettings.unknown_number：接码号不是本机 SIM 时设 true。",
+        default=False,
+        description=(
+            "CodeSettings.unknown_number。官方 Android / iOS 都强制 false"
+            "（对齐 iOS PT 10/10）。仅自建 api_id 的非官方 Android 可读此开关。"
+        ),
     )
     code_settings_allow_flashcall: bool = Field(
         default=False,
-        description="CodeSettings.allow_flashcall；接码网关通常收不到闪信，默认关闭。",
+        description=(
+            "CodeSettings.allow_flashcall；接码网关通常收不到闪信，Android 默认关闭。"
+            "iOS 是否开启由 ios_code_settings_call_flags 决定。"
+        ),
     )
     code_settings_allow_missed_call: bool = Field(
         default=False,
-        description="CodeSettings.allow_missed_call。",
+        description=(
+            "CodeSettings.allow_missed_call。Android 默认关闭；"
+            "iOS 是否开启由 ios_code_settings_call_flags 决定。"
+        ),
+    )
+    ios_code_settings_call_flags: str = Field(
+        default="grammers",
+        description=(
+            "iOS 闪信/漏接：grammers=两者开（对齐已验证成功 payload）；"
+            "off=两者关。unknown_number 仍强制 false。只影响 iOS。"
+        ),
     )
     hunt_sms_first_after_app_streak: int = Field(
         default=2,
@@ -489,13 +525,20 @@ class AppConfigModel(BaseModel):
             "严格设备对齐开启时同样强制。"
         ),
     )
+    proxy_unique_ip_per_task: bool = Field(
+        default=False,
+        description=(
+            "每个注册任务消耗一条同国住宅单线，任务结束后不归还、跨批次也不复用。"
+            "30 路即需要至少 30 条独立 session 口。"
+        ),
+    )
     hunt_device_max_uses: int = Field(
-        default=8,
+        default=1,
         ge=1,
         le=50,
         description=(
-            "同一设备指纹在猎号任务内最多用于 sendCode 的次数；达到后重采样设备并换新 Push "
-            "（Push 与设备绑定，不能只换机不换 Token）"
+            "同一设备指纹在猎号任务内最多用于 sendCode 的次数。默认 1：换号必须换设备+Push，"
+            "避免第 2 号复用同一 FCM。"
         ),
     )
     hunt_default_max_attempts: int = Field(
@@ -713,6 +756,7 @@ class AppConfigModel(BaseModel):
         "flood_block_new_sends",
         "ignore_published_flood_window",
         "proxy_require_country_match",
+        "proxy_unique_ip_per_task",
         "code_settings_allow_firebase",
         "code_settings_unknown_number",
         "code_settings_allow_flashcall",
@@ -788,6 +832,10 @@ class DeviceProfileSchema(BaseModel):
     app_version: str
     app_version_pure: str
     app_build: str
+    apk_version_code: int = Field(
+        default=0,
+        description="REGHelp Integrity 用的 APK versionCode，与 Settings 显示 build 分开存",
+    )
     lang_pack: str
     lang_code: str
     system_lang_code: str
@@ -1113,6 +1161,13 @@ class SmsallTrialRequest(BaseModel):
     country: Optional[str] = Field(default=None, description="ISO2 国家码；缺省时按 event_id 回填")
     count: int = Field(default=1, ge=1, le=10, description="测试任务数")
     concurrency: int = Field(default=1, ge=1, le=10, description="测试线程 / 并发")
+    app_type: Optional[str] = Field(
+        default=None,
+        description=(
+            "注册途径：telegram_ios / telegram_android / telegram_android_public / "
+            "telegram_x / telegram_9。缺省时用全局 active_app_type"
+        ),
+    )
 
 
 class SmsallDeleteEventsRequest(BaseModel):
@@ -1769,6 +1824,11 @@ class DeviceDbPack(BaseModel):
     alias: str
     country: Optional[str] = None
     country_name: Optional[str] = None
+    platform: str = Field(default="android", description="android 或 ios；两套调度互不混抽")
+    app_type: Optional[str] = Field(
+        default=None,
+        description="Android 合成途径：telegram_android / telegram_android_public / telegram_x / telegram_9",
+    )
     enabled: bool = True
     source: str = Field(default="upload", description="upload / generated / imported")
     sample_count: int = 0
@@ -1788,6 +1848,8 @@ class DeviceDbListResponse(BaseModel):
     pack_count: int = 0
     enabled_packs: int = 0
     disabled_packs: int = 0
+    ios_pack_count: int = 0
+    android_pack_count: int = 0
     active_countries: List[str] = Field(default_factory=list)
     packs: List[DeviceDbPack] = Field(default_factory=list)
     supported_countries: List[Dict[str, str]] = Field(default_factory=list)
@@ -1810,13 +1872,22 @@ class DeviceDbToggleRequest(BaseModel):
 
 
 class DeviceDbGenerateRequest(BaseModel):
-    country: str = Field(..., description="目标国家 ISO-2，如 cl / id / in")
-    count: int = Field(default=300, ge=10, le=5000, description="合成样本条数")
+    country: str = Field(..., description="目标国家 ISO-2，如 cl / id / pt")
+    platform: str = Field(default="ios", description="ios 或 android；默认 iOS")
+    app_type: Optional[str] = Field(
+        default=None,
+        description=(
+            "仅 Android：与 AntiSafety AID 对齐的模板 "
+            "telegram_android(api_id=6) / telegram_android_public(4) / "
+            "telegram_x(21724) / telegram_9(6)"
+        ),
+    )
+    count: int = Field(default=48, ge=8, le=5000, description="合成样本条数")
     alias: Optional[str] = Field(default=None, description="生成后的展示别名")
     enabled: bool = Field(default=True, description="生成后是否立即投入调度")
     brand_weights: Optional[Dict[str, int]] = Field(
         default=None,
-        description="可选品牌权重覆盖: samsung/xiaomi/huawei/motorola/realme/vivo/oppo/other",
+        description="可选品牌权重覆盖（仅 Android）: samsung/xiaomi/huawei/motorola/realme/vivo/oppo/other",
     )
     seed: Optional[int] = Field(default=None, description="可选随机种子，便于复现实验")
 

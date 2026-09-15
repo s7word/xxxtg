@@ -7,6 +7,7 @@ const config = reactive({
   antisafety_api_key: '',
   antisafety_aids: {
     telegram_android: '',
+    telegram_ios: '',
     telegram_x: '',
     telegram_9: ''
   },
@@ -60,6 +61,8 @@ const config = reactive({
   reghelp_connect_timeout: 6.0,
   reghelp_total_timeout: 20.0,
   attestation_provider_mode: 'reghelp_primary',
+  email_provider_mode: 'smsbower_primary',
+  email_smsbower_fallback_enabled: true,
   push_token_reuse_enabled: false,
   push_token_reuse_max_uses: 2,
   push_token_save_issued: true,
@@ -67,7 +70,7 @@ const config = reactive({
   official_client_emulation: false,
   device_alignment_mode: 'loose',
   strict_vault_device_alignment: false,
-  pin_app_version_substr: '12.7.3',
+  pin_app_version_substr: '',
   init_connection_set_lang_pack: false,
   init_connection_set_tz_offset: false,
   force_country_locale: false,
@@ -84,7 +87,7 @@ const config = reactive({
   hunt_no_number_retry_delay_sec: 2.0,
   hunt_proxy_max_uses: 5,
   proxy_require_country_match: true,
-  hunt_device_max_uses: 8,
+  hunt_device_max_uses: 1,
   hunt_default_max_attempts: 100,
   hunt_max_total_leases: 200,
   phone_precheck_enabled: true

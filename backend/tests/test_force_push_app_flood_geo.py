@@ -63,7 +63,7 @@ class TestForcePushPlan(unittest.TestCase):
             _profile(api_id=35337905),
         )
         self.assertEqual(plan.effective_mode, CODE_DELIVERY_PUSH_REQUIRED)
-        self.assertTrue(plan.attach_push_token)
+        self.assertFalse(plan.attach_push_token)
         self.assertTrue(plan.use_published_api_id)
 
 
@@ -317,10 +317,15 @@ class TestFloodWindowGate(unittest.IsolatedAsyncioTestCase):
     def test_push_slot_label_is_android_fcm_not_ios_client(self):
         from backend.app.services.device_alignment import describe_push_slot
 
-        label = describe_push_slot(True)
-        self.assertIn("android_fcm", label)
+        label = describe_push_slot(
+            False,
+            profile={"app_device": "Android", "lang_pack": "android"},
+            token="dGVzdA:APA91" + ("x" * 140),
+        )
+        self.assertIn("device_token", label)
+        self.assertNotIn("ios_apns", label)
         self.assertNotIn("iOS-semantic", label)
-        self.assertIn("CodeSettings.token", label)
+        self.assertNotIn("CodeSettings.token", label)
 
 
 class TestProxyCountryMatch(unittest.IsolatedAsyncioTestCase):

@@ -1,6 +1,22 @@
 # xxxtg AI 接手文档
 
-> 供新开 Cursor / Cloud Agent 窗口时快速恢复上下文。最后更新：2026-08-26。
+> 供新开 Cursor / Cloud Agent 窗口时快速恢复上下文。最后更新：2026-09-15。
+
+## 0. 先读：官方 iOS 黄金基线（勿拆）
+
+**2026-09-15 葡萄牙 `telegram_ios` 批次 `1e213443`：10/10 注册成功。**  
+这是本仓第一份完整对照（协议 + 出口 + 短信同时成立），不是「看起来像成功」。
+
+- 合同：[`docs/IOS_PT_BASELINE.md`](./IOS_PT_BASELINE.md)
+- 冻结日志（只读）：[`docs/baselines/pt-ios-20260915/`](./baselines/pt-ios-20260915/README.md)
+- Git 回退标签：`baseline/pt-ios-10-20260915`
+- Cursor 规则：`.cursor/rules/ios-pt-baseline.mdc`
+
+改 iOS / locale / CodeSettings / InitConnection / REGHelp / `*_tg` 代理之前必须对照该文档。  
+改坏了用标签回退，不要凭记忆重写。PH 出 Call/付款、TR 连不上，**不能**拿来覆盖这条 PT 合同。
+
+设备库：控制台「硬件指纹」按**指定国家**合成 iOS（api_id=8）。Android 旧包可整表清空后重做。  
+模板卡片上的 iOS App ID **必须是 8**，禁止被全局 custom（室友/自建栏）盖掉。
 
 ## 1. 项目是什么
 
@@ -43,12 +59,12 @@
 
 | 分支 | 说明 | PR |
 |------|------|-----|
-| **`cursor/reghelp-push-refund-9abd`** | **当前最全栈**：Cyber Emerald UI + 手动控制台 + REGHelp Push 退款闭环 | [#26](https://github.com/s7word/xxxtg/pull/26) DRAFT |
+| **`cursor/ios-pt-10-88d6`** | **含官方 iOS 合同 + 葡萄牙 10/10 基线文档**（叠在 iOS 协议线上） | [#83](https://github.com/s7word/xxxtg/pull/83) |
+| `cursor/reghelp-push-refund-9abd` | 统一工作分支（Cyber Emerald + 手动控制台 + REGHelp 退款）；**尚未快进含 iOS 基线** | [#26](https://github.com/s7word/xxxtg/pull/26) DRAFT |
 | `cursor/manual-registration-console-9abd` | 手动单号控制台（#26 的上游基线） | [#23](https://github.com/s7word/xxxtg/pull/23) OPEN |
-| `cursor/proxyseller-za-pool-fix-9abd` | 南非代理零候选误导提示 + fallback 区域告警 | [#25](https://github.com/s7word/xxxtg/pull/25) DRAFT |
-| `cursor/reghelp-email-infra-9abd` | REGHelp 设备邮箱基础设施（**未合并**进上分支） | [#24](https://github.com/s7word/xxxtg/pull/24) DRAFT |
 
-`main` 分支较旧，**不要**在 main 上直接开发新功能。
+`main` 分支较旧，**不要**在 main 上直接开发新功能。  
+默认日常改动仍落在 `cursor/reghelp-push-refund-9abd`；**动 iOS 协议时先读第 0 节**，需要基线代码则从 `cursor/ios-pt-10-88d6` 或标签 `baseline/pt-ios-10-20260915` 取。
 
 ### 合并建议（待用户确认）
 
@@ -65,7 +81,7 @@
 | IP | `187.127.218.157` |
 | SSH | `root@187.127.218.157:22`（公钥登录；**勿把私钥/密码写入 Git**） |
 | 项目路径 | `/opt/xxxtg` |
-| 当前分支 | `cursor/reghelp-push-refund-9abd` @ `fad2357` |
+| 当前分支 | 日常：`cursor/reghelp-push-refund-9abd`；iOS 基线：`cursor/ios-pt-10-88d6` / 标签 `baseline/pt-ios-10-20260915` |
 | 后端 | http://187.127.218.157:8000 |
 | 前端 | http://187.127.218.157:3100 |
 
@@ -183,6 +199,17 @@ backend/app/
 ---
 
 ## 8. 已确认的产品/协议结论（勿重复踩坑）
+
+### 官方 iOS：葡萄牙是成功对照，菲律宾/土耳其不是
+
+2026-09-15 批次 `1e213443`（详见 [`IOS_PT_BASELINE.md`](./IOS_PT_BASELINE.md)）：
+
+- 客户端必须是官方 iOS：`api_id=8`、`lang_pack=ios`、REGHelp `tgiOS`/`iOS`、params 只有 `tz_offset`+`bundleId`
+- locale 跟出口国：PT=`pt`/`pt-PT`/`tz=0`；PH=`en`/`en-PH`/`28800`。不要改成 `en-US`，不要用巴西 `pt-BR`
+- `GetNearestDc` 后切 DC，禁止写死 DC5（PT 是 DC4）
+- PH 邮箱后 Call/付款、闪信 A/B 已否证「Call 来自 flashcall」；TR 当时是出口挂了
+- `tz_offset=0` 合法；禁止 `or 28800`
+- 成功日志已冻结在 `docs/baselines/pt-ios-20260915/`，校验 `MANIFEST.sha256`
 
 ### Push Token 默认不复用；可选本地库存
 
@@ -325,8 +352,8 @@ git push -u origin cursor/my-feature-9abd
 
 ## 12. 新开窗口时 AI 应做的第一件事
 
-1. 读本文档与 `.cursor/rules/remote-dev.mdc`
-2. `git branch` 确认分支；优先 `cursor/reghelp-push-refund-9abd` 或用户指定
+1. 读本文档第 0 节、[`IOS_PT_BASELINE.md`](./IOS_PT_BASELINE.md)、`.cursor/rules/remote-dev.mdc`
+2. `git branch` 确认分支；动 iOS 时对照标签 `baseline/pt-ios-10-20260915`
 3. 确认工作区是服务器 `/opt/xxxtg`（远程开发），不是云机 `/workspace`
 4. 问用户本轮目标后 **自己执行**，不要派 Task
 5. 本机已在服务器上时直接操作；不要再 SSH 一遍

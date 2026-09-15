@@ -84,6 +84,7 @@ from backend.app.models.schemas import (
 from backend.app.services.device_profile import DeviceProfileManager
 from backend.app.services.device_db_manager import DeviceDbManager, normalize_country
 from backend.app.services.device_generator import generate_country_db, list_supported_countries
+from backend.app.services.ios_device_catalog import generate_ios_country_db
 from backend.app.services.vaksms import VakSmsService
 from backend.app.services.grizzlysms import (
     GrizzlySmsService,
@@ -217,7 +218,7 @@ async def smsall_delete_events(req: SmsallDeleteEventsRequest):
 
 @router.post("/smsall/trial", summary="对通知列表中的国家一键测试注册")
 async def smsall_trial_register(req: SmsallTrialRequest, background_tasks: BackgroundTasks):
-    from backend.app.api.smsall_hooks import start_country_batch
+    from backend.app.api.smsall_hooks import resolve_batch_app_type, start_country_batch
 
     country = normalize_country(req.country)
     event = get_event(req.event_id or "") if req.event_id else None
@@ -233,6 +234,10 @@ async def smsall_trial_register(req: SmsallTrialRequest, background_tasks: Backg
             provider_ids = [str(item).strip() for item in supplier_ids if str(item).strip()]
         elif event.get("provider_ref"):
             provider_ids = [str(event.get("provider_ref")).strip()]
+    try:
+        app_type = resolve_batch_app_type(req.app_type, config)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="不支持的注册途径，请选择官方 iOS 或 Android 模板")
     started = start_country_batch(
         country=country,
         count=req.count,
@@ -240,6 +245,7 @@ async def smsall_trial_register(req: SmsallTrialRequest, background_tasks: Backg
         background_tasks=background_tasks,
         config=config,
         provider_ids=provider_ids,
+        app_type=app_type,
     )
     remembered = attach_batch(
         event_id=req.event_id,
@@ -253,6 +259,7 @@ async def smsall_trial_register(req: SmsallTrialRequest, background_tasks: Backg
         "message": (
             f"{country.upper()} 测试注册已提交："
             f"{started['count']} 任务 / 线程 {started['concurrency']} "
+            f"/ {started.get('app_type') or app_type} "
             f"（batch_id={started['batch_id']}）"
         ),
         **started,
@@ -374,23 +381,45 @@ async def delete_device_db(pack_id: str):
 
 @router.post("/device-dbs/generate", response_model=DeviceDbPackResponse, summary="按目标国家参数化合成一套合规硬件指纹库")
 async def generate_device_db(req: DeviceDbGenerateRequest):
+    platform = str(req.platform or "ios").strip().lower()
+    if platform not in {"ios", "android"}:
+        raise HTTPException(status_code=400, detail="platform 只能是 ios 或 android")
     try:
-        pack = generate_country_db(
-            country=req.country,
-            count=req.count,
-            alias=req.alias,
-            enabled=req.enabled,
-            brand_weights=req.brand_weights,
-            seed=req.seed,
-        )
+        if platform == "ios":
+            pack = generate_ios_country_db(
+                country=req.country,
+                count=req.count,
+                alias=req.alias,
+                enabled=req.enabled,
+                seed=req.seed,
+            )
+        else:
+            pack = generate_country_db(
+                country=req.country,
+                count=max(10, int(req.count or 300)),
+                alias=req.alias,
+                enabled=req.enabled,
+                brand_weights=req.brand_weights,
+                seed=req.seed,
+                app_type=req.app_type or "telegram_android",
+            )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"合成硬件指纹库失败: {exc}") from exc
     return DeviceDbPackResponse(
         success=True,
-        message=f"已合成 {pack.get('alias')}（{pack.get('sample_count')} 条 / {pack.get('country')}）",
+        message=f"已合成 {pack.get('alias')}（{pack.get('platform') or platform} / {pack.get('sample_count')} 条 / {pack.get('country')}）",
         pack=pack,
+    )
+
+
+@router.post("/device-dbs/purge-android", response_model=DeviceDbListResponse, summary="删除全部 Android 指纹包，只保留 iOS")
+async def purge_android_device_dbs():
+    DeviceDbManager.ensure_ready()
+    removed = DeviceDbManager.delete_android_packs()
+    return _device_db_list_payload(
+        f"已删除 {len(removed)} 套 Android / 未标平台旧包，仅保留 iOS"
     )
 
 # ==================== 1b. 接码平台实时有货拓扑 ====================

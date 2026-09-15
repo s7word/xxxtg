@@ -702,7 +702,9 @@ class ManualRegistrationOrchestrator:
                 lang_code=profile.get("lang_code"),
                 system_lang_code=profile.get("system_lang_code"),
             )
-            init_snap = apply_init_connection_overrides(client, profile, config)
+            init_snap = apply_init_connection_overrides(
+                client, profile, config, push_token=push_token
+            )
             if init_snap.get("blocked"):
                 await manager.append_log(
                     task_id, f"InitConnection 指纹未写入: {init_snap.get('blocked')}"

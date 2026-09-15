@@ -70,6 +70,7 @@ COUNTRY_PROFILES: Dict[str, Tuple[str, ...]] = {
     "ph": ("phl", "philippines"),
     "pk": ("pak", "pakistan"),
     "pl": ("pol", "poland"),
+    "pt": ("prt", "portugal"),
     "ro": ("rou", "romania"),
     "ru": ("rus", "russia", "russian federation"),
     "sa": ("sau", "saudi arabia", "ksa"),
@@ -95,7 +96,8 @@ STATIC_CATALOG_TYPE = "resident_static"
 RESIDENT_TG_SOURCE = "resident_tg"
 RESIDENT_TG_CATALOG = "resident_tg"
 RESIDENT_TG_PORT_START = 10000
-RESIDENT_TG_PORT_CAP = 20
+# 30 路单线不复用时需要至少 30 个 session 口；跳板已绑 10000-10999。
+RESIDENT_TG_PORT_CAP = 40
 RESIDENT_TG_TITLE_RE = re.compile(r"^([A-Za-z]{2})_tg$", re.IGNORECASE)
 API_TOOLS_TITLES = frozenset({"api-tools", "apitools"})
 STATIC_REGIONAL_POOLS: Dict[str, Dict[str, Any]] = {
@@ -178,6 +180,7 @@ PHONE_DIAL_TO_ISO2: Dict[str, str] = {
     "212": "ma",
     "234": "ng",
     "254": "ke",
+    "351": "pt",
     "380": "ua",
     "420": "cz",
     "880": "bd",
@@ -617,13 +620,27 @@ def tools_auth_from_lists(lists: Iterable[Dict[str, Any]]) -> Tuple[Optional[str
     return login, password
 
 
+def mint_resident_session_tag() -> str:
+    """每批次一个新 sticky session，避免 ttl_24h 把洪水出口粘住。"""
+    return f"r{int(time.time()) % 1_000_000:06d}"
+
+
+def sanitize_session_tag(tag: Optional[str]) -> str:
+    raw = "".join(ch for ch in str(tag or "") if ch.isalnum())
+    return raw[:12]
+
+
 def build_resident_tg_username(
     base_login: str,
     *,
     country: Optional[str] = None,
     port: Optional[int] = None,
+    session_tag: Optional[str] = None,
 ) -> str:
-    """login_c_CL_s_tg10000_ttl_24h — 用 Api-Tools 账密按国家钉死出口。"""
+    """login_c_CL_s_tg10000_ttl_24h — 用 Api-Tools 账密按国家钉死出口。
+
+    ``session_tag`` 会拼进 ``s_``，同一端口也能换到新出口 IP。
+    """
     base = (base_login or "").strip()
     if not base:
         return ""
@@ -633,9 +650,41 @@ def build_resident_tg_username(
         parts.append(f"c_{cc}")
     if port:
         sid = f"tg{(cc or 'xx').lower()}{int(port)}"
+        tag = sanitize_session_tag(session_tag)
+        if tag:
+            sid = f"{sid}{tag}"
         parts.append(f"s_{sid[:48]}")
         parts.append("ttl_24h")
     return "_".join(parts)
+
+
+def apply_resident_session_tag(proxy: Dict[str, Any], tag: str) -> Dict[str, Any]:
+    """给已导出的 {CC}_tg 节点换新 session，端口不变、出口 IP 变。"""
+    if not is_resident_tg(proxy):
+        return proxy
+    user = str(proxy.get("username") or proxy.get("login") or "")
+    if "_c_" in user:
+        base = user.split("_c_", 1)[0]
+    elif "_s_" in user:
+        base = user.split("_s_", 1)[0]
+    else:
+        base = user
+    country = proxy.get("country_code") or proxy.get("region")
+    port = proxy.get("port")
+    try:
+        port_i = int(port) if port is not None else None
+    except (TypeError, ValueError):
+        port_i = None
+    new_user = build_resident_tg_username(
+        base, country=country, port=port_i, session_tag=tag
+    )
+    if not new_user:
+        return proxy
+    out = dict(proxy)
+    out["username"] = new_user
+    out["login"] = new_user
+    out["session_tag"] = sanitize_session_tag(tag)
+    return out
 
 
 def resolve_iso2_country(query: Optional[str]) -> Optional[str]:
@@ -779,7 +828,7 @@ def find_tg_resident_list(lists: Iterable[Dict[str, Any]], iso2: str) -> Optiona
 def resident_list_to_proxies(
     list_row: Optional[Dict[str, Any]],
     *,
-    max_ports: int = 10,
+    max_ports: int = RESIDENT_TG_PORT_CAP,
     tools_login: Optional[str] = None,
     tools_password: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
@@ -815,10 +864,10 @@ def resident_list_to_proxies(
     if iso2:
         iso2 = iso2.lower()
 
-    cap = _as_int(max_ports, 10) or 10
+    cap = _as_int(max_ports, RESIDENT_TG_PORT_CAP) or RESIDENT_TG_PORT_CAP
     cap = max(1, min(cap, RESIDENT_TG_PORT_CAP))
-    parsed_ports = parse_export_ports(list_row.get("export"), default=10)
-    n = min(parsed_ports or 10, cap, RESIDENT_TG_PORT_CAP)
+    # export.ports 只是官方下载条数。单线不复用时按 cap 展开独立 session 口。
+    n = cap
     n = max(1, n)
 
     list_id = list_row.get("id")
@@ -998,7 +1047,13 @@ class ProxySellerService:
         self.api_key = (api_key or "").strip()
         self.cache_ttl = cache_ttl
         self.include_static = include_static
-        self.client = httpx.AsyncClient(timeout=30.0, follow_redirects=True)
+        # Proxy-Seller 管理 API 经常拒绝本机 IPv6（IP not allowed / 503 Engineering works）。
+        # 钉 IPv4，避免容器解析到 Cloudflare AAAA 后整表读失败、批次预分配成空。
+        self.client = httpx.AsyncClient(
+            timeout=30.0,
+            follow_redirects=True,
+            transport=httpx.AsyncHTTPTransport(local_address="0.0.0.0"),
+        )
 
     async def close(self):
         try:
@@ -1109,7 +1164,7 @@ class ProxySellerService:
                         resident_items.extend(
                             resident_list_to_proxies(
                                 row,
-                                max_ports=10,
+                                max_ports=RESIDENT_TG_PORT_CAP,
                                 tools_login=tools_login,
                                 tools_password=tools_password,
                             )

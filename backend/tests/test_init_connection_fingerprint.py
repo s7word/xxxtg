@@ -26,6 +26,7 @@ from backend.app.services.device_profile import (  # noqa: E402
 from backend.app.services.init_connection import (  # noqa: E402
     apply_init_connection_overrides,
     describe_init_connection,
+    inspect_init_param_keys,
     inspect_tz_offset,
 )
 
@@ -93,6 +94,72 @@ class TestInitConnectionOverrides(unittest.TestCase):
         self.assertEqual(inspect_tz_offset(client._init_request.params), 19800)
         self.assertIn("lang_pack=android", describe_init_connection(client))
         self.assertIn("tz_offset=19800", describe_init_connection(client))
+        self.assertEqual(
+            inspect_init_param_keys(client._init_request.params),
+            ["tz_offset", "package_id"],
+        )
+
+    def test_android_writes_package_id_and_device_token_not_codesettings_slot(self):
+        client = FakeClient()
+        apply_init_connection_overrides(
+            client,
+            {
+                "lang_pack": "android",
+                "tz_offset": 0,
+                "app_device": "Android",
+                "api_id": 4,
+            },
+            SimpleNamespace(
+                init_connection_set_lang_pack=True,
+                init_connection_set_tz_offset=True,
+                init_connection_tz_offset_override=None,
+            ),
+            push_token="dGVzdA:APA91" + ("x" * 140),
+        )
+        keys = inspect_init_param_keys(client._init_request.params)
+        self.assertEqual(keys, ["tz_offset", "package_id", "device_token"])
+        values = {
+            item.key: getattr(item.value, "value", None)
+            for item in client._init_request.params.value
+        }
+        self.assertEqual(values["package_id"], "org.telegram.messenger")
+        self.assertTrue(str(values["device_token"]).startswith("dGVzdA:APA91"))
+        self.assertNotIn("bundleId", keys)
+        self.assertNotIn("perf_cat", keys)
+        self.assertNotIn("installer", keys)
+
+    def test_android_line_rejects_apns_and_never_writes_bundle_id(self):
+        from backend.app.services.device_profile import DEFAULT_PROFILES
+        from backend.app.services.init_connection import build_init_connection_params
+        from backend.app.services.ios_protocol import TELEGRAM_IOS_BUNDLE_ID
+        from backend.app.services.registrar import RegistrationOrchestrator
+
+        android = dict(
+            DEFAULT_PROFILES["telegram_android_public"],
+            tz_offset=0,
+            bundle_id=TELEGRAM_IOS_BUNDLE_ID,
+        )
+        fcm = "dGVzdA:APA91" + ("x" * 140)
+        apns = "a" * 64
+        with_fcm = build_init_connection_params(0, android, fcm)
+        keys = inspect_init_param_keys(with_fcm)
+        values = {item.key: getattr(item.value, "value", None) for item in with_fcm.value}
+        self.assertEqual(keys, ["tz_offset", "package_id", "device_token"])
+        self.assertEqual(values["package_id"], "org.telegram.messenger")
+        self.assertEqual(values["device_token"], fcm)
+        self.assertNotIn("bundleId", keys)
+        with_apns = build_init_connection_params(0, android, apns)
+        apns_keys = inspect_init_param_keys(with_apns)
+        self.assertEqual(apns_keys, ["tz_offset", "package_id"])
+        self.assertNotIn("device_token", apns_keys)
+        self.assertNotIn("bundleId", apns_keys)
+        cs = RegistrationOrchestrator._build_code_settings(
+            fcm,
+            attach_push_token=True,
+            profile=android,
+        )
+        self.assertFalse(cs.token)
+        self.assertIsNone(cs.app_sandbox)
 
     def test_tz_override_chile_default(self):
         client = FakeClient()

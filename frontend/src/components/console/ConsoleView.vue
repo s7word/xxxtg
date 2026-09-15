@@ -27,7 +27,11 @@
               placeholder="+9647706110434  /  +628123456789"
               autocomplete="off"
             />
-            <p class="ce-tiny">支持 <code>+</code> 前缀或纯数字。设备指纹、代理、Attestation 与 MTProto 握手与全自动模式一致。</p>
+            <p class="ce-tiny">
+              支持 <code>+</code> 前缀或纯数字。设备指纹、代理与 MTProto 握手与全自动模式一致。
+              <template v-if="isIosPath">当前是官方 iOS：无 AID，Push 走 tgiOS。</template>
+              <template v-else>当前是 Android 系：Attestation / AID 与全自动相同。</template>
+            </p>
           </div>
           <div>
             <label class="ce-label">目标国家（可留空，由号码自动推断）</label>
@@ -41,10 +45,33 @@
         </div>
 
         <div>
-          <label class="ce-label">端点协议模板与 Attestation 凭证</label>
+          <label class="ce-label">注册途径 / 客户端模板</label>
+          <div class="ce-seg" style="margin-bottom:8px">
+            <button
+              v-for="opt in APP_TYPE_SHORTCUTS"
+              :key="opt.value"
+              type="button"
+              :class="{ 'is-on': form.app_type === opt.value }"
+              @click="form.app_type = opt.value"
+            >{{ opt.label }}</button>
+          </div>
           <select v-model="form.app_type" class="ce-select">
             <option v-for="opt in APP_TYPE_OPTIONS" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
           </select>
+          <div v-if="isIosPath" class="ce-alert is-ok" style="margin-top:8px">
+            <strong>官方 iOS 注册引导</strong>
+            <p class="ce-tiny" style="margin-top:6px">
+              固定 <code>api_id=8</code>，不被全局 custom App ID 覆盖。
+              REGHelp 申请 Push 用 <code>appName=tgiOS</code> + <code>appDevice=iOS</code>。
+              不走 AID / Play Integrity / AntiSafety。
+              语言、系统语言、时区跟出口国 overlay（PT 为 <code>pt</code> / <code>pt-PT</code> / <code>tz=0</code>）。
+              DC 跟 <code>GetNearestDc</code>，不要写死 DC5。
+              InitConnection 只带 <code>tz_offset</code> + <code>bundleId=ph.telegra.Telegraph</code>。
+            </p>
+          </div>
+          <p v-else class="ce-tiny" style="margin-top:6px">
+            Android / TDLib 走 Attestation 与 AID。要复现葡萄牙 10/10 基线，切到「官方 iOS」。
+          </p>
         </div>
 
         <div v-if="launchMode === 'auto'">
@@ -279,7 +306,7 @@
               目标只有两个：① 注册成功立刻停止；② 在试号次数内尽量扫号，不可用号（站内信 APP / 已注册 / 封禁）
               拉黑后退订换号。这不是「扫平台所有号码」——最多只试 {{ effectiveHuntAttempts }} 个号，用完即结束（HUNT_EXHAUSTED）。
               无库存软重试 {{ config.hunt_no_number_retries ?? 20 }} 次（全局配置）。
-              设备每 {{ config.hunt_device_max_uses || 8 }} 次 sendCode 换指纹并换新 Push（Push 与设备绑定）。
+              设备每 {{ config.hunt_device_max_uses || 1 }} 次 sendCode 换指纹并换新 Push（换号必须换设备+FCM）。
             </p>
             <p class="ce-tiny">
               <span :class="huntProxyPinned ? 'ce-badge is-warn' : 'ce-badge is-info'">
@@ -395,7 +422,7 @@
         </div>
         <div v-if="launchMode === 'manual' && manualError" class="ce-alert is-danger">{{ manualError }}</div>
 
-        <div v-if="!config.custom_api_id" class="ce-alert is-warn">
+        <div v-if="!isIosPath && !config.custom_api_id" class="ce-alert is-warn">
           尚未配置专属 <code>custom_api_id</code>。本地 lod_user 只有 JSON、没有 .session，不能直接当开发者凭证。
           请到「凭证库 & 开发者 API」申请，或到「参数拓扑」手填已有 api_id/hash。
           <button class="ce-link" @click="goTab('vault')">立即前往</button>
@@ -599,7 +626,7 @@
 
 <script setup>
 import { computed } from 'vue'
-import { APP_TYPE_OPTIONS, COUNTRY_GROUPS, countryFlag, classifyLogLine, getStatusBadgeClass, formatDuration, formatTime } from '../../composables/useShared'
+import { APP_TYPE_OPTIONS, APP_TYPE_SHORTCUTS, COUNTRY_GROUPS, countryFlag, classifyLogLine, getStatusBadgeClass, formatDuration, formatTime, isIosAppType } from '../../composables/useShared'
 import LiveStockCountryPicker from './LiveStockCountryPicker.vue'
 import { useConfig } from '../../composables/useConfig'
 import { useProxy } from '../../composables/useProxy'
@@ -634,6 +661,8 @@ const {
   cancelManualTaskById, isCancelingTaskId,
   goVaultFromManual, onManualCodeKeydown
 } = useManualRegister()
+
+const isIosPath = computed(() => isIosAppType(form.app_type))
 
 const effectiveMaxPrice = computed(() => {
   const taskBid = Number(form.max_price)

@@ -1,4 +1,5 @@
 import logging
+import os
 from typing import Optional, Dict, Any, List, Tuple
 
 from backend.app.services.antisafety import AntiSafetyService
@@ -6,8 +7,13 @@ from backend.app.services.attestation_urls import (
     has_valid_api_key,
     sanitize_provider_urls,
 )
+from backend.app.services.ios_protocol import (
+    is_ios_profile,
+    skip_antisafety_for_profile,
+)
 from backend.app.services.recaptcha_check import recaptcha_app_device, recaptcha_app_name
 from backend.app.services.reghelp import RegHelpService
+from backend.app.services.smsbower import SmsBowerService
 
 logger = logging.getLogger("AttestationGatewayService")
 
@@ -35,11 +41,18 @@ class AttestationGatewayService:
 
     PROVIDER_REGHELP = "reghelp"
     PROVIDER_ANTISAFETY = "antisafety"
+    PROVIDER_SMSBOWER = "smsbower"
+
+    _EMAIL_PROVIDER_LABELS = {
+        PROVIDER_REGHELP: "REGHelp",
+        PROVIDER_SMSBOWER: "SMS Bower",
+    }
 
     def __init__(self, config: Any, proxy: Optional[Dict[str, Any]] = None):
         self.config = config
         self.reghelp: Optional[RegHelpService] = None
         self.antisafety: Optional[AntiSafetyService] = None
+        self.smsbower: Optional[SmsBowerService] = None
 
         reghelp_key = getattr(config, "reghelp_api_key", None)
         antisafety_key = getattr(config, "antisafety_api_key", None)
@@ -75,13 +88,22 @@ class AttestationGatewayService:
                 total_timeout=getattr(config, "antisafety_total_timeout", 20.0)
             )
 
-        self.last_used_provider: Optional[str] = None
+        smsbower_key = getattr(config, "smsbower_api_key", None)
+        if not has_valid_api_key(smsbower_key):
+            smsbower_key = os.environ.get("SMSBOWER_API_KEY")
+        if has_valid_api_key(smsbower_key):
+            self.smsbower = SmsBowerService(smsbower_key)
 
-    def _provider_order(self) -> List[Tuple[str, Any]]:
+        self.last_used_provider: Optional[str] = None
+        self.last_used_email_provider: Optional[str] = None
+
+    def _provider_order(self, profile: Optional[Dict[str, Any]] = None) -> List[Tuple[str, Any]]:
         mode = getattr(self.config, "attestation_provider_mode", "reghelp_primary") or "reghelp_primary"
         candidates = {self.PROVIDER_REGHELP: self.reghelp, self.PROVIDER_ANTISAFETY: self.antisafety}
 
-        if mode == "reghelp_only":
+        if skip_antisafety_for_profile(profile):
+            order = [self.PROVIDER_REGHELP]
+        elif mode == "reghelp_only":
             order = [self.PROVIDER_REGHELP]
         elif mode == "antisafety_only":
             order = [self.PROVIDER_ANTISAFETY]
@@ -97,11 +119,48 @@ class AttestationGatewayService:
             await self.reghelp.close()
         if self.antisafety:
             await self.antisafety.close()
+        if self.smsbower:
+            await self.smsbower.close()
 
-    async def check_phone_history(self, phone_number: str, aid: Optional[str], log_callback=None) -> Optional[Dict[str, Any]]:
-        """端点历史安全审计。目前仅 AntiSafety 提供 `/check` 号码历史审计能力，
-        REGHelp 官方接口暂无等价能力，故该职责始终路由至 AntiSafety (若已启用)。
+    def _email_provider_order(self) -> List[Tuple[str, Any]]:
+        mode = getattr(self.config, "email_provider_mode", "smsbower_primary") or "smsbower_primary"
+        fallback = bool(getattr(self.config, "email_smsbower_fallback_enabled", True))
+        candidates = {
+            self.PROVIDER_REGHELP: self.reghelp,
+            self.PROVIDER_SMSBOWER: self.smsbower,
+        }
+
+        if mode == "smsbower_only":
+            order = [self.PROVIDER_SMSBOWER]
+        elif mode == "reghelp_only":
+            order = [self.PROVIDER_REGHELP]
+        elif mode == "reghelp_primary":
+            order = [self.PROVIDER_REGHELP]
+            if fallback:
+                order.append(self.PROVIDER_SMSBOWER)
+        else:  # smsbower_primary（默认：REGHelp Email 当前 SERVICE_DISABLED）
+            order = [self.PROVIDER_SMSBOWER]
+            if fallback:
+                order.append(self.PROVIDER_REGHELP)
+
+        return [(name, candidates[name]) for name in order if candidates.get(name)]
+
+    async def check_phone_history(
+        self,
+        phone_number: str,
+        aid: Optional[str],
+        log_callback=None,
+        profile: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """端点历史安全审计。仅 AntiSafety 提供 `/check`。
+
+        REGHelp 无等价能力。AntiSafety 无 iOS 支持，iOS 线路整段跳过，
+        也不把 Android AID 传给审计接口。
         """
+        if skip_antisafety_for_profile(profile):
+            if log_callback:
+                await log_callback("iOS 线路跳过 AntiSafety 号码审计（平台无 iOS 支持，也不使用 AID）")
+            return None
         if not self.antisafety:
             return None
         try:
@@ -155,7 +214,11 @@ class AttestationGatewayService:
                 return cached.get("token"), cached.get("reghelp_task_id"), REUSE_PROVIDER
 
         mode = getattr(self.config, "attestation_provider_mode", "reghelp_primary") or "reghelp_primary"
-        order = self._provider_order()
+        order = self._provider_order(profile)
+        if skip_antisafety_for_profile(profile) and log_callback:
+            await log_callback(
+                "iOS 线路不走 AntiSafety（无 iOS Push / 无 AID），仅 REGHelp appName=tgiOS / appDevice=iOS"
+            )
         if not order:
             if log_callback:
                 hint = ""
@@ -292,6 +355,8 @@ class AttestationGatewayService:
             raise RuntimeError(
                 "REGHelp 未启用或缺少有效 reghelp_api_key，无法申请 Play Integrity 凭证"
             )
+        if is_ios_profile(profile):
+            raise RuntimeError("iOS 线路不申请 Play Integrity（官方 iOS 无 SafetyNet / Play Integrity）")
         if log_callback:
             await log_callback(
                 f"Play Integrity 走独立 REGHelp 网关 "
@@ -314,23 +379,65 @@ class AttestationGatewayService:
         log_callback=None,
         ref: Optional[str] = None,
     ):
-        """仅走 REGHelp Email 产品。"""
-        if not self.reghelp:
+        """按 email_provider_mode 在 SMS Bower Google 邮箱与 REGHelp 之间调度。"""
+        order = self._email_provider_order()
+        if not order:
+            mode = getattr(self.config, "email_provider_mode", "smsbower_primary") or "smsbower_primary"
             raise RuntimeError(
-                "REGHelp 未启用或缺少有效 reghelp_api_key，无法申请临时登录邮箱"
+                f"未启用任何 Email 提供源 (mode={mode})；"
+                "请配置 smsbower_api_key 和/或 reghelp_api_key"
             )
-        return await self.reghelp.get_login_email(
-            profile,
-            phone=phone,
-            email_type=email_type,
-            log_callback=log_callback,
-            ref=ref,
-        )
+
+        if log_callback:
+            labels = [self._EMAIL_PROVIDER_LABELS.get(name, name) for name, _ in order]
+            await log_callback(f"Email 高可用调度顺序: {' → '.join(labels)}")
+
+        errors: List[str] = []
+        for name, svc in order:
+            label = self._EMAIL_PROVIDER_LABELS.get(name, name)
+            try:
+                requested_type = email_type
+                if name == self.PROVIDER_SMSBOWER:
+                    requested_type = "gmail"
+                if log_callback:
+                    await log_callback(
+                        f"正在使用 {label} 申请临时登录邮箱 "
+                        f"(type={requested_type}"
+                        f"{'' if requested_type == email_type else f'，已纠正 {email_type}→gmail'} )"
+                    )
+                inbox = await svc.get_login_email(
+                    profile,
+                    phone=phone,
+                    email_type=requested_type,
+                    log_callback=log_callback,
+                    ref=ref,
+                )
+                if inbox and getattr(inbox, "email", None):
+                    self.last_used_email_provider = name
+                    return inbox
+                if log_callback:
+                    await log_callback(f"⚠️ {label} 未返回有效邮箱，尝试下一候补...")
+            except Exception as exc:
+                errors.append(f"{name}: {exc}")
+                if log_callback:
+                    await log_callback(
+                        f"⚠️ {label} Email 申请失败 ({exc})，自动切换至下一候补..."
+                    )
+
+        detail = "; ".join(errors) if errors else "全部提供源均未返回邮箱"
+        raise RuntimeError(f"全部 Email 提供源均未成功 ({detail})")
 
     async def poll_email_code(self, task_id: str, log_callback=None) -> Optional[str]:
-        if not self.reghelp:
-            raise RuntimeError("REGHelp 未启用，无法轮询 Email 验证码")
-        return await self.reghelp.poll_email_code(task_id, log_callback=log_callback)
+        provider = self.last_used_email_provider
+        if provider == self.PROVIDER_SMSBOWER and self.smsbower:
+            return await self.smsbower.poll_email_code(task_id, log_callback=log_callback)
+        if provider == self.PROVIDER_REGHELP and self.reghelp:
+            return await self.reghelp.poll_email_code(task_id, log_callback=log_callback)
+        if self.smsbower:
+            return await self.smsbower.poll_email_code(task_id, log_callback=log_callback)
+        if self.reghelp:
+            return await self.reghelp.poll_email_code(task_id, log_callback=log_callback)
+        raise RuntimeError("未启用任何 Email 提供源，无法轮询验证码")
 
     async def report_result(self, check_id: Optional[str], aid: Optional[str], status: str):
         """向审计监控中心上报状态机最终迁移结果 (目前仅 AntiSafety 提供上报能力)"""

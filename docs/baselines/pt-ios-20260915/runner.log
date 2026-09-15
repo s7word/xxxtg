@@ -1,0 +1,28 @@
+config attest=antisafety_primary cred=official app=telegram_ios emu=True delivery=push_required unique_ip=True email=smsbower_primary @ 2026-09-15T10:44:40Z
+
+##### wave 1/1 count=10 concurrency=10
+
+=== Round push_required === code_delivery_mode=push_required @ 2026-09-15T10:44:40Z
+    batch_id=1e213443 已提交并发批量引导: 10 个任务 / 并发度 10（batch_id=1e213443）；计划最多租号 20 次（10 路 × 2 次，联合上限 200）
+    [   0s] running=0 pending=10 unfinished=10/10
+    [  15s] running=10 pending=0 unfinished=10/10
+    [  30s] running=10 pending=0 unfinished=10/10
+    [  45s] running=10 pending=0 unfinished=10/10
+    [  60s] running=3 pending=0 unfinished=3/10
+    [  75s] running=2 pending=0 unfinished=2/10
+    [  90s] running=2 pending=0 unfinished=2/10
+    [ 105s] running=2 pending=0 unfinished=2/10
+    [ 120s] running=2 pending=0 unfinished=2/10
+    [ 135s] running=2 pending=0 unfinished=2/10
+    [ 150s] running=1 pending=0 unfinished=1/10
+    [ 165s] running=1 pending=0 unfinished=1/10
+    [ 180s] running=1 pending=0 unfinished=1/10
+    [ 195s] running=1 pending=0 unfinished=1/10
+    [ 210s] running=1 pending=0 unfinished=1/10
+    [ 225s] running=1 pending=0 unfinished=1/10
+    [ 240s] running=1 pending=0 unfinished=1/10
+    -> SMS=10 App=0 发码样本=11 黑名单跳过=0 SMS率=0.9091 耗时=255s
+WAVE 1 success=10 SMS=10 App=0 statuses={'success': 10}
+restored attest=reghelp_primary delivery=balanced
+wrote data/ab_reports/ph_smscode_warp_20260915_104855.json
+RESULT success=10 SMS=10 App=0 samples=11 statuses={'success': 10} unique_ips=0 unique_ports=10 ip_reused=False port_reused=True

@@ -446,8 +446,11 @@ class TestCodeSettingsPushTokenPairing(unittest.TestCase):
     """token / app_sandbox 必须同真或同假，否则 Telethon _bytes 会 AssertionError。"""
 
     def test_with_push_token_serializes_without_assertion(self):
-        token = "reghelp-attestation-push-token"
-        settings = RegistrationOrchestrator._build_code_settings(token)
+        token = "a" * 64
+        settings = RegistrationOrchestrator._build_code_settings(
+            token,
+            profile={"app_device": "iOS", "device_model": "iPhone 16"},
+        )
         self.assertEqual(settings.token, token)
         self.assertIsInstance(settings.token, str)
         self.assertIs(settings.app_sandbox, False)

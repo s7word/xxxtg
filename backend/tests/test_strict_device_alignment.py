@@ -178,7 +178,7 @@ class TestStrictAlignmentGate(unittest.TestCase):
         ), patch.object(
             DeviceProfileManager,
             "_manager",
-            return_value=SimpleNamespace(select_sample=lambda country: sampled),
+            return_value=SimpleNamespace(select_sample=lambda country, **_kwargs: sampled),
         ):
             profile = DeviceProfileManager.get_resolved_profile("telegram_x", "gb")
         self.assertEqual(profile["api_id"], 21724)
@@ -213,11 +213,15 @@ class TestCodeSettingsFirebaseFlags(unittest.TestCase):
             allow_flashcall=False,
             allow_missed_call=False,
         )
-        cs = RegistrationOrchestrator._build_code_settings_from_plan("FCM_TOKEN", plan)
+        cs = RegistrationOrchestrator._build_code_settings_from_plan(
+            "FCM_TOKEN",
+            plan,
+            {"app_device": "Android", "lang_pack": "android"},
+        )
         self.assertIsInstance(cs, types.CodeSettings)
         self.assertTrue(cs.allow_firebase)
         self.assertTrue(cs.unknown_number)
-        self.assertEqual(cs.token, "FCM_TOKEN")
+        self.assertFalse(cs.token)
 
 
 class TestGetResolvedProfileStrict(unittest.TestCase):
@@ -239,7 +243,7 @@ class TestGetResolvedProfileStrict(unittest.TestCase):
         ), patch.object(
             DeviceProfileManager,
             "_manager",
-            return_value=SimpleNamespace(select_sample=lambda country: None),
+            return_value=SimpleNamespace(select_sample=lambda country, **_kwargs: None),
         ):
             profile = DeviceProfileManager.get_resolved_profile("telegram_android", "vn")
         self.assertEqual(profile["api_id"], 4)
@@ -283,6 +287,72 @@ class TestGetResolvedProfileStrict(unittest.TestCase):
         self.assertEqual(limits["proxy_max_uses"], 5)
 
 
+class TestOfficialEmuPinsTemplateApiId(unittest.TestCase):
+    def _cfg(self):
+        return SimpleNamespace(
+            device_alignment_mode="loose",
+            strict_vault_device_alignment=False,
+            pin_app_version_substr="12.8.3",
+            force_country_locale=True,
+            vault_fingerprint_replay=False,
+            official_client_emulation=True,
+            antisafety_aids={},
+            inject_vault_device_secret=False,
+            vault_attestation_persist_secrets=False,
+        )
+
+    def _pack_row(self, api_id, api_hash):
+        return {
+            "row": {
+                "device_model": "OPPOCPH2371",
+                "system_version": "SDK 34",
+                "app_version": "12.8.3 (69222)",
+                "app_version_pure": "12.8.3",
+                "app_build": "69222",
+                "api_id": api_id,
+                "api_hash": api_hash,
+                "lang_pack": "android",
+                "lang_code": "pt",
+                "system_lang_code": "pt-pt",
+                "tz_offset": 0,
+                "perf_cat": 2,
+            },
+            "pack": {"id": "p1", "alias": "pt", "country": "pt"},
+            "match": "country",
+            "created": False,
+        }
+
+    def test_public_template_stays_api4_when_pack_is_api6(self):
+        sampled = self._pack_row(6, OFFICIAL_API_CREDENTIALS[6])
+        with patch(
+            "backend.app.services.device_profile.ConfigManager.get_instance",
+            return_value=SimpleNamespace(config=self._cfg()),
+        ), patch.object(
+            DeviceProfileManager,
+            "_manager",
+            return_value=SimpleNamespace(select_sample=lambda *a, **k: sampled),
+        ):
+            profile = DeviceProfileManager.get_resolved_profile("telegram_android_public", "pt")
+        self.assertEqual(profile["api_id"], 4)
+        self.assertEqual(profile["api_hash"], OFFICIAL_API_CREDENTIALS[4])
+        self.assertTrue(profile.get("api_id_template_pinned"))
+
+    def test_mainline_template_stays_api6_when_pack_is_api4(self):
+        sampled = self._pack_row(4, OFFICIAL_API_CREDENTIALS[4])
+        with patch(
+            "backend.app.services.device_profile.ConfigManager.get_instance",
+            return_value=SimpleNamespace(config=self._cfg()),
+        ), patch.object(
+            DeviceProfileManager,
+            "_manager",
+            return_value=SimpleNamespace(select_sample=lambda *a, **k: sampled),
+        ):
+            profile = DeviceProfileManager.get_resolved_profile("telegram_android", "pt")
+        self.assertEqual(profile["api_id"], 6)
+        self.assertEqual(profile["api_hash"], OFFICIAL_API_CREDENTIALS[6])
+        self.assertTrue(profile.get("api_id_template_pinned"))
+
+
 class TestVaultAttestationMetadata(unittest.TestCase):
     def test_scan_does_not_include_secret_text(self):
         from backend.app.services.vault_attestation import scan_vault_attestation
@@ -321,6 +391,19 @@ class TestPushSlotConflicts(unittest.TestCase):
         )
         self.assertTrue(any("错槽" in c for c in conflicts))
         self.assertFalse(any(c.startswith("类型冲突") for c in conflicts))
+
+    def test_android_fcm_in_init_slot_is_not_flagged(self):
+        conflicts = detect_push_slot_conflicts(
+            {
+                "app_device": "Android",
+                "lang_pack": "android",
+                "system_version": "SDK 29",
+                "device_model": "OPPOCPH2035",
+            },
+            "dGVzdA:APA91" + ("x" * 140),
+            attached=False,
+        )
+        self.assertEqual(conflicts, [])
 
     def test_android_with_apns_hex_is_hard_conflict(self):
         conflicts = detect_push_slot_conflicts(
