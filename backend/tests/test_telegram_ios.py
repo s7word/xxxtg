@@ -206,10 +206,40 @@ class TestTelegramIosProfile(unittest.TestCase):
         self.assertEqual(int(values["tz_offset"]), 28800)
         self.assertEqual(values["bundleId"], TELEGRAM_IOS_BUNDLE_ID)
         self.assertNotIn("device_token", keys)
+        self.assertNotIn("package_id", keys)
         self.assertNotIn("cert_fingerprint", keys)
         self.assertNotIn("safety_net", keys)
         self.assertNotIn("perf_cat", keys)
         self.assertIsNotNone(ios_apns_device_token_b64(apns))
+
+    def test_ios_line_does_not_absorb_android_unique_keys(self):
+        from backend.app.services.init_connection import build_init_connection_params
+        from backend.app.services.ios_protocol import ANDROID_ONLY_INIT_KEYS
+
+        self.assertIn("device_token", ANDROID_ONLY_INIT_KEYS)
+        self.assertIn("package_id", ANDROID_ONLY_INIT_KEYS)
+        self.assertNotIn("bundleId", ANDROID_ONLY_INIT_KEYS)
+        ios = dict(DEFAULT_PROFILES["telegram_ios"], tz_offset=0, package_id="org.telegram.messenger")
+        fcm = "dGVzdA:APA91" + ("x" * 140)
+        params = build_init_connection_params(0, ios, fcm)
+        keys = inspect_init_param_keys(params)
+        self.assertEqual(keys, ["tz_offset", "bundleId"])
+        self.assertEqual(assert_no_android_init_keys(keys), [])
+        self.assertEqual(assert_ios_init_keys_official(keys), [])
+        values = {item.key: getattr(item.value, "value", None) for item in params.value}
+        self.assertEqual(values["bundleId"], TELEGRAM_IOS_BUNDLE_ID)
+        self.assertNotIn("package_id", values)
+        self.assertNotIn("device_token", values)
+        plan = resolve_code_delivery_plan(
+            SimpleNamespace(official_client_emulation=True, code_delivery_mode="push_required"),
+            ios,
+        )
+        self.assertTrue(plan.attach_push_token)
+        self.assertIs(plan.app_sandbox, False)
+        cs = RegistrationOrchestrator._build_code_settings_from_plan(fcm, plan, ios)
+        self.assertFalse(cs.token)
+        cs_apns = RegistrationOrchestrator._build_code_settings_from_plan("b" * 64, plan, ios)
+        self.assertEqual(cs_apns.token, "b" * 64)
 
     def test_ph_locale_is_en_PH_not_en_US(self):
         self.assertEqual(canonicalize_ios_system_lang("en-ph"), "en-PH")

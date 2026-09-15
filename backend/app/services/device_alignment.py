@@ -215,8 +215,19 @@ def profile_platform_markers(profile: Optional[Dict[str, Any]]) -> str:
 
 
 def profile_looks_ios(profile: Optional[Dict[str, Any]]) -> bool:
+    profile = profile or {}
     blob = profile_platform_markers(profile)
-    return any(tok in blob for tok in ("ios", "iphone", "ipad"))
+    if any(tok in blob for tok in ("ios", "iphone", "ipad")):
+        return True
+    app_type = str(profile.get("app_type") or profile.get("key") or "").strip().lower()
+    if app_type == "telegram_ios":
+        return True
+    try:
+        api_id = int(profile.get("api_id") or 0)
+    except (TypeError, ValueError):
+        api_id = 0
+    # api_id=8 只属于官方 iOS；已明显是 Android 的指纹不要被这条带偏。
+    return api_id == OFFICIAL_IOS_API_ID and "android" not in blob
 
 
 def profile_looks_android(profile: Optional[Dict[str, Any]]) -> bool:

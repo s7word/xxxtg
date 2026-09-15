@@ -32,7 +32,9 @@ TELEGRAM_IOS_INSTALL_SOURCE = "appstore"
 OFFICIAL_IOS_API_ID = 8
 OFFICIAL_IOS_API_HASH = "7245de8e747a0d6fbe11f7cc14fcc0bb"
 # 真机 bundleData 必带这两键。公开合同只写 tz_offset；bundleId 来自 App Store 包名。
+# iOS 独有：bundleId。禁止把 Android package_id / FCM device_token 写进来。
 ALLOWED_IOS_INIT_PARAM_KEYS = frozenset({"tz_offset", "bundleId"})
+IOS_ONLY_INIT_KEYS = frozenset({"bundleId"})
 
 # 第三方列表里的「正式版 iOS」候选。公开源码对不上，本轮不启用。
 # 94575 在同一篇中文摘录里同时标成 TDLib example 与 Telegram for iOS。
@@ -51,6 +53,8 @@ ANDROID_ONLY_INIT_KEYS = frozenset({
     "installer",
     "perf_cat",
     "data",
+    # Android FCM 槽。官方 iOS 源码里同名键是 APNS base64，本仓合同禁止提交。
+    "device_token",
 })
 
 
