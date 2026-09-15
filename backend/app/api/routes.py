@@ -282,6 +282,7 @@ def _device_db_list_payload(message: str = "") -> DeviceDbListResponse:
 async def list_device_dbs():
     DeviceDbManager.ensure_ready()
     DeviceDbManager.ensure_ios_country_pack("ph")
+    DeviceDbManager.ensure_ios_country_pack("tr")
     return _device_db_list_payload("已载入硬件指纹 & 拓扑库目录")
 
 

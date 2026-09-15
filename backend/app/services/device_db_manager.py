@@ -1057,8 +1057,10 @@ class DeviceDbManager:
         root: Optional[Path] = None,
         count: int = 48,
     ) -> Tuple[Optional[Dict[str, Any]], str, bool]:
-        """iOS 备用包：目前只自动生成 PH，且绝不走 Android 合成器。"""
+        """iOS 备用包：只给开放国家自动生成，绝不走 Android 合成器。"""
         import random
+
+        from backend.app.services.ios_device_catalog import IOS_SEED_COUNTRIES
 
         code = normalize_country(country)
         if not code:
@@ -1069,13 +1071,14 @@ class DeviceDbManager:
             if matched:
                 weights = [max(1, int(item.get("sample_count") or 1)) for item in matched]
                 return random.choices(matched, weights=weights, k=1)[0], "country", False
-            if code != "ph":
+            if code not in IOS_SEED_COUNTRIES:
                 pack, match = cls.select_pack(country, root, platform="ios")
                 return pack, match, False
             try:
                 from backend.app.services.ios_device_catalog import generate_ios_country_db
 
-                alias = f"iOS 备用 菲律宾 PH · {int(count)}.db"
+                zh = COUNTRY_NAME_ZH_MAP.get(code, code.upper())
+                alias = f"iOS 备用 {zh} {code.upper()} · {int(count)}.db"
                 pack = generate_ios_country_db(
                     country=code,
                     count=max(8, int(count or 48)),

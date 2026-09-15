@@ -408,6 +408,16 @@ class TestIosPhReservePack(unittest.TestCase):
         self.assertTrue(all(int(row["tz_offset"]) == 28800 for row in rows))
         self.assertTrue(any(row["device_model"] != "iPhone 15 Pro" for row in rows))
 
+    def test_ios_turkey_rows_use_tr_locale(self):
+        rows = synthesize_ios_rows("tr", 8, seed=4)
+        self.assertTrue(all(row["lang_code"] == "tr" for row in rows))
+        self.assertTrue(all(row["system_lang_code"] == "tr-TR" for row in rows))
+        self.assertTrue(all(int(row["tz_offset"]) == 10800 for row in rows))
+        self.assertTrue(all(row["lang_pack"] == "ios" for row in rows))
+        pack = generate_ios_country_db("tr", count=8, root=self.root, seed=4)
+        self.assertEqual(pack["country"], "tr")
+        self.assertEqual(infer_pack_platform(pack), "ios")
+
 
 if __name__ == "__main__":
     unittest.main()

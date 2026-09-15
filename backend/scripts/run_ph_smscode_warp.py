@@ -70,7 +70,7 @@ def enrich(row: Dict[str, Any], task: Dict[str, Any]) -> Dict[str, Any]:
 
 def collect_wave(client: ApiClient, args: argparse.Namespace, wave_idx: int) -> Dict[str, Any]:
     class NS:
-        country = "ph"
+        country = args.country
         app_type = args.app_type
         count = args.count
         concurrency = args.concurrency
@@ -106,6 +106,7 @@ def main() -> int:
     parser.add_argument("--poll", type=float, default=15.0)
     parser.add_argument("--batch-timeout", type=float, default=1800.0)
     parser.add_argument("--app-type", default="telegram_android")
+    parser.add_argument("--country", default="ph")
     parser.add_argument("--out-dir", default="data/ab_reports")
     args = parser.parse_args()
     if args.count < 1 or args.count > BATCH_CAP:
@@ -167,7 +168,7 @@ def main() -> int:
                 ),
                 "follow_task": "90aa174f",
                 "warp_hop": True,
-                "country": "ph",
+                "country": args.country,
                 "sms_provider": "smscode",
                 "app_type": args.app_type,
                 "api_credential_mode": "official",
