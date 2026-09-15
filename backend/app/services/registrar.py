@@ -46,6 +46,11 @@ from backend.app.services.init_connection import (
     apply_init_connection_overrides,
     describe_init_connection,
 )
+from backend.app.services.ios_protocol import (
+    is_ios_profile,
+    resolve_login_email_types,
+    should_migrate_to_nearest_dc,
+)
 from backend.app.services.vault_attestation import take_injected_device_secret
 from backend.app.services.vaksms import NoNumberAvailableError, VakSmsService, format_no_number_message
 from backend.app.services.grizzlysms import GrizzlySmsService, PROVIDER_LABEL as GRIZZLY_PROVIDER_LABEL
@@ -1951,6 +1956,13 @@ class RegistrationOrchestrator:
             f"missed={'是' if getattr(code_settings, 'allow_missed_call', None) else '否'} "
             f"{cls._log_push_token_slot(push_token, plan, profile)}"
         )
+        if is_ios_profile(profile):
+            await manager.append_log(
+                task_id,
+                "iOS sendCode 仅提交 CodeSettings."
+                "token/app_sandbox/unknown_number/allow_app_hash=否；"
+                "不提交 Play Integrity / safety_net / cert_fingerprint / signature"
+            )
 
     @classmethod
     def _build_code_settings_from_plan(
@@ -2166,9 +2178,7 @@ class RegistrationOrchestrator:
             f"[{emulation_label}] 官方流程 SetUpEmailRequired：account.sendVerifyEmailCode "
             f"(purpose=EmailVerifyPurposeLoginSetup) + 临时邮箱提供源",
         )
-        markers = str(profile.get("app_device") or "").lower()
-        preferred = "icloud" if "ios" in markers else "gmail"
-        types_to_try = [preferred] + [item for item in ("gmail", "icloud") if item != preferred]
+        types_to_try = resolve_login_email_types(profile, getattr(bypass_svc, "config", None))
         inbox = None
         last_err: Optional[Exception] = None
         for email_type in types_to_try:
@@ -2191,7 +2201,16 @@ class RegistrationOrchestrator:
                 f"未能提供临时邮箱: {last_err}",
                 reason="EMAIL_SETUP_FAILED",
             )
-        await manager.append_log(task_id, f"[{emulation_label}] 临时邮箱已就绪: {inbox.email}")
+        email_domain = ""
+        if "@" in str(inbox.email or ""):
+            email_domain = str(inbox.email).rsplit("@", 1)[-1].lower()
+        provider = getattr(bypass_svc, "last_used_email_provider", None) or "-"
+        await manager.append_log(
+            task_id,
+            f"[{emulation_label}] 临时邮箱已就绪: {inbox.email} "
+            f"(provider={provider} type={getattr(inbox, 'email_type', None) or '-'} "
+            f"domain={email_domain or '-'})"
+        )
         purpose = types.EmailVerifyPurposeLoginSetup(
             phone_number=phone,
             phone_code_hash=phone_code_hash,
@@ -2263,7 +2282,16 @@ class RegistrationOrchestrator:
         profile: Optional[Dict[str, Any]],
         emulation_label: str,
     ) -> None:
-        """官方流程：FirebaseSms → Play Integrity → auth.requestFirebaseSms。"""
+        """官方流程：FirebaseSms → Play Integrity → auth.requestFirebaseSms。
+
+        iOS 不走这条 Android Play Integrity 路径。
+        """
+        if is_ios_profile(profile):
+            await manager.append_log(
+                task_id,
+                f"[{emulation_label}] iOS 跳过 Play Integrity / requestFirebaseSms",
+            )
+            return
         code_type = getattr(sent_code, "type", None)
         nonce = cls._play_integrity_nonce(code_type)
         version_code = cls._app_version_code(profile)
@@ -2547,7 +2575,26 @@ class RegistrationOrchestrator:
         await manager.append_log(task_id, "开始执行协议端点初始化握手序列...")
         
         nearest_dc = await client(functions.help.GetNearestDcRequest())
-        await manager.append_log(task_id, f"探测数据中心拓扑: 建议最近 DC {nearest_dc.nearest_dc}, 本地接入 DC {nearest_dc.this_dc}")
+        await manager.append_log(
+            task_id,
+            f"探测数据中心拓扑: 建议最近 DC {nearest_dc.nearest_dc}, "
+            f"本地接入 DC {nearest_dc.this_dc}"
+        )
+        if should_migrate_to_nearest_dc(profile, nearest_dc.this_dc, nearest_dc.nearest_dc):
+            await manager.append_log(
+                task_id,
+                f"GetNearestDc 按出口 IP 建议 DC{nearest_dc.nearest_dc}；"
+                f"Telethon 默认从 DC{nearest_dc.this_dc} 起连。"
+                "官方 iOS 会切到建议 DC，正在迁移以免 DC/出口地理不一致。"
+            )
+            try:
+                await client._switch_dc(int(nearest_dc.nearest_dc))
+                await manager.append_log(task_id, f"已切换到建议 DC{nearest_dc.nearest_dc}")
+            except Exception as dc_err:
+                await manager.append_log(
+                    task_id,
+                    f"⚠️ 切换到 DC{nearest_dc.nearest_dc} 失败，继续留在 DC{nearest_dc.this_dc}: {dc_err}"
+                )
         await asyncio.sleep(random.uniform(0.3, 0.7))
 
         server_config = await client(functions.help.GetConfigRequest())
@@ -3182,7 +3229,16 @@ class RegistrationOrchestrator:
                 task_id,
                 f"[接码平台] 当前使用接码通道: {cls._sms_provider_label(sms_svc, resolved_sms_provider)}"
             )
-            await manager.append_log(task_id, f"选定端点模板: {profile['name']} (AID: {aid})")
+            if is_ios_profile(profile):
+                await manager.append_log(
+                    task_id,
+                    f"选定端点模板: {profile['name']} "
+                    f"(REGHelp appName={profile.get('app_name') or 'tgiOS'} / "
+                    f"appDevice={profile.get('app_device') or 'iOS'}；"
+                    "iOS 不使用 AntiSafety AID)"
+                )
+            else:
+                await manager.append_log(task_id, f"选定端点模板: {profile['name']} (AID: {aid})")
             pack_alias = profile.get("device_pack_alias")
             pack_country = (profile.get("device_pack_country") or "").upper()
             pack_match = profile.get("device_pack_match") or "none"
@@ -3457,7 +3513,9 @@ class RegistrationOrchestrator:
 
                 # 2. 端点信誉预检
                 await manager.append_log(task_id, "正在对通信句柄进行历史安全状态审计...")
-                check_data = await bypass_svc.check_phone_history(phone, aid)
+                check_data = await bypass_svc.check_phone_history(
+                    phone, aid, profile=profile
+                )
                 if check_data:
                     check_id = check_data.get("id")
                     if "BANNED" in check_data.get("statuses", []):
@@ -3609,7 +3667,9 @@ class RegistrationOrchestrator:
                     lang_code=profile["lang_code"],
                     system_lang_code=profile["system_lang_code"]
                 )
-                init_snap = apply_init_connection_overrides(client, profile, config)
+                init_snap = apply_init_connection_overrides(
+                    client, profile, config, push_token=push_token
+                )
                 if init_snap.get("blocked"):
                     await manager.append_log(
                         task_id,

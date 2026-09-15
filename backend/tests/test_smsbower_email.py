@@ -59,6 +59,26 @@ class TestSmsBowerEmailClient(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(kwargs["params"]["service"], "tg")
         self.assertEqual(kwargs["params"]["domain"], "gmail.com")
 
+    async def test_icloud_request_is_coerced_to_gmail(self):
+        self.svc.client.get.return_value = DummyResponse(
+            {"status": 1, "mail": "tmp@gmail.com", "mailId": 7}
+        )
+        logs = []
+
+        async def capture(msg):
+            logs.append(msg)
+
+        inbox = await self.svc.get_login_email(
+            {"app_name": "tgiOS", "app_device": "iOS"},
+            "+639700000000",
+            email_type="icloud",
+            log_callback=capture,
+        )
+        self.assertEqual(inbox.email_type, "gmail")
+        args, kwargs = self.svc.client.get.await_args
+        self.assertEqual(kwargs["params"]["domain"], "gmail.com")
+        self.assertTrue(any("纠正" in str(item) and "icloud" in str(item) for item in logs))
+
     async def test_get_login_email_no_stock(self):
         self.svc.client.get.return_value = DummyResponse(
             {"status": 0, "error": "No mails yet"}

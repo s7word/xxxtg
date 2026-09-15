@@ -173,15 +173,16 @@ DEFAULT_PROFILES = {
         "app_build": "33219",
         "lang_pack": "android"
     },
-    # 官方 Telegram-iOS 开源样例凭证。InitConnection.lang_pack=ios，
-    # CodeSettings.token 文档槽位对 iOS 是对本槽（APNS），不再走 Android FCM 错槽。
+    # 官方 Telegram-iOS App Store 构建（build-system/verify.sh）：
+    # api_id=8 / lang_pack=ios。REGHelp Push 必须 appName=tgiOS，不是 Android 的 tg。
+    # AntiSafety 无 iOS，不绑定 AID。
     "telegram_ios": {
         "key": "telegram_ios",
         "name": "MTProto iOS Official (api_id=8 / lang_pack=ios)",
-        "default_aid": "308aba4e-5680-466b-81a5-477ac6befa95",
+        "default_aid": "",
         "api_id": 8,
         "api_hash": "7245de8e747a0d6fbe11f7cc14fcc0bb",
-        "app_name": "tg",
+        "app_name": "tgiOS",
         "app_device": "iOS",
         "device_model": "iPhone 15 Pro",
         "system_version": "18.6.2",
@@ -327,7 +328,10 @@ class DeviceProfileManager:
         config = ConfigManager.get_instance().config
         result = []
         for key, base in DEFAULT_PROFILES.items():
-            aid = config.antisafety_aids.get(key, base["default_aid"])
+            if key == "telegram_ios":
+                aid = ""
+            else:
+                aid = config.antisafety_aids.get(key, base.get("default_aid") or "")
             item = dict(base)
             item["aid"] = aid
             item["is_published_api_id"] = base["api_id"] in PUBLISHED_API_ID_BLOCKLIST
@@ -507,9 +511,12 @@ class DeviceProfileManager:
         if strict and app_type == "telegram_android":
             app_type = "telegram_android_public"
         base = DEFAULT_PROFILES.get(app_type, DEFAULT_PROFILES["telegram_android"])
-        aid = config.antisafety_aids.get(app_type) or config.antisafety_aids.get(
-            "telegram_android", base["default_aid"]
-        )
+        if str(app_type or "").strip() == "telegram_ios":
+            aid = ""
+        else:
+            aid = config.antisafety_aids.get(app_type) or config.antisafety_aids.get(
+                "telegram_android", base.get("default_aid") or ""
+            )
 
         profile = dict(base)
         profile["aid"] = aid

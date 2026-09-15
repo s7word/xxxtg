@@ -26,7 +26,6 @@ MAIL_SERVICE_TG = "tg"
 EMAIL_TYPE_TO_DOMAIN: Dict[str, str] = {
     "gmail": "gmail.com",
     "google": "gmail.com",
-    "icloud": "gmail.com",
 }
 
 
@@ -45,10 +44,11 @@ class SmsBowerService(GrizzlySmsService):
 
     @staticmethod
     def _resolve_mail_domain(email_type: str) -> tuple[str, str]:
-        normalized = str(email_type or "gmail").strip().lower()
-        if normalized not in EMAIL_TYPE_TO_DOMAIN:
-            normalized = "gmail"
-        return normalized if normalized != "google" else "gmail", EMAIL_TYPE_TO_DOMAIN[normalized]
+        """SMS Bower 只卖 Google 邮箱。icloud 等类型一律纠正为 gmail，禁止假报。"""
+        requested = str(email_type or "gmail").strip().lower()
+        if requested in {"gmail", "google"}:
+            return "gmail", "gmail.com"
+        return "gmail", "gmail.com"
 
     async def _mail_get(self, path: str, params: Dict[str, Any]) -> Dict[str, Any]:
         self._require_api_key()
@@ -76,6 +76,7 @@ class SmsBowerService(GrizzlySmsService):
     ) -> EmailInboxResult:
         """订购 Telegram 用 Google 邮箱，返回与 REGHelp 兼容的 EmailInboxResult。"""
         _ = profile, phone
+        requested = str(email_type or "gmail").strip().lower()
         normalized_type, domain = self._resolve_mail_domain(email_type)
         params: Dict[str, Any] = {
             "service": MAIL_SERVICE_TG,
@@ -85,8 +86,11 @@ class SmsBowerService(GrizzlySmsService):
         if max_price is not None:
             params["maxPrice"] = max_price
         if log_callback:
+            coerce = ""
+            if requested and requested not in {"gmail", "google"}:
+                coerce = f"，已将请求 type={requested} 纠正为 gmail（SMS Bower 只提供 Google 邮箱）"
             await log_callback(
-                f"向 SMS Bower 申请 Google 邮箱 (service={MAIL_SERVICE_TG}, domain={domain})..."
+                f"向 SMS Bower 申请 Google 邮箱 (service={MAIL_SERVICE_TG}, domain={domain}{coerce})..."
             )
 
         data = await self._mail_get("getActivation", params)

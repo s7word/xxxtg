@@ -107,6 +107,33 @@ class TestRegHelpGetPushTokenRef(unittest.TestCase):
         finally:
             asyncio.run(svc.close())
 
+    def test_ios_push_uses_official_tgios_app_name(self):
+        svc = RegHelpService("w9vcrhw7pOK0WKBtQLhdjH62eYtRSFbR")
+        seen_params = {}
+        payloads = [
+            DummyResponse({"id": "push-ios", "status": "success"}),
+            DummyResponse({"status": "done", "token": "AA" * 32}),
+        ]
+
+        async def fake_get(url, params=None, headers=None):
+            if str(url).endswith("/push/getToken"):
+                seen_params.update(params or {})
+            return payloads.pop(0)
+
+        svc.client.get = fake_get
+        try:
+            with patch("backend.app.services.reghelp.asyncio.sleep", new=AsyncMock()):
+                result = asyncio.run(svc.get_push_token(
+                    {"app_name": "tgiOS", "app_device": "iOS", "lang_pack": "ios"},
+                    ref="ios-task-1",
+                ))
+            self.assertEqual(result.token, "AA" * 32)
+            self.assertEqual(seen_params.get("appName"), "tgiOS")
+            self.assertEqual(seen_params.get("appDevice"), "iOS")
+            self.assertNotIn("aid", seen_params)
+        finally:
+            asyncio.run(svc.close())
+
     def test_ref_is_truncated_to_50_chars(self):
         svc = RegHelpService("w9vcrhw7pOK0WKBtQLhdjH62eYtRSFbR")
         seen_params = {}

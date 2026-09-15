@@ -7,6 +7,10 @@ from backend.app.services.attestation_urls import (
     has_valid_api_key,
     sanitize_provider_urls,
 )
+from backend.app.services.ios_protocol import (
+    is_ios_profile,
+    skip_antisafety_for_profile,
+)
 from backend.app.services.recaptcha_check import recaptcha_app_device, recaptcha_app_name
 from backend.app.services.reghelp import RegHelpService
 from backend.app.services.smsbower import SmsBowerService
@@ -93,11 +97,13 @@ class AttestationGatewayService:
         self.last_used_provider: Optional[str] = None
         self.last_used_email_provider: Optional[str] = None
 
-    def _provider_order(self) -> List[Tuple[str, Any]]:
+    def _provider_order(self, profile: Optional[Dict[str, Any]] = None) -> List[Tuple[str, Any]]:
         mode = getattr(self.config, "attestation_provider_mode", "reghelp_primary") or "reghelp_primary"
         candidates = {self.PROVIDER_REGHELP: self.reghelp, self.PROVIDER_ANTISAFETY: self.antisafety}
 
-        if mode == "reghelp_only":
+        if skip_antisafety_for_profile(profile):
+            order = [self.PROVIDER_REGHELP]
+        elif mode == "reghelp_only":
             order = [self.PROVIDER_REGHELP]
         elif mode == "antisafety_only":
             order = [self.PROVIDER_ANTISAFETY]
@@ -139,10 +145,22 @@ class AttestationGatewayService:
 
         return [(name, candidates[name]) for name in order if candidates.get(name)]
 
-    async def check_phone_history(self, phone_number: str, aid: Optional[str], log_callback=None) -> Optional[Dict[str, Any]]:
-        """端点历史安全审计。目前仅 AntiSafety 提供 `/check` 号码历史审计能力，
-        REGHelp 官方接口暂无等价能力，故该职责始终路由至 AntiSafety (若已启用)。
+    async def check_phone_history(
+        self,
+        phone_number: str,
+        aid: Optional[str],
+        log_callback=None,
+        profile: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """端点历史安全审计。仅 AntiSafety 提供 `/check`。
+
+        REGHelp 无等价能力。AntiSafety 无 iOS 支持，iOS 线路整段跳过，
+        也不把 Android AID 传给审计接口。
         """
+        if skip_antisafety_for_profile(profile):
+            if log_callback:
+                await log_callback("iOS 线路跳过 AntiSafety 号码审计（平台无 iOS 支持，也不使用 AID）")
+            return None
         if not self.antisafety:
             return None
         try:
@@ -196,7 +214,11 @@ class AttestationGatewayService:
                 return cached.get("token"), cached.get("reghelp_task_id"), REUSE_PROVIDER
 
         mode = getattr(self.config, "attestation_provider_mode", "reghelp_primary") or "reghelp_primary"
-        order = self._provider_order()
+        order = self._provider_order(profile)
+        if skip_antisafety_for_profile(profile) and log_callback:
+            await log_callback(
+                "iOS 线路不走 AntiSafety（无 iOS Push / 无 AID），仅 REGHelp appName=tgiOS / appDevice=iOS"
+            )
         if not order:
             if log_callback:
                 hint = ""
@@ -333,6 +355,8 @@ class AttestationGatewayService:
             raise RuntimeError(
                 "REGHelp 未启用或缺少有效 reghelp_api_key，无法申请 Play Integrity 凭证"
             )
+        if is_ios_profile(profile):
+            raise RuntimeError("iOS 线路不申请 Play Integrity（官方 iOS 无 SafetyNet / Play Integrity）")
         if log_callback:
             await log_callback(
                 f"Play Integrity 走独立 REGHelp 网关 "
@@ -372,12 +396,19 @@ class AttestationGatewayService:
         for name, svc in order:
             label = self._EMAIL_PROVIDER_LABELS.get(name, name)
             try:
+                requested_type = email_type
+                if name == self.PROVIDER_SMSBOWER:
+                    requested_type = "gmail"
                 if log_callback:
-                    await log_callback(f"正在使用 {label} 申请临时登录邮箱 (type={email_type})...")
+                    await log_callback(
+                        f"正在使用 {label} 申请临时登录邮箱 "
+                        f"(type={requested_type}"
+                        f"{'' if requested_type == email_type else f'，已纠正 {email_type}→gmail'} )"
+                    )
                 inbox = await svc.get_login_email(
                     profile,
                     phone=phone,
-                    email_type=email_type,
+                    email_type=requested_type,
                     log_callback=log_callback,
                     ref=ref,
                 )

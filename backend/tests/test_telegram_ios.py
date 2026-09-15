@@ -28,6 +28,21 @@ from backend.app.services.device_profile import (  # noqa: E402
     OFFICIAL_API_CREDENTIALS,
     apply_official_api_id,
 )
+from backend.app.services.init_connection import (  # noqa: E402
+    apply_init_connection_overrides,
+    inspect_init_param_keys,
+)
+from backend.app.services.ios_protocol import (  # noqa: E402
+    REGHELP_IOS_PUSH_APP_NAME,
+    TELEGRAM_IOS_BUNDLE_ID,
+    UNOFFICIAL_IOS_API_CANDIDATES,
+    assert_no_android_init_keys,
+    reghelp_email_app_name,
+    reghelp_push_app_name,
+    resolve_login_email_types,
+    should_migrate_to_nearest_dc,
+    skip_antisafety_for_profile,
+)
 from backend.app.services.registrar import (  # noqa: E402
     DEFAULT_SMS_POLL_ATTEMPTS,
     SMS_POLL_INTERVAL_SECONDS,
@@ -43,7 +58,11 @@ class TestTelegramIosProfile(unittest.TestCase):
         self.assertEqual(ios["api_hash"], OFFICIAL_API_CREDENTIALS[8])
         self.assertEqual(ios["lang_pack"], "ios")
         self.assertEqual(ios["app_device"], "iOS")
+        self.assertEqual(ios["app_name"], REGHELP_IOS_PUSH_APP_NAME)
+        self.assertEqual(ios["default_aid"], "")
         self.assertTrue(str(ios["device_model"]).startswith("iPhone"))
+        self.assertNotIn(94575, OFFICIAL_API_CREDENTIALS)
+        self.assertIn(94575, UNOFFICIAL_IOS_API_CANDIDATES)
 
     def test_official_lang_pack_ios(self):
         self.assertEqual(official_lang_pack_for_api_id(8), "ios")
@@ -99,6 +118,67 @@ class TestTelegramIosProfile(unittest.TestCase):
         self.assertTrue(RegistrationOrchestrator._next_type_allows_otp_resend(sent))
         empty = SimpleNamespace(next_type=None)
         self.assertFalse(RegistrationOrchestrator._next_type_allows_otp_resend(empty))
+
+    def test_reghelp_app_names_are_not_android_tg(self):
+        ios = DEFAULT_PROFILES["telegram_ios"]
+        self.assertEqual(reghelp_push_app_name(ios), "tgiOS")
+        self.assertEqual(reghelp_email_app_name(ios), "tg")
+        self.assertEqual(reghelp_push_app_name(DEFAULT_PROFILES["telegram_android"]), "tg")
+
+    def test_ios_skips_antisafety_and_aid(self):
+        ios = DEFAULT_PROFILES["telegram_ios"]
+        self.assertTrue(skip_antisafety_for_profile(ios))
+        self.assertFalse(skip_antisafety_for_profile(DEFAULT_PROFILES["telegram_android"]))
+
+    def test_smsbower_primary_never_asks_icloud(self):
+        ios = DEFAULT_PROFILES["telegram_ios"]
+        self.assertEqual(
+            resolve_login_email_types(ios, SimpleNamespace(email_provider_mode="smsbower_primary")),
+            ["gmail"],
+        )
+        self.assertEqual(
+            resolve_login_email_types(ios, SimpleNamespace(email_provider_mode="smsbower_only")),
+            ["gmail"],
+        )
+        self.assertEqual(
+            resolve_login_email_types(ios, SimpleNamespace(email_provider_mode="reghelp_primary")),
+            ["icloud", "gmail"],
+        )
+
+    def test_ios_migrates_dc2_to_suggested_dc5(self):
+        ios = DEFAULT_PROFILES["telegram_ios"]
+        self.assertTrue(should_migrate_to_nearest_dc(ios, 2, 5))
+        self.assertFalse(should_migrate_to_nearest_dc(ios, 5, 5))
+        self.assertFalse(should_migrate_to_nearest_dc(DEFAULT_PROFILES["telegram_android"], 2, 5))
+
+    def test_ios_init_params_are_official_bundle_not_android_safety(self):
+        class FakeInitRequest:
+            def __init__(self):
+                self.lang_pack = ""
+                self.params = None
+
+        class FakeClient:
+            def __init__(self):
+                self._init_request = FakeInitRequest()
+
+        client = FakeClient()
+        apns = "a" * 64
+        apply_init_connection_overrides(
+            client,
+            dict(DEFAULT_PROFILES["telegram_ios"], tz_offset=28800),
+            SimpleNamespace(
+                official_client_emulation=True,
+                init_connection_set_lang_pack=False,
+                init_connection_set_tz_offset=False,
+            ),
+            push_token=apns,
+        )
+        keys = inspect_init_param_keys(client._init_request.params)
+        self.assertEqual(client._init_request.lang_pack, "ios")
+        self.assertEqual(keys, ["tz_offset", "bundleId", "device_token"])
+        self.assertEqual(assert_no_android_init_keys(keys), [])
+        values = {item.key: getattr(item.value, "value", None) for item in client._init_request.params.value}
+        self.assertEqual(values["bundleId"], TELEGRAM_IOS_BUNDLE_ID)
 
 
 if __name__ == "__main__":

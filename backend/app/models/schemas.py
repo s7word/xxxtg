@@ -152,7 +152,10 @@ class AppConfigModel(BaseModel):
             "telegram_x": "47f7d612-fe1a-4167-a450-db8a52048e9c",
             "telegram_9": "59e59906-5177-4f6f-8f7e-ced3fe370997"
         },
-        description="各端点环境模板绑定的 Attestation 实例标识 (AID)"
+        description=(
+            "各 Android 端点模板绑定的 AntiSafety AID。"
+            "REGHelp 无 AID；telegram_ios 不使用 AntiSafety，不得填入 Android AID"
+        )
     )
     vak_sms_api_key: str = Field(
         default="16aa4499a3954317aaf002a55e354eed",
