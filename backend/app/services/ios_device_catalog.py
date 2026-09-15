@@ -30,6 +30,7 @@ from backend.app.services.ios_protocol import (
 )
 
 IOS_APP_VERSION = "12.9.3"
+# 列表页自动保底的国家；指定国家生成不限这份名单，跟出口 locale overlay。
 IOS_SEED_COUNTRIES = frozenset({"ph", "tr", "pt"})
 IOS_PH_PACK_COUNT = 48
 
@@ -66,7 +67,9 @@ def synthesize_ios_rows(
     *,
     seed: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
-    code = normalize_country(country) or str(country or "ph").strip().lower()
+    code = normalize_country(country) or str(country or "").strip().lower()
+    if not code:
+        raise ValueError("未指定 iOS 合成国家")
     locale = apply_ios_country_locale({}, code)
     rng = random.Random(seed)
     sku_choices = [(sku, sku.weight) for sku in IOS_SKUS]
@@ -99,10 +102,14 @@ def generate_ios_country_db(
     seed: Optional[int] = None,
     root: Optional[Path] = None,
 ) -> Dict[str, Any]:
-    code = normalize_country(country) or "ph"
-    if code not in IOS_SEED_COUNTRIES:
-        raise ValueError(f"iOS 备用指纹目前只开放 {','.join(sorted(IOS_SEED_COUNTRIES)).upper()}")
+    code = normalize_country(country)
+    if not code:
+        raise ValueError("未指定 iOS 合成国家")
     rows = synthesize_ios_rows(code, count, seed=seed)
+    if not all(str(row.get("lang_pack") or "") == "ios" for row in rows):
+        raise ValueError("iOS 合成行 lang_pack 必须是 ios")
+    if not all(int(row.get("api_id") or 0) == OFFICIAL_IOS_API_ID for row in rows):
+        raise ValueError(f"iOS 合成行 api_id 必须是 {OFFICIAL_IOS_API_ID}")
     stats = compute_stats(rows)
     quality = assess_quality(stats, code, platform="ios")
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H-%M-%S")

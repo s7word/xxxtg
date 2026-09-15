@@ -11,6 +11,8 @@ const deviceCatalogMeta = ref({
   pack_count: 0,
   enabled_packs: 0,
   disabled_packs: 0,
+  ios_pack_count: 0,
+  android_pack_count: 0,
   active_countries: [],
   supported_countries: []
 })
@@ -22,11 +24,14 @@ const deviceUploadProgress = ref(0)
 const deviceUploadResult = ref(null)
 const deviceFileInput = ref(null)
 const generateForm = ref({
-  country: 'id',
-  count: 300,
+  platform: 'ios',
+  country: 'pt',
+  count: 48,
   alias: '',
   enabled: true
 })
+const packFilter = ref('ios')
+const purgeBusy = ref(false)
 const generateBusy = ref(false)
 const renameDrafts = ref({})
 const countryDrafts = ref({})
@@ -45,6 +50,8 @@ const applyCatalog = (data) => {
     pack_count: data.pack_count || 0,
     enabled_packs: data.enabled_packs || 0,
     disabled_packs: data.disabled_packs || 0,
+    ios_pack_count: data.ios_pack_count || 0,
+    android_pack_count: data.android_pack_count || 0,
     active_countries: data.active_countries || [],
     supported_countries: data.supported_countries || []
   }
@@ -208,12 +215,25 @@ export const deleteDevicePack = async (pack) => {
   }
 }
 
+export const setGeneratePlatform = (platform) => {
+  generateForm.value.platform = platform === 'android' ? 'android' : 'ios'
+  if (generateForm.value.platform === 'ios' && generateForm.value.count > 200) {
+    generateForm.value.count = 48
+  }
+  if (generateForm.value.platform === 'android' && generateForm.value.count < 10) {
+    generateForm.value.count = 80
+  }
+}
+
 export const generateDevicePack = async () => {
   generateBusy.value = true
   try {
+    const platform = generateForm.value.platform === 'android' ? 'android' : 'ios'
+    const fallback = platform === 'ios' ? 48 : 80
     const payload = {
+      platform,
       country: generateForm.value.country,
-      count: Number(generateForm.value.count) || 300,
+      count: Number(generateForm.value.count) || fallback,
       enabled: !!generateForm.value.enabled
     }
     if (generateForm.value.alias.trim()) payload.alias = generateForm.value.alias.trim()
@@ -225,12 +245,30 @@ export const generateDevicePack = async () => {
     const data = await res.json()
     if (!res.ok) throw new Error(data.detail || data.message || '合成失败')
     if (data.pack?.id) selectedPackId.value = data.pack.id
+    packFilter.value = platform
     pushToast('ok', data.message || '已合成新的国家指纹库')
     await fetchDeviceCatalog()
   } catch (e) {
     pushToast('danger', `合成失败: ${e.message}`)
   } finally {
     generateBusy.value = false
+  }
+}
+
+export const purgeAndroidPacks = async () => {
+  if (!window.confirm('确认删除目录里全部 Android 旧包？只保留 iOS。磁盘 .db 也会删，后面再重新合成 Android。')) return
+  purgeBusy.value = true
+  try {
+    const res = await fetch('/api/device-dbs/purge-android', { method: 'POST' })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.detail || data.message || '清理失败')
+    applyCatalog(data)
+    packFilter.value = 'ios'
+    pushToast('ok', data.message || '已清理 Android 旧包')
+  } catch (e) {
+    pushToast('danger', `清理失败: ${e.message}`)
+  } finally {
+    purgeBusy.value = false
   }
 }
 
@@ -256,6 +294,8 @@ export const useDevices = () => ({
   deviceFileInput,
   generateForm,
   generateBusy,
+  packFilter,
+  purgeBusy,
   renameDrafts,
   countryDrafts,
   busyPackId,
@@ -268,7 +308,9 @@ export const useDevices = () => ({
   updateDevicePack,
   toggleDevicePack,
   deleteDevicePack,
+  setGeneratePlatform,
   generateDevicePack,
+  purgeAndroidPacks,
   percentOf,
   countryFlag
 })

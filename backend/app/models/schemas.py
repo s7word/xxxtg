@@ -1833,6 +1833,8 @@ class DeviceDbListResponse(BaseModel):
     pack_count: int = 0
     enabled_packs: int = 0
     disabled_packs: int = 0
+    ios_pack_count: int = 0
+    android_pack_count: int = 0
     active_countries: List[str] = Field(default_factory=list)
     packs: List[DeviceDbPack] = Field(default_factory=list)
     supported_countries: List[Dict[str, str]] = Field(default_factory=list)
@@ -1855,13 +1857,14 @@ class DeviceDbToggleRequest(BaseModel):
 
 
 class DeviceDbGenerateRequest(BaseModel):
-    country: str = Field(..., description="目标国家 ISO-2，如 cl / id / in")
-    count: int = Field(default=300, ge=10, le=5000, description="合成样本条数")
+    country: str = Field(..., description="目标国家 ISO-2，如 cl / id / pt")
+    platform: str = Field(default="ios", description="ios 或 android；默认 iOS")
+    count: int = Field(default=48, ge=8, le=5000, description="合成样本条数")
     alias: Optional[str] = Field(default=None, description="生成后的展示别名")
     enabled: bool = Field(default=True, description="生成后是否立即投入调度")
     brand_weights: Optional[Dict[str, int]] = Field(
         default=None,
-        description="可选品牌权重覆盖: samsung/xiaomi/huawei/motorola/realme/vivo/oppo/other",
+        description="可选品牌权重覆盖（仅 Android）: samsung/xiaomi/huawei/motorola/realme/vivo/oppo/other",
     )
     seed: Optional[int] = Field(default=None, description="可选随机种子，便于复现实验")
 

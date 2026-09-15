@@ -15,6 +15,9 @@
 改 iOS / locale / CodeSettings / InitConnection / REGHelp / `*_tg` 代理之前必须对照该文档。  
 改坏了用标签回退，不要凭记忆重写。PH 出 Call/付款、TR 连不上，**不能**拿来覆盖这条 PT 合同。
 
+设备库：控制台「硬件指纹」按**指定国家**合成 iOS（api_id=8）。Android 旧包可整表清空后重做。  
+模板卡片上的 iOS App ID **必须是 8**，禁止被全局 custom（室友/自建栏）盖掉。
+
 ## 1. 项目是什么
 
 **xxxtg（EdgeNode-Auditor）** 是一个 Telegram 批量注册编排系统：
