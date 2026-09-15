@@ -48,6 +48,7 @@ from backend.app.services.init_connection import (
     inspect_init_param_keys,
 )
 from backend.app.services.ios_protocol import (
+    format_ios_locale_alignment,
     format_ios_submission_audit,
     is_apns_hex_token,
     is_ios_profile,
@@ -3282,7 +3283,16 @@ class RegistrationOrchestrator:
             elif pack_match == "none":
                 await manager.append_log(task_id, "硬件指纹包: 目录为空，回退端点模板默认机型")
             await manager.append_log(task_id, f"绑定硬件特征: {profile['device_model']} ({profile['system_version']}), App: {profile['app_version']}")
-            await manager.append_log(task_id, f"网络语言拓扑: {profile['system_lang_code']}, 时区偏置: {profile.get('tz_offset', -14400)}")
+            if is_ios_profile(profile):
+                await manager.append_log(
+                    task_id,
+                    format_ios_locale_alignment(country=target_country, profile=profile),
+                )
+            else:
+                await manager.append_log(
+                    task_id,
+                    f"网络语言拓扑: {profile['system_lang_code']}, 时区偏置: {profile.get('tz_offset', -14400)}",
+                )
             await manager.append_log(task_id, alignment_summary_for_log(profile, config))
             if profile.get("vault_fingerprint_source"):
                 await manager.append_log(

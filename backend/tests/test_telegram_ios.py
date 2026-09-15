@@ -19,10 +19,16 @@ from backend.app.services.code_delivery import (  # noqa: E402
 )
 from backend.app.services.ios_protocol import (  # noqa: E402
     REGHELP_IOS_PUSH_APP_NAME,
+    TELEGRAM_IOS_APPSTORE_ID,
     TELEGRAM_IOS_BUNDLE_ID,
     UNOFFICIAL_IOS_API_CANDIDATES,
+    apply_ios_country_locale,
+    assert_ios_init_keys_official,
     assert_no_android_init_keys,
+    canonicalize_ios_system_lang,
+    format_ios_locale_alignment,
     format_ios_submission_audit,
+    ios_locale_aligned_with_country,
     is_apns_hex_token,
     ios_apns_device_token_b64,
     reghelp_email_app_name,
@@ -158,7 +164,7 @@ class TestTelegramIosProfile(unittest.TestCase):
         self.assertFalse(should_migrate_to_nearest_dc(ios, 5, 5))
         self.assertFalse(should_migrate_to_nearest_dc(DEFAULT_PROFILES["telegram_android"], 2, 5))
 
-    def test_ios_init_params_are_official_bundle_not_android_safety(self):
+    def test_ios_init_params_only_official_tz_offset(self):
         class FakeInitRequest:
             def __init__(self):
                 self.lang_pack = ""
@@ -182,13 +188,49 @@ class TestTelegramIosProfile(unittest.TestCase):
         )
         keys = inspect_init_param_keys(client._init_request.params)
         self.assertEqual(client._init_request.lang_pack, "ios")
-        self.assertEqual(keys, ["tz_offset", "bundleId", "device_token"])
+        self.assertEqual(keys, ["tz_offset"])
         self.assertEqual(assert_no_android_init_keys(keys), [])
+        self.assertEqual(assert_ios_init_keys_official(keys), [])
         values = {item.key: getattr(item.value, "value", None) for item in client._init_request.params.value}
-        self.assertEqual(values["bundleId"], TELEGRAM_IOS_BUNDLE_ID)
-        self.assertEqual(values["device_token"], ios_apns_device_token_b64(apns))
+        self.assertEqual(int(values["tz_offset"]), 28800)
+        self.assertNotIn("bundleId", keys)
+        self.assertNotIn("device_token", keys)
         self.assertNotIn("cert_fingerprint", keys)
         self.assertNotIn("safety_net", keys)
+        self.assertNotIn("perf_cat", keys)
+        self.assertIsNotNone(ios_apns_device_token_b64(apns))
+
+    def test_ph_locale_is_en_PH_not_en_US(self):
+        self.assertEqual(canonicalize_ios_system_lang("en-ph"), "en-PH")
+        self.assertEqual(canonicalize_ios_system_lang("en_PH"), "en-PH")
+        profile = apply_ios_country_locale(dict(DEFAULT_PROFILES["telegram_ios"]), "ph")
+        self.assertEqual(profile["lang_code"], "en")
+        self.assertEqual(profile["system_lang_code"], "en-PH")
+        self.assertEqual(profile["tz_offset"], 28800)
+        self.assertEqual(profile["bundle_id"], TELEGRAM_IOS_BUNDLE_ID)
+        self.assertEqual(profile["appstore_id"], TELEGRAM_IOS_APPSTORE_ID)
+        self.assertEqual(profile["install_source"], "appstore")
+        self.assertTrue(ios_locale_aligned_with_country(profile, "ph"))
+        self.assertFalse(
+            ios_locale_aligned_with_country(
+                {**profile, "system_lang_code": "en-US", "tz_offset": 28800},
+                "ph",
+            )
+        )
+        blob = format_ios_locale_alignment(country="ph", profile=profile)
+        self.assertIn("system_lang=en-PH", blob)
+        self.assertIn("aligned=是", blob)
+        self.assertNotIn("perf_cat", blob)
+
+    def test_resolved_ios_profile_follows_exit_country(self):
+        profile = DeviceProfileManager.get_resolved_profile("telegram_ios", "ph")
+        self.assertEqual(profile["lang_code"], "en")
+        self.assertEqual(profile["system_lang_code"], "en-PH")
+        self.assertEqual(profile["tz_offset"], 28800)
+        self.assertEqual(profile["lang_pack"], "ios")
+        self.assertEqual(profile["api_id"], 8)
+        self.assertNotIn("perf_cat", profile)
+        self.assertTrue(ios_locale_aligned_with_country(profile, "ph"))
 
     def test_app_sandbox_is_apns_production_not_process_sandbox(self):
         self.assertIs(resolve_ios_app_sandbox(True), False)
@@ -231,7 +273,7 @@ class TestTelegramIosProfile(unittest.TestCase):
         lines = format_ios_submission_audit(
             profile=DEFAULT_PROFILES["telegram_ios"],
             push_token="b" * 64,
-            init_keys=["tz_offset", "bundleId", "device_token"],
+            init_keys=["tz_offset"],
             app_sandbox=False,
             allow_firebase=True,
             allow_app_hash=False,
@@ -241,8 +283,19 @@ class TestTelegramIosProfile(unittest.TestCase):
         self.assertIn("cert_fingerprint（Android APK 签名指纹）", blob)
         self.assertIn("明确未提交", blob)
         self.assertIn("APNS 生产证书", blob)
+        self.assertIn("公开合同允许键=tz_offset", blob)
+        self.assertIn("params.bundleId", blob)
+        self.assertIn("params.perf_cat", blob)
         self.assertTrue(is_apns_hex_token("b" * 64))
         self.assertNotIn("cert_fingerprint=unknown", blob)
+        extra_lines = format_ios_submission_audit(
+            profile=DEFAULT_PROFILES["telegram_ios"],
+            init_keys=["tz_offset", "bundleId", "device_token", "perf_cat"],
+        )
+        extra_blob = "\n".join(extra_lines)
+        self.assertIn("非公开合同键", extra_blob)
+        self.assertIn("bundleId", extra_blob)
+        self.assertIn("perf_cat", extra_blob)
 
 
 if __name__ == "__main__":

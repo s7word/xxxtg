@@ -4,9 +4,10 @@ Telethon 1.44 在构造客户端时把 ``lang_pack`` 写死为空字符串，并
 「langPacks are for official apps only」。vault 成功 +91 JSON 与官方
 initConnection 都要求 ``lang_pack=android``，并可带 ``params.tz_offset``。
 
-iOS 官方 ``BuildConfig.bundleData`` 只写 ``bundleId`` / ``tz_offset`` /
-可选 APNS ``device_token``，以及真机代码签名。禁止混入 Android
-``safety_net`` / ``cert_fingerprint`` / ``device`` / ``signature``。
+公开 ``initConnection.params`` 目前只支持 ``tz_offset``。iOS 也不再把
+``bundleId`` / ``device_token`` 塞进握手 JSON：bundle 走 Recaptcha，
+APNS 走 ``CodeSettings.token``。禁止混入 Android ``safety_net`` /
+``cert_fingerprint`` / ``device`` / ``signature`` / ``perf_cat``。
 
 必须在 ``client.connect()`` **之前**调用 ``apply_init_connection_overrides``，
 否则握手已发出，事后改 ``_init_request`` 无效。
@@ -19,13 +20,8 @@ from backend.app.services.device_alignment import (
     init_connection_should_set_lang_pack,
     init_connection_should_set_tz_offset,
     official_lang_pack_for_api_id,
-    profile_looks_ios,
 )
-from backend.app.services.ios_protocol import (
-    ANDROID_ONLY_INIT_KEYS,
-    TELEGRAM_IOS_BUNDLE_ID,
-    ios_apns_device_token_b64,
-)
+from backend.app.services.ios_protocol import ANDROID_ONLY_INIT_KEYS
 from telethon.tl import types
 
 
@@ -78,28 +74,14 @@ def build_init_connection_params(
     profile: Optional[Dict[str, Any]] = None,
     push_token: Optional[str] = None,
 ) -> types.JsonObject:
-    """按平台构造 InitConnection.params。Android 只写 tz_offset。"""
+    """构造 InitConnection.params。公开合同目前只支持 tz_offset。"""
+    _ = (profile, push_token)
     values: List[Any] = [
         types.JsonObjectValue(
             key="tz_offset",
             value=types.JsonNumber(value=float(int(tz_offset))),
         )
     ]
-    if profile_looks_ios(profile):
-        values.append(
-            types.JsonObjectValue(
-                key="bundleId",
-                value=types.JsonString(value=TELEGRAM_IOS_BUNDLE_ID),
-            )
-        )
-        token_b64 = ios_apns_device_token_b64(push_token)
-        if token_b64:
-            values.append(
-                types.JsonObjectValue(
-                    key="device_token",
-                    value=types.JsonString(value=token_b64),
-                )
-            )
     cleaned = [
         item for item in values
         if str(getattr(item, "key", "") or "") not in ANDROID_ONLY_INIT_KEYS

@@ -583,7 +583,11 @@ class DeviceProfileManager:
                     profile["api_hash"] = sampled_dev.get("api_hash", base["api_hash"])
 
         force_country = bool(getattr(config, "force_country_locale", False)) or strict
-        if force_country:
+        if app_type == "telegram_ios":
+            from backend.app.services.ios_protocol import apply_ios_country_locale
+
+            apply_ios_country_locale(profile, country)
+        elif force_country:
             cls._apply_locale(profile, country, None, "none")
         else:
             cls._apply_locale(profile, country, sampled_dev, match)

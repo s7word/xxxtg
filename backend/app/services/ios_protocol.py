@@ -8,11 +8,13 @@
 - Telegram-iOS ``build-system/verify.sh``：App Store 构建 ``api_id=8`` /
   ``api_hash=7245de8e747a0d6fbe11f7cc14fcc0bb``，``lang_pack=ios``，
   bundle ``ph.telegra.Telegraph``。
-- Telegram-iOS ``BuildConfig.bundleData``：InitConnection.appData 只有
-  ``bundleId`` / ``tz_offset`` / 可选 ``device_token``（APNS raw 的 base64）
-  以及真机代码签名 ``issuerName/name/data/data1``。
+- Telegram-iOS ``BuildConfig.bundleData`` 还会往 appData 写 ``bundleId`` /
+  可选 ``device_token``（APNS raw 的 base64）以及真机代码签名。
+  公开 ``initConnection.params`` 合同（core.telegram.org/method/initConnection）
+  **目前只支持** ``tz_offset``。本仓 iOS 握手只提交这一键；APNS 走
+  ``CodeSettings.token``，bundle 走 Recaptcha ``packageName``，不伪造签名。
   **没有** Android Expert 的 ``safety_net`` / ``cert_fingerprint`` /
-  ``device=iphone`` / ``signature=unknown``。
+  ``device=iphone`` / ``signature=unknown`` / ``perf_cat``。
 """
 from __future__ import annotations
 
@@ -23,8 +25,11 @@ from backend.app.services.device_alignment import profile_looks_ios
 
 REGHELP_IOS_PUSH_APP_NAME = "tgiOS"
 TELEGRAM_IOS_BUNDLE_ID = "ph.telegra.Telegraph"
+TELEGRAM_IOS_APPSTORE_ID = "686449807"
+TELEGRAM_IOS_INSTALL_SOURCE = "appstore"
 OFFICIAL_IOS_API_ID = 8
 OFFICIAL_IOS_API_HASH = "7245de8e747a0d6fbe11f7cc14fcc0bb"
+ALLOWED_IOS_INIT_PARAM_KEYS = frozenset({"tz_offset"})
 
 # 第三方列表里的「正式版 iOS」候选。公开源码对不上，本轮不启用。
 # 94575 在同一篇中文摘录里同时标成 TDLib example 与 Telegram for iOS。
@@ -44,6 +49,75 @@ ANDROID_ONLY_INIT_KEYS = frozenset({
 
 def is_ios_profile(profile: Optional[Dict[str, Any]] = None) -> bool:
     return profile_looks_ios(profile)
+
+
+def canonicalize_ios_system_lang(value: Any) -> str:
+    """iOS 系统语言是 language-REGION（en-PH），不是 Android 常见的小写 en-ph。
+
+    全球统计里 en-US 更常见，但不能拿来冒充 PH 出口机：语言 / 时区 / 出口必须同国。
+    """
+    raw = str(value or "").strip().replace("_", "-")
+    parts = [part for part in raw.split("-") if part]
+    if not parts:
+        return "en"
+    language = parts[0].lower()
+    if len(parts) == 1:
+        return language
+    region = parts[1].upper()
+    extra = "-".join(parts[2:])
+    return f"{language}-{region}{('-' + extra) if extra else ''}"
+
+
+def apply_ios_country_locale(profile: Dict[str, Any], country: str) -> Dict[str, Any]:
+    """iOS 语言/时区只跟出口国走，不采样 Android 指纹包的 en-us/en-gb/tl-ph 权重。"""
+    from backend.app.services.device_profile import DeviceProfileManager
+
+    overlay = DeviceProfileManager.infer_locale(country)
+    profile["lang_code"] = str(overlay.get("lang_code") or "en")
+    profile["system_lang_code"] = canonicalize_ios_system_lang(
+        overlay.get("system_lang_code") or profile.get("lang_code") or "en"
+    )
+    profile["tz_offset"] = int(overlay.get("tz_offset") or 0)
+    profile["locale_source"] = "ios_country_overlay"
+    profile["bundle_id"] = TELEGRAM_IOS_BUNDLE_ID
+    profile["appstore_id"] = TELEGRAM_IOS_APPSTORE_ID
+    profile["install_source"] = TELEGRAM_IOS_INSTALL_SOURCE
+    return profile
+
+
+def ios_locale_aligned_with_country(profile: Optional[Dict[str, Any]], country: str) -> bool:
+    profile = profile or {}
+    from backend.app.services.device_profile import DeviceProfileManager
+
+    overlay = DeviceProfileManager.infer_locale(country)
+    try:
+        tz = int(profile.get("tz_offset"))
+    except (TypeError, ValueError):
+        return False
+    return (
+        str(profile.get("lang_code") or "").lower() == str(overlay.get("lang_code") or "").lower()
+        and canonicalize_ios_system_lang(profile.get("system_lang_code"))
+        == canonicalize_ios_system_lang(overlay.get("system_lang_code"))
+        and tz == int(overlay.get("tz_offset") or 0)
+    )
+
+
+def format_ios_locale_alignment(
+    *,
+    country: str,
+    profile: Optional[Dict[str, Any]] = None,
+) -> str:
+    profile = profile or {}
+    aligned = ios_locale_aligned_with_country(profile, country)
+    return (
+        f"语言/时区/出口对齐: country={str(country or '?').upper()} "
+        f"lang={profile.get('lang_code')} system_lang={profile.get('system_lang_code')} "
+        f"tz={profile.get('tz_offset')} source={profile.get('locale_source') or 'unknown'} "
+        f"aligned={'是' if aligned else '否'} "
+        f"bundle={profile.get('bundle_id') or TELEGRAM_IOS_BUNDLE_ID} "
+        f"store={profile.get('install_source') or TELEGRAM_IOS_INSTALL_SOURCE}/"
+        f"{profile.get('appstore_id') or TELEGRAM_IOS_APPSTORE_ID}"
+    )
 
 
 def skip_antisafety_for_profile(profile: Optional[Dict[str, Any]] = None) -> bool:
@@ -174,15 +248,20 @@ def format_ios_submission_audit(
         False: "否（APNS 生产证书 / production）",
         None: "省略（无 token，与 token 同 flag）",
     }.get(app_sandbox if isinstance(app_sandbox, bool) else None, f"原始={app_sandbox!r}")
+    extra = assert_ios_init_keys_official(keys)
     lines = [
-        "iOS 提交审计（对照官方 CodeSettings / BuildConfig.bundleData / REGHelp）：",
+        "iOS 提交审计（对照官方 CodeSettings / 公开 initConnection.params / REGHelp）：",
         f"  REGHelp Push: appName={reghelp_push_app_name(profile)} appDevice=iOS aid=不提交",
+        f"  安装身份: bundle={profile.get('bundle_id') or TELEGRAM_IOS_BUNDLE_ID} "
+        f"store={profile.get('install_source') or TELEGRAM_IOS_INSTALL_SOURCE}/"
+        f"{profile.get('appstore_id') or TELEGRAM_IOS_APPSTORE_ID} "
+        "（只作 Recaptcha/日志，不进 InitConnection.params）",
         f"  InitConnection.params 键=[{','.join(keys) or '无'}] "
-        f"允许键=tz_offset,bundleId,device_token",
+        f"公开合同允许键={','.join(sorted(ALLOWED_IOS_INIT_PARAM_KEYS))}",
         f"  device_token: kind={token_info['kind']} hex_len={token_info['length']} "
         f"CodeSettings={token_info['codesettings_encoding']} "
-        f"InitConnection={token_info['init_encoding']} "
-        f"b64_len={token_info['init_b64_len']} preview={token_info['preview']}",
+        f"InitConnection=omitted "
+        f"preview={token_info['preview']}",
         f"  app_sandbox={sandbox_label} "
         "（官方：APNS sandbox-certificate，不是 iOS 进程沙盒）",
         f"  allow_firebase={'是' if allow_firebase else '否'} "
@@ -190,15 +269,23 @@ def format_ios_submission_audit(
         f"  allow_app_hash={'是' if allow_app_hash else '否'}（Android SMS Retriever，iOS 必须否）",
         f"  unknown_number={'是' if unknown_number else '否'}",
         "  明确未提交: cert_fingerprint（Android APK 签名指纹） / safety_net "
-        "/ params.device / params.signature / AID",
+        "/ params.device / params.signature / params.bundleId / params.device_token "
+        "/ params.perf_cat / AID",
     ]
     if leaked:
         lines.append(f"  ❌ 禁止键已混入 InitConnection: {','.join(leaked)}")
+    if extra:
+        lines.append(f"  ❌ InitConnection.params 含非公开合同键: {','.join(extra)}")
     if token_info["kind"] == "rejected_non_apns":
-        lines.append("  ❌ iOS device_token 不是 64 位 APNS hex，已拒绝写入 InitConnection 与 CodeSettings")
+        lines.append("  ❌ iOS device_token 不是 64 位 APNS hex，已拒绝写入 CodeSettings")
     return lines
 
 
 def assert_no_android_init_keys(keys: Sequence[str]) -> List[str]:
     """返回误混入的 Android InitConnection 键，供测试与日志断言。"""
     return [key for key in keys if key in ANDROID_ONLY_INIT_KEYS]
+
+
+def assert_ios_init_keys_official(keys: Sequence[str]) -> List[str]:
+    """返回不在公开 initConnection.params 合同里的键。"""
+    return [key for key in keys if key not in ALLOWED_IOS_INIT_PARAM_KEYS]
