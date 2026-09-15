@@ -24,6 +24,7 @@ COUNTRY_LANG_MAP = {
     "gb": {"lang_code": "en", "system_lang_code": "en-gb", "tz_offset": 0, "dial": "44"},
     "de": {"lang_code": "de", "system_lang_code": "de-de", "tz_offset": 3600, "dial": "49"},
     "fr": {"lang_code": "fr", "system_lang_code": "fr-fr", "tz_offset": 3600, "dial": "33"},
+    "pt": {"lang_code": "pt", "system_lang_code": "pt-pt", "tz_offset": 0, "dial": "351"},
     # 东欧 / CIS
     "ru": {"lang_code": "ru", "system_lang_code": "ru-ru", "tz_offset": 10800, "dial": "7"},
     "ua": {"lang_code": "uk", "system_lang_code": "uk-ua", "tz_offset": 7200, "dial": "380"},

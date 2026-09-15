@@ -246,6 +246,20 @@ class TestTelegramIosProfile(unittest.TestCase):
         self.assertTrue(ios_locale_aligned_with_country(profile, "tr"))
         self.assertFalse(ios_locale_aligned_with_country(profile, "ph"))
 
+    def test_resolved_ios_profile_follows_portugal(self):
+        profile = DeviceProfileManager.get_resolved_profile("telegram_ios", "pt")
+        self.assertEqual(profile["lang_code"], "pt")
+        self.assertEqual(profile["system_lang_code"], "pt-PT")
+        self.assertEqual(profile["tz_offset"], 0)
+        self.assertEqual(profile["lang_pack"], "ios")
+        self.assertEqual(profile["api_id"], 8)
+        self.assertEqual(profile["bundle_id"], TELEGRAM_IOS_BUNDLE_ID)
+        self.assertTrue(str(profile["device_model"]).startswith("iPhone"))
+        self.assertTrue(ios_locale_aligned_with_country(profile, "pt"))
+        self.assertFalse(ios_locale_aligned_with_country(profile, "ph"))
+        self.assertFalse(ios_locale_aligned_with_country(profile, "tr"))
+        self.assertNotEqual(profile["system_lang_code"], "pt-BR")
+
     def test_app_sandbox_is_apns_production_not_process_sandbox(self):
         self.assertIs(resolve_ios_app_sandbox(True), False)
         self.assertIsNone(resolve_ios_app_sandbox(False))

@@ -1,0 +1,576 @@
+{
+  "mode": "push_required",
+  "waves": [
+    {
+      "wave": 1,
+      "batch_id": "1e213443",
+      "timed_out": false,
+      "elapsed_seconds": 255.2,
+      "batch_status": "success",
+      "summary": {
+        "tasks": 10,
+        "leased_numbers": 10,
+        "blacklist_skips": 0,
+        "sendcode_samples": 11,
+        "sms": 10,
+        "app": 0,
+        "other_type": 1,
+        "tasks_without_sendcode": 0,
+        "no_sendcode_reasons": {},
+        "next_type_none": 1,
+        "app_next_type_none": 0,
+        "sms_rate": 0.9091,
+        "sent_code_types": {
+          "SentCodeTypeSms": 10,
+          "SentCodeTypeCall": 1
+        },
+        "plan_modes": {
+          "push_required": 10
+        },
+        "attached_token": {
+          "是": 10
+        },
+        "statuses": {
+          "success": 10
+        },
+        "egress_ips": [],
+        "success": 10
+      }
+    }
+  ],
+  "summary": {
+    "tasks": 10,
+    "leased_numbers": 10,
+    "blacklist_skips": 0,
+    "sendcode_samples": 11,
+    "sms": 10,
+    "app": 0,
+    "other_type": 1,
+    "tasks_without_sendcode": 0,
+    "no_sendcode_reasons": {},
+    "next_type_none": 1,
+    "app_next_type_none": 0,
+    "sms_rate": 0.9091,
+    "sent_code_types": {
+      "SentCodeTypeSms": 10,
+      "SentCodeTypeCall": 1
+    },
+    "plan_modes": {
+      "push_required": 10
+    },
+    "attached_token": {
+      "是": 10
+    },
+    "statuses": {
+      "success": 10
+    },
+    "egress_ips": [],
+    "success": 10
+  },
+  "rows": [
+    {
+      "task_id": "528598fd",
+      "status": "success",
+      "phone": "+3519****570",
+      "leased_numbers": 1,
+      "blacklist_skips": 0,
+      "samples": [
+        {
+          "sent_code_type": "SentCodeTypeSms",
+          "next_type": "CodeTypeCall",
+          "timeout": "90",
+          "bucket": "sms"
+        }
+      ],
+      "resend_types": [],
+      "plan_modes": [
+        "push_required"
+      ],
+      "plan_attached_token": [
+        "是"
+      ],
+      "egress_ip": null,
+      "no_sendcode_reason": null,
+      "error": null,
+      "log_lines": 92,
+      "egress_country": null,
+      "proxy_origin": null,
+      "sentcode_app": false,
+      "sentcode_sms": true,
+      "api_ids": [
+        8
+      ],
+      "push_mentioned": true,
+      "proxy_ports": [
+        10000,
+        10001,
+        10002,
+        10003,
+        10004,
+        10005,
+        10006,
+        10007,
+        10008,
+        10009
+      ]
+    },
+    {
+      "task_id": "f13c29db",
+      "status": "success",
+      "phone": "+3519****809",
+      "leased_numbers": 1,
+      "blacklist_skips": 0,
+      "samples": [
+        {
+          "sent_code_type": "SentCodeTypeSms",
+          "next_type": "CodeTypeCall",
+          "timeout": "90",
+          "bucket": "sms"
+        }
+      ],
+      "resend_types": [],
+      "plan_modes": [
+        "push_required"
+      ],
+      "plan_attached_token": [
+        "是"
+      ],
+      "egress_ip": null,
+      "no_sendcode_reason": null,
+      "error": null,
+      "log_lines": 92,
+      "egress_country": null,
+      "proxy_origin": null,
+      "sentcode_app": false,
+      "sentcode_sms": true,
+      "api_ids": [
+        8
+      ],
+      "push_mentioned": true,
+      "proxy_ports": [
+        10000,
+        10001,
+        10002,
+        10003,
+        10004,
+        10005,
+        10006,
+        10007,
+        10008,
+        10009
+      ]
+    },
+    {
+      "task_id": "ee339f58",
+      "status": "success",
+      "phone": "+3519****830",
+      "leased_numbers": 1,
+      "blacklist_skips": 0,
+      "samples": [
+        {
+          "sent_code_type": "SentCodeTypeSms",
+          "next_type": "CodeTypeCall",
+          "timeout": "90",
+          "bucket": "sms"
+        }
+      ],
+      "resend_types": [],
+      "plan_modes": [
+        "push_required"
+      ],
+      "plan_attached_token": [
+        "是"
+      ],
+      "egress_ip": null,
+      "no_sendcode_reason": null,
+      "error": null,
+      "log_lines": 96,
+      "egress_country": null,
+      "proxy_origin": null,
+      "sentcode_app": false,
+      "sentcode_sms": true,
+      "api_ids": [
+        8
+      ],
+      "push_mentioned": true,
+      "proxy_ports": [
+        10000,
+        10001,
+        10002,
+        10003,
+        10004,
+        10005,
+        10006,
+        10007,
+        10008,
+        10009
+      ]
+    },
+    {
+      "task_id": "68ec7a91",
+      "status": "success",
+      "phone": "+3519****774",
+      "leased_numbers": 1,
+      "blacklist_skips": 0,
+      "samples": [
+        {
+          "sent_code_type": "SentCodeTypeSms",
+          "next_type": "CodeTypeCall",
+          "timeout": "90",
+          "bucket": "sms"
+        }
+      ],
+      "resend_types": [],
+      "plan_modes": [
+        "push_required"
+      ],
+      "plan_attached_token": [
+        "是"
+      ],
+      "egress_ip": null,
+      "no_sendcode_reason": null,
+      "error": null,
+      "log_lines": 92,
+      "egress_country": null,
+      "proxy_origin": null,
+      "sentcode_app": false,
+      "sentcode_sms": true,
+      "api_ids": [
+        8
+      ],
+      "push_mentioned": true,
+      "proxy_ports": [
+        10000,
+        10001,
+        10002,
+        10003,
+        10004,
+        10005,
+        10006,
+        10007,
+        10008,
+        10009
+      ]
+    },
+    {
+      "task_id": "73a6b83d",
+      "status": "success",
+      "phone": "+3519****862",
+      "leased_numbers": 1,
+      "blacklist_skips": 0,
+      "samples": [
+        {
+          "sent_code_type": "SentCodeTypeSms",
+          "next_type": "CodeTypeCall",
+          "timeout": "90",
+          "bucket": "sms"
+        }
+      ],
+      "resend_types": [],
+      "plan_modes": [
+        "push_required"
+      ],
+      "plan_attached_token": [
+        "是"
+      ],
+      "egress_ip": null,
+      "no_sendcode_reason": null,
+      "error": null,
+      "log_lines": 92,
+      "egress_country": null,
+      "proxy_origin": null,
+      "sentcode_app": false,
+      "sentcode_sms": true,
+      "api_ids": [
+        8
+      ],
+      "push_mentioned": true,
+      "proxy_ports": [
+        10000,
+        10001,
+        10002,
+        10003,
+        10004,
+        10005,
+        10006,
+        10007,
+        10008,
+        10009
+      ]
+    },
+    {
+      "task_id": "bd1e4e01",
+      "status": "success",
+      "phone": "+3519****602",
+      "leased_numbers": 1,
+      "blacklist_skips": 0,
+      "samples": [
+        {
+          "sent_code_type": "SentCodeTypeSms",
+          "next_type": "CodeTypeCall",
+          "timeout": "90",
+          "bucket": "sms"
+        }
+      ],
+      "resend_types": [],
+      "plan_modes": [
+        "push_required"
+      ],
+      "plan_attached_token": [
+        "是"
+      ],
+      "egress_ip": null,
+      "no_sendcode_reason": null,
+      "error": null,
+      "log_lines": 92,
+      "egress_country": null,
+      "proxy_origin": null,
+      "sentcode_app": false,
+      "sentcode_sms": true,
+      "api_ids": [
+        8
+      ],
+      "push_mentioned": true,
+      "proxy_ports": [
+        10000,
+        10001,
+        10002,
+        10003,
+        10004,
+        10005,
+        10006,
+        10007,
+        10008,
+        10009
+      ]
+    },
+    {
+      "task_id": "1183111c",
+      "status": "success",
+      "phone": "+3519****555",
+      "leased_numbers": 1,
+      "blacklist_skips": 0,
+      "samples": [
+        {
+          "sent_code_type": "SentCodeTypeSms",
+          "next_type": "CodeTypeCall",
+          "timeout": "90",
+          "bucket": "sms"
+        }
+      ],
+      "resend_types": [],
+      "plan_modes": [
+        "push_required"
+      ],
+      "plan_attached_token": [
+        "是"
+      ],
+      "egress_ip": null,
+      "no_sendcode_reason": null,
+      "error": null,
+      "log_lines": 92,
+      "egress_country": null,
+      "proxy_origin": null,
+      "sentcode_app": false,
+      "sentcode_sms": true,
+      "api_ids": [
+        8
+      ],
+      "push_mentioned": true,
+      "proxy_ports": [
+        10000,
+        10001,
+        10002,
+        10003,
+        10004,
+        10005,
+        10006,
+        10007,
+        10008,
+        10009
+      ]
+    },
+    {
+      "task_id": "3d3dba4f",
+      "status": "success",
+      "phone": "+3519****773",
+      "leased_numbers": 1,
+      "blacklist_skips": 0,
+      "samples": [
+        {
+          "sent_code_type": "SentCodeTypeSms",
+          "next_type": "CodeTypeCall",
+          "timeout": "90",
+          "bucket": "sms"
+        }
+      ],
+      "resend_types": [],
+      "plan_modes": [
+        "push_required"
+      ],
+      "plan_attached_token": [
+        "是"
+      ],
+      "egress_ip": null,
+      "no_sendcode_reason": null,
+      "error": null,
+      "log_lines": 92,
+      "egress_country": null,
+      "proxy_origin": null,
+      "sentcode_app": false,
+      "sentcode_sms": true,
+      "api_ids": [
+        8
+      ],
+      "push_mentioned": true,
+      "proxy_ports": [
+        10000,
+        10001,
+        10002,
+        10003,
+        10004,
+        10005,
+        10006,
+        10007,
+        10008,
+        10009
+      ]
+    },
+    {
+      "task_id": "e9891fe3",
+      "status": "success",
+      "phone": "+3519****730",
+      "leased_numbers": 1,
+      "blacklist_skips": 0,
+      "samples": [
+        {
+          "sent_code_type": "SentCodeTypeSms",
+          "next_type": "CodeTypeCall",
+          "timeout": "90",
+          "bucket": "sms"
+        }
+      ],
+      "resend_types": [],
+      "plan_modes": [
+        "push_required"
+      ],
+      "plan_attached_token": [
+        "是"
+      ],
+      "egress_ip": null,
+      "no_sendcode_reason": null,
+      "error": null,
+      "log_lines": 92,
+      "egress_country": null,
+      "proxy_origin": null,
+      "sentcode_app": false,
+      "sentcode_sms": true,
+      "api_ids": [
+        8
+      ],
+      "push_mentioned": true,
+      "proxy_ports": [
+        10000,
+        10001,
+        10002,
+        10003,
+        10004,
+        10005,
+        10006,
+        10007,
+        10008,
+        10009
+      ]
+    },
+    {
+      "task_id": "185e5072",
+      "status": "success",
+      "phone": "+3519****883",
+      "leased_numbers": 1,
+      "blacklist_skips": 0,
+      "samples": [
+        {
+          "sent_code_type": "SentCodeTypeSms",
+          "next_type": "CodeTypeCall",
+          "timeout": "90",
+          "bucket": "sms"
+        },
+        {
+          "sent_code_type": "SentCodeTypeCall",
+          "next_type": "None",
+          "timeout": "None",
+          "bucket": "other_type"
+        }
+      ],
+      "resend_types": [
+        "SentCodeTypeCall"
+      ],
+      "plan_modes": [
+        "push_required"
+      ],
+      "plan_attached_token": [
+        "是"
+      ],
+      "egress_ip": null,
+      "no_sendcode_reason": null,
+      "error": null,
+      "log_lines": 105,
+      "egress_country": null,
+      "proxy_origin": null,
+      "sentcode_app": false,
+      "sentcode_sms": true,
+      "api_ids": [
+        8
+      ],
+      "push_mentioned": true,
+      "proxy_ports": [
+        10000,
+        10001,
+        10002,
+        10003,
+        10004,
+        10005,
+        10006,
+        10007,
+        10008,
+        10009
+      ]
+    }
+  ],
+  "hypothesis": {
+    "claim": "官方 iOS api_id=8 / lang_pack=ios",
+    "follow_task": "90aa174f",
+    "warp_hop": true,
+    "country": "pt",
+    "sms_provider": "smscode",
+    "app_type": "telegram_ios",
+    "api_credential_mode": "official",
+    "official_client_emulation": true,
+    "code_delivery_mode": "push_required",
+    "email_provider_mode": "smsbower_primary",
+    "waves": 1,
+    "count_per_wave": 10,
+    "push": "REGHelp appDevice=iOS",
+    "email": "SMS Bower Google gmail.com",
+    "proxy_unique_ip_per_task": true
+  },
+  "unique_ips": {
+    "egress_ips": [],
+    "egress_ip_count": 0,
+    "proxy_ports": [
+      10000,
+      10001,
+      10002,
+      10003,
+      10004,
+      10005,
+      10006,
+      10007,
+      10008,
+      10009
+    ],
+    "proxy_port_count": 10,
+    "ip_reused": false,
+    "port_reused": true
+  }
+}

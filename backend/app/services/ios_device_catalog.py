@@ -30,7 +30,7 @@ from backend.app.services.ios_protocol import (
 )
 
 IOS_APP_VERSION = "12.9.3"
-IOS_SEED_COUNTRIES = frozenset({"ph", "tr"})
+IOS_SEED_COUNTRIES = frozenset({"ph", "tr", "pt"})
 IOS_PH_PACK_COUNT = 48
 
 
@@ -85,7 +85,7 @@ def synthesize_ios_rows(
             "lang_code": locale.get("lang_code") or "en",
             "system_lang_code": canonicalize_ios_system_lang(locale.get("system_lang_code") or "en-PH"),
             "lang_pack": "ios",
-            "tz_offset": int(locale.get("tz_offset") or 28800),
+            "tz_offset": int(locale["tz_offset"]) if locale.get("tz_offset") is not None else 0,
             "perf_cat": 3,
         })
     return rows

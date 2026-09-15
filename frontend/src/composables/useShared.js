@@ -13,6 +13,7 @@ export const COUNTRY_CATALOG = [
   { value: 'gb', name_zh: '英国', name_en: 'United Kingdom', dial: '+44', group: 'eu' },
   { value: 'de', name_zh: '德国', name_en: 'Germany', dial: '+49', group: 'eu' },
   { value: 'fr', name_zh: '法国', name_en: 'France', dial: '+33', group: 'eu' },
+  { value: 'pt', name_zh: '葡萄牙', name_en: 'Portugal', dial: '+351', group: 'eu' },
   { value: 'ru', name_zh: '俄罗斯', name_en: 'Russia', dial: '+7', group: 'cis' },
   { value: 'ua', name_zh: '乌克兰', name_en: 'Ukraine', dial: '+380', group: 'cis' },
   { value: 'kz', name_zh: '哈萨克斯坦', name_en: 'Kazakhstan', dial: '+7', group: 'cis' },

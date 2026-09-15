@@ -418,6 +418,16 @@ class TestIosPhReservePack(unittest.TestCase):
         self.assertEqual(pack["country"], "tr")
         self.assertEqual(infer_pack_platform(pack), "ios")
 
+    def test_ios_portugal_rows_use_pt_locale(self):
+        rows = synthesize_ios_rows("pt", 8, seed=5)
+        self.assertTrue(all(row["lang_code"] == "pt" for row in rows))
+        self.assertTrue(all(row["system_lang_code"] == "pt-PT" for row in rows))
+        self.assertTrue(all(int(row["tz_offset"]) == 0 for row in rows))
+        self.assertTrue(all(row["lang_pack"] == "ios" for row in rows))
+        pack = generate_ios_country_db("pt", count=8, root=self.root, seed=5)
+        self.assertEqual(pack["country"], "pt")
+        self.assertEqual(infer_pack_platform(pack), "ios")
+
 
 if __name__ == "__main__":
     unittest.main()
