@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Header, Request
 from fastapi.responses import JSONResponse
@@ -13,6 +13,22 @@ from backend.app.services.smsall_webhook import attach_batch, ingest, resolve_se
 
 hooks_router = APIRouter(tags=["smsall-webhook"])
 logger = logging.getLogger("SmsallHooks")
+
+KNOWN_APP_TYPES = frozenset({
+    "telegram_android",
+    "telegram_android_public",
+    "telegram_ios",
+    "telegram_x",
+    "telegram_9",
+})
+
+
+def resolve_batch_app_type(requested: Optional[str], config) -> str:
+    """一键测试可指定注册途径；空值回落全局 active_app_type。"""
+    raw = str(requested or "").strip() or str(getattr(config, "active_app_type", "") or "").strip()
+    if raw and raw not in KNOWN_APP_TYPES:
+        raise ValueError(raw)
+    return raw or "telegram_android"
 
 
 def start_country_batch(
@@ -27,6 +43,7 @@ def start_country_batch(
     no_number_retries: Optional[int] = None,
     sniper: bool = False,
     provider_ids: Optional[List[str]] = None,
+    app_type: Optional[str] = None,
 ) -> Dict[str, Any]:
     """用当前全局接码源 / 代理策略给某国开一批注册；max_number_attempts>1 即走猎号。"""
     manager = RegistrationTaskManager.get_instance()
@@ -34,7 +51,7 @@ def start_country_batch(
     sms_provider = sms_provider or getattr(config, "sms_provider", None)
     if max_price is None:
         max_price = getattr(config, "sms_max_price", None)
-    app_type = getattr(config, "active_app_type", None)
+    app_type = resolve_batch_app_type(app_type, config)
     set_2fa = getattr(config, "auto_set_2fa", None)
     safe_count = max(1, min(10, int(count or 1)))
     safe_conc = max(1, min(10, int(concurrency or safe_count)))
