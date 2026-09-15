@@ -164,7 +164,7 @@ class TestTelegramIosProfile(unittest.TestCase):
         self.assertFalse(should_migrate_to_nearest_dc(ios, 5, 5))
         self.assertFalse(should_migrate_to_nearest_dc(DEFAULT_PROFILES["telegram_android"], 2, 5))
 
-    def test_ios_init_params_only_official_tz_offset(self):
+    def test_ios_init_params_tz_offset_and_bundle_id(self):
         class FakeInitRequest:
             def __init__(self):
                 self.lang_pack = ""
@@ -188,12 +188,12 @@ class TestTelegramIosProfile(unittest.TestCase):
         )
         keys = inspect_init_param_keys(client._init_request.params)
         self.assertEqual(client._init_request.lang_pack, "ios")
-        self.assertEqual(keys, ["tz_offset"])
+        self.assertEqual(keys, ["tz_offset", "bundleId"])
         self.assertEqual(assert_no_android_init_keys(keys), [])
         self.assertEqual(assert_ios_init_keys_official(keys), [])
         values = {item.key: getattr(item.value, "value", None) for item in client._init_request.params.value}
         self.assertEqual(int(values["tz_offset"]), 28800)
-        self.assertNotIn("bundleId", keys)
+        self.assertEqual(values["bundleId"], TELEGRAM_IOS_BUNDLE_ID)
         self.assertNotIn("device_token", keys)
         self.assertNotIn("cert_fingerprint", keys)
         self.assertNotIn("safety_net", keys)
@@ -273,7 +273,7 @@ class TestTelegramIosProfile(unittest.TestCase):
         lines = format_ios_submission_audit(
             profile=DEFAULT_PROFILES["telegram_ios"],
             push_token="b" * 64,
-            init_keys=["tz_offset"],
+            init_keys=["tz_offset", "bundleId"],
             app_sandbox=False,
             allow_firebase=True,
             allow_app_hash=False,
@@ -283,8 +283,7 @@ class TestTelegramIosProfile(unittest.TestCase):
         self.assertIn("cert_fingerprint（Android APK 签名指纹）", blob)
         self.assertIn("明确未提交", blob)
         self.assertIn("APNS 生产证书", blob)
-        self.assertIn("公开合同允许键=tz_offset", blob)
-        self.assertIn("params.bundleId", blob)
+        self.assertIn("真机 bundleData 允许键=bundleId,tz_offset", blob)
         self.assertIn("params.perf_cat", blob)
         self.assertTrue(is_apns_hex_token("b" * 64))
         self.assertNotIn("cert_fingerprint=unknown", blob)
@@ -294,8 +293,9 @@ class TestTelegramIosProfile(unittest.TestCase):
         )
         extra_blob = "\n".join(extra_lines)
         self.assertIn("非公开合同键", extra_blob)
-        self.assertIn("bundleId", extra_blob)
+        self.assertIn("device_token", extra_blob)
         self.assertIn("perf_cat", extra_blob)
+        self.assertNotIn("非公开合同键: bundleId", extra_blob)
 
 
 if __name__ == "__main__":

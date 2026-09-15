@@ -8,11 +8,11 @@
 - Telegram-iOS ``build-system/verify.sh``：App Store 构建 ``api_id=8`` /
   ``api_hash=7245de8e747a0d6fbe11f7cc14fcc0bb``，``lang_pack=ios``，
   bundle ``ph.telegra.Telegraph``。
-- Telegram-iOS ``BuildConfig.bundleData`` 还会往 appData 写 ``bundleId`` /
-  可选 ``device_token``（APNS raw 的 base64）以及真机代码签名。
-  公开 ``initConnection.params`` 合同（core.telegram.org/method/initConnection）
-  **目前只支持** ``tz_offset``。本仓 iOS 握手只提交这一键；APNS 走
-  ``CodeSettings.token``，bundle 走 Recaptcha ``packageName``，不伪造签名。
+- Telegram-iOS ``BuildConfig.bundleData`` 真机 appData 必带 ``bundleId`` +
+  ``tz_offset``；有 APNS 时再加 ``device_token``（raw base64）和代码签名。
+  公开合同只写 ``tz_offset``。本仓 iOS 握手提交 ``tz_offset`` + 官方
+  App Store ``bundleId=ph.telegra.Telegraph``（与 Recaptcha packageName 同源）。
+  APNS 仍走 ``CodeSettings.token``，不伪造签名，不提交 ``device_token`` 进 params。
   **没有** Android Expert 的 ``safety_net`` / ``cert_fingerprint`` /
   ``device=iphone`` / ``signature=unknown`` / ``perf_cat``。
 """
@@ -29,7 +29,8 @@ TELEGRAM_IOS_APPSTORE_ID = "686449807"
 TELEGRAM_IOS_INSTALL_SOURCE = "appstore"
 OFFICIAL_IOS_API_ID = 8
 OFFICIAL_IOS_API_HASH = "7245de8e747a0d6fbe11f7cc14fcc0bb"
-ALLOWED_IOS_INIT_PARAM_KEYS = frozenset({"tz_offset"})
+# 真机 bundleData 必带这两键。公开合同只写 tz_offset；bundleId 来自 App Store 包名。
+ALLOWED_IOS_INIT_PARAM_KEYS = frozenset({"tz_offset", "bundleId"})
 
 # 第三方列表里的「正式版 iOS」候选。公开源码对不上，本轮不启用。
 # 94575 在同一篇中文摘录里同时标成 TDLib example 与 Telegram for iOS。
@@ -255,9 +256,9 @@ def format_ios_submission_audit(
         f"  安装身份: bundle={profile.get('bundle_id') or TELEGRAM_IOS_BUNDLE_ID} "
         f"store={profile.get('install_source') or TELEGRAM_IOS_INSTALL_SOURCE}/"
         f"{profile.get('appstore_id') or TELEGRAM_IOS_APPSTORE_ID} "
-        "（只作 Recaptcha/日志，不进 InitConnection.params）",
+        "（bundleId 进 InitConnection.params，与 Recaptcha packageName 同源）",
         f"  InitConnection.params 键=[{','.join(keys) or '无'}] "
-        f"公开合同允许键={','.join(sorted(ALLOWED_IOS_INIT_PARAM_KEYS))}",
+        f"真机 bundleData 允许键={','.join(sorted(ALLOWED_IOS_INIT_PARAM_KEYS))}",
         f"  device_token: kind={token_info['kind']} hex_len={token_info['length']} "
         f"CodeSettings={token_info['codesettings_encoding']} "
         f"InitConnection=omitted "
@@ -269,8 +270,8 @@ def format_ios_submission_audit(
         f"  allow_app_hash={'是' if allow_app_hash else '否'}（Android SMS Retriever，iOS 必须否）",
         f"  unknown_number={'是' if unknown_number else '否'}",
         "  明确未提交: cert_fingerprint（Android APK 签名指纹） / safety_net "
-        "/ params.device / params.signature / params.bundleId / params.device_token "
-        "/ params.perf_cat / AID",
+        "/ params.device / params.signature / params.device_token "
+        "/ params.perf_cat / AID / 代码签名 issuerName",
     ]
     if leaked:
         lines.append(f"  ❌ 禁止键已混入 InitConnection: {','.join(leaked)}")
@@ -287,5 +288,5 @@ def assert_no_android_init_keys(keys: Sequence[str]) -> List[str]:
 
 
 def assert_ios_init_keys_official(keys: Sequence[str]) -> List[str]:
-    """返回不在公开 initConnection.params 合同里的键。"""
+    """返回不在真机 bundleData 允许集（tz_offset + bundleId）里的键。"""
     return [key for key in keys if key not in ALLOWED_IOS_INIT_PARAM_KEYS]

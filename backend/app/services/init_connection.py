@@ -4,10 +4,11 @@ Telethon 1.44 在构造客户端时把 ``lang_pack`` 写死为空字符串，并
 「langPacks are for official apps only」。vault 成功 +91 JSON 与官方
 initConnection 都要求 ``lang_pack=android``，并可带 ``params.tz_offset``。
 
-公开 ``initConnection.params`` 目前只支持 ``tz_offset``。iOS 也不再把
-``bundleId`` / ``device_token`` 塞进握手 JSON：bundle 走 Recaptcha，
-APNS 走 ``CodeSettings.token``。禁止混入 Android ``safety_net`` /
-``cert_fingerprint`` / ``device`` / ``signature`` / ``perf_cat``。
+公开 ``initConnection.params`` 文档只写 ``tz_offset``。官方 iOS
+``BuildConfig.bundleData`` 还会写入 App Store ``bundleId``。iOS 握手提交
+这两键；APNS 走 ``CodeSettings.token``，不伪造签名、不把 ``device_token``
+再塞进 params。禁止混入 Android ``safety_net`` / ``cert_fingerprint`` /
+``device`` / ``signature`` / ``perf_cat``。
 
 必须在 ``client.connect()`` **之前**调用 ``apply_init_connection_overrides``，
 否则握手已发出，事后改 ``_init_request`` 无效。
@@ -20,8 +21,9 @@ from backend.app.services.device_alignment import (
     init_connection_should_set_lang_pack,
     init_connection_should_set_tz_offset,
     official_lang_pack_for_api_id,
+    profile_looks_ios,
 )
-from backend.app.services.ios_protocol import ANDROID_ONLY_INIT_KEYS
+from backend.app.services.ios_protocol import ANDROID_ONLY_INIT_KEYS, TELEGRAM_IOS_BUNDLE_ID
 from telethon.tl import types
 
 
@@ -74,14 +76,27 @@ def build_init_connection_params(
     profile: Optional[Dict[str, Any]] = None,
     push_token: Optional[str] = None,
 ) -> types.JsonObject:
-    """构造 InitConnection.params。公开合同目前只支持 tz_offset。"""
-    _ = (profile, push_token)
+    """构造 InitConnection.params。
+
+    全平台都写 tz_offset。iOS 再补官方 App Store bundleId
+    （``ph.telegra.Telegraph``，与 Recaptcha packageName 同源）。
+    """
+    _ = push_token
     values: List[Any] = [
         types.JsonObjectValue(
             key="tz_offset",
             value=types.JsonNumber(value=float(int(tz_offset))),
         )
     ]
+    if profile_looks_ios(profile):
+        bundle_id = str((profile or {}).get("bundle_id") or TELEGRAM_IOS_BUNDLE_ID).strip()
+        if bundle_id:
+            values.append(
+                types.JsonObjectValue(
+                    key="bundleId",
+                    value=types.JsonString(value=bundle_id),
+                )
+            )
     cleaned = [
         item for item in values
         if str(getattr(item, "key", "") or "") not in ANDROID_ONLY_INIT_KEYS
