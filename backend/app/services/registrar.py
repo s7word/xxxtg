@@ -4426,10 +4426,12 @@ class RegistrationOrchestrator:
 
         slot_pool = None
         if not proxy_override and not proxy_id:
+            unique_ip = bool(getattr(config, "proxy_unique_ip_per_task", False))
+            slot_need = max(limit, len(task_ids)) if unique_ip else limit
             slot_pool, pool_limit, pool_logs = await prepare_batch_proxy_pool(
                 batch_id=batch_id,
                 country=target_country,
-                slots=limit,
+                slots=slot_need,
                 config=config,
                 proxy_mode=proxy_mode,
             )

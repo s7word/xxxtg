@@ -151,6 +151,24 @@ class TestPrepareBatchProxyPool(unittest.IsolatedAsyncioTestCase):
         d = await pool2.acquire("t4")
         self.assertEqual({c["port"], d["port"]}, {10002, 10003})
 
+    async def test_unique_prepare_uses_task_count_not_concurrency(self):
+        cfg = type("Cfg", (), {"proxy_seller_key": "k", "proxy_unique_ip_per_task": True})()
+        proxies = [_proxy(10000 + i) for i in range(10)]
+        with patch(
+            "backend.app.services.proxy_slot_pool._allocate_from_proxy_seller",
+            new=AsyncMock(return_value=proxies),
+        ) as alloc:
+            pool, limit, _ = await prepare_batch_proxy_pool(
+                batch_id="full",
+                country="za",
+                slots=10,
+                config=cfg,
+                proxy_mode="auto",
+            )
+        self.assertEqual(pool.size, 10)
+        self.assertEqual(limit, 10)
+        alloc.assert_awaited()
+
 
 class TestRunBatchWithSlotPool(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
