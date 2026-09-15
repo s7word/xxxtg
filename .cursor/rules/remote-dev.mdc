@@ -13,6 +13,7 @@ alwaysApply: true
 - 未要求时不要 commit / push。
 - **默认只在统一工作分支 `cursor/reghelp-push-refund-9abd` 上改代码并 push**；禁止为每个小改动新开一堆 feature 分支导致测试/运行代码分裂。仅当用户明确要求独立 PR 时才另开分支，并尽快合回该工作分支。
 - 这台机器的 Remote Control worker 名是 `xxxtg@srv1884560`；手机/Web 遥控走该 worker。
+- 官方 iOS 成功对照是葡萄牙 2026-09-15（10/10）。动协议前读 `docs/IOS_PT_BASELINE.md`；回退标签 `baseline/pt-ios-10-20260915`。
 
 ```text
 ❌ BAD: 未经用户同意就乱开一堆分支 / 把密钥写进 Git
