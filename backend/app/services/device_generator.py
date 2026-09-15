@@ -358,9 +358,7 @@ COUNTRY_SYNTH: Dict[str, Dict[str, Any]] = {
     "pt": {
         "name": "Portugal",
         "locales": [
-            ("pt", "pt-pt", 86),
-            ("en", "en-gb", 8),
-            ("en", "en-us", 6),
+            ("pt", "pt-pt", 100),
         ],
         "tz_offsets": [(0, 100)],
         "brands": {

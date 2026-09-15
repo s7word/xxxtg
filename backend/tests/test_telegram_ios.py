@@ -164,7 +164,9 @@ class TestTelegramIosProfile(unittest.TestCase):
         ios = DEFAULT_PROFILES["telegram_ios"]
         self.assertTrue(should_migrate_to_nearest_dc(ios, 2, 5))
         self.assertFalse(should_migrate_to_nearest_dc(ios, 5, 5))
-        self.assertFalse(should_migrate_to_nearest_dc(DEFAULT_PROFILES["telegram_android"], 2, 5))
+        self.assertTrue(should_migrate_to_nearest_dc(DEFAULT_PROFILES["telegram_android"], 2, 4))
+        self.assertTrue(should_migrate_to_nearest_dc(DEFAULT_PROFILES["telegram_android_public"], 2, 4))
+        self.assertFalse(should_migrate_to_nearest_dc({"api_id": 35337905}, 2, 4))
 
     def test_ios_init_params_tz_offset_and_bundle_id(self):
         class FakeInitRequest:

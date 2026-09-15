@@ -603,11 +603,18 @@ class DeviceProfileManager:
                             profile["apk_version_code"] = sampled_dev.get("apk_version_code")
 
         force_country = bool(getattr(config, "force_country_locale", False)) or strict
+        official_android = app_type in (
+            "telegram_android",
+            "telegram_android_public",
+            "telegram_x",
+            "telegram_9",
+        )
         if app_type == "telegram_ios":
             from backend.app.services.ios_protocol import apply_ios_country_locale
 
             apply_ios_country_locale(profile, country)
-        elif force_country:
+        elif official_android or force_country:
+            # 与 iOS 合同同一课：语言/时区跟出口国，不抽包里的 en-us/en-gb。
             cls._apply_locale(profile, country, None, "none")
         else:
             cls._apply_locale(profile, country, sampled_dev, match)

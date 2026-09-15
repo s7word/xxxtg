@@ -447,6 +447,9 @@ class TestIosPhReservePack(unittest.TestCase):
         validate_android_rows(rows, "pt")
         self.assertTrue(all(row["lang_pack"] == "android" for row in rows))
         self.assertTrue(all(int(row["api_id"]) == 6 for row in rows))
+        self.assertTrue(all(row["lang_code"] == "pt" for row in rows))
+        self.assertTrue(all(str(row["system_lang_code"]).lower() == "pt-pt" for row in rows))
+        self.assertTrue(all(int(row["tz_offset"]) == 0 for row in rows))
         self.assertFalse(any(str(row["device_model"]).startswith("iPhone") for row in rows))
         bad = list(rows)
         bad[0] = {**bad[0], "device_model": "iPhone 16 Pro", "lang_pack": "ios"}
