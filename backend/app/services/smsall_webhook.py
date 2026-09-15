@@ -30,6 +30,13 @@ SNIPER_TRUE_TOKENS = frozenset({"1", "true", "yes", "on", "sniper", "high", "urg
 SNIPER_HEADER_FLAG = "x-smsall-sniper"
 SNIPER_HEADER_PRIORITY = "x-smsall-priority"
 SNIPER_COOLDOWN_PREFIX = "sniper:"
+SNIPER_APP_TYPES = frozenset({
+    "telegram_android",
+    "telegram_android_public",
+    "telegram_ios",
+    "telegram_x",
+    "telegram_9",
+})
 
 _LOCK = threading.RLock()
 _EVENTS: deque = deque(maxlen=MAX_EVENTS)
@@ -403,6 +410,17 @@ def resolve_sniper_sms_provider(item: Dict[str, Any], config: Any = None) -> str
     return RegistrationOrchestrator.resolve_sms_provider(config)
 
 
+def resolve_sniper_app_type(config: Any) -> str:
+    """自动狙击自己的注册途径；非法/空值回落全局 active_app_type，再回落 Android。"""
+    raw = str(getattr(config, "smsall_sniper_app_type", "") or "").strip()
+    if raw in SNIPER_APP_TYPES:
+        return raw
+    fallback = str(getattr(config, "active_app_type", "") or "").strip()
+    if fallback in SNIPER_APP_TYPES:
+        return fallback
+    return "telegram_android"
+
+
 def decide_sniper_launches(
     items: List[Dict[str, Any]],
     config: Any,
@@ -421,6 +439,7 @@ def decide_sniper_launches(
     use_item_price = True if use_item_price is None else bool(use_item_price)
     country_caps = getattr(config, "smsall_sniper_price_caps", None) or []
     has_country_caps = bool(country_caps)
+    app_type = resolve_sniper_app_type(config)
 
     launches: List[Dict[str, Any]] = []
     seen_launch_keys = set()
@@ -464,6 +483,7 @@ def decide_sniper_launches(
             "price_cap_source": cap_source if has_country_caps or price_cap is not None else None,
             **item,
             "sniper": True,
+            "app_type": app_type,
         }, now)
         if action == "launch":
             stamped["max_number_attempts"] = attempts
@@ -499,6 +519,7 @@ def decide_sniper_launches(
             "max_number_attempts": attempts,
             "max_price": batch_max_price,
             "cooldown_seconds": cooldown,
+            "app_type": app_type,
         })
     return launches
 
@@ -731,9 +752,10 @@ def ingest(payload: Any, config: Any, headers: Any = None) -> Dict[str, Any]:
         # ASSUMPTION：接码源仍用全局 config.sms_provider，不按 item.provider 自动切换；
         # 上游 provider 只打日志供人工核对映射。
         logger.warning(
-            "SMSBazaar 狙击命中 %s：%s 路 × 每任务最多取号 %s 次，本批出价 %s，"
+            "SMSBazaar 狙击命中 %s：途径=%s，%s 路 × 每任务最多取号 %s 次，本批出价 %s，"
             "supplierIds=%s providerRef=%s，上游平台=%s(%s)，本批接码源=%s（全局=%s）",
             str(item.get("country") or "").upper(),
+            item.get("app_type") or "-",
             item.get("count"),
             item.get("max_number_attempts"),
             item.get("max_price"),

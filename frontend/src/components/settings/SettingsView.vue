@@ -101,6 +101,29 @@
           （仍受猎号联合上限 hunt_max_total_leases 裁剪）。
           猎号规则：注册成功即停，失败号拉黑换号继续扫。不想自动花钱就关掉这个开关。
         </div>
+        <div v-if="config.smsall_sniper_enabled" class="stack" style="margin-top:8px">
+          <label class="ce-label">自动狙击 · 注册途径</label>
+          <div class="ce-seg">
+            <button
+              v-for="opt in APP_TYPE_SHORTCUTS"
+              :key="'sniper-' + opt.value"
+              type="button"
+              :class="{ 'is-on': config.smsall_sniper_app_type === opt.value }"
+              @click="config.smsall_sniper_app_type = opt.value"
+            >{{ opt.label }}</button>
+          </div>
+          <select v-model="config.smsall_sniper_app_type" class="ce-select">
+            <option v-for="opt in APP_TYPE_OPTIONS" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+          </select>
+          <div v-if="isIosAppType(config.smsall_sniper_app_type)" class="ce-alert is-ok">
+            自动狙击走官方 iOS：<code>api_id=8</code>，InitConnection 只有 <code>tz_offset</code> + <code>bundleId</code>，
+            语言时区跟号国 overlay，缺包自动合成。改完请点右上角保存，下一发狙击才生效。
+          </div>
+          <p v-else class="ce-tiny">
+            自动狙击走 Android 系合同：有 SIM（flashcall / missed / current），FCM 在 InitConnection.params.device_token。
+            这条设置只影响「程序推送 → 狙击」自动开跑，不影响下面的一键测试。
+          </p>
+        </div>
         <div v-if="config.smsall_sniper_enabled" class="grid-2">
           <div>
             <label class="ce-label">狙击任务数 / 线程</label>
@@ -180,7 +203,7 @@
           不走 AID / Play Integrity。语言时区跟出口国 overlay，DC 跟 <code>GetNearestDc</code>。
           葡萄牙基线 10/10 走这条途径。
         </div>
-        <p v-else class="ce-tiny">Android / TDLib 仍吃全局 custom App ID 与 AntiSafety AID。全自动/狙击保存后仍用全局 <code>active_app_type</code>；一键测试以这里选的途径为准。</p>
+        <p v-else class="ce-tiny">Android / TDLib 仍吃全局 custom App ID 与 AntiSafety AID。一键测试以这里选的途径为准；自动狙击用上面的「自动狙击 · 注册途径」，互不影响。</p>
       </div>
       <div class="grid-2">
         <div>
@@ -192,7 +215,7 @@
           <input v-model.number="trialConcurrency" type="number" min="1" max="10" class="ce-input mono" />
         </div>
       </div>
-      <div class="ce-tiny">当前接码源 {{ smsProviderLabel(config.sms_provider) }} · 途径 {{ trialAppTypeLabel }} · 改完开关请点右上角保存 · 通知 {{ smsallEventCount }} 条</div>
+      <div class="ce-tiny">当前接码源 {{ smsProviderLabel(config.sms_provider) }} · 一键测试 {{ trialAppTypeLabel }} · 自动狙击 {{ sniperAppTypeLabel }} · 改完开关请点右上角保存 · 通知 {{ smsallEventCount }} 条</div>
       <div v-if="smsallEvents.length" class="stack">
         <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
           <button class="ce-btn-danger ce-btn-sm" :disabled="!selectedEventIds.length || deleteBusy" @click="deleteSelected">
@@ -232,6 +255,7 @@
                   <span v-else>{{ eventTypeLabel(ev.type) }}</span>
                   <div v-if="ev.sniper && ev.max_number_attempts" class="ce-tiny mono">
                     {{ ev.planned_count || '?' }}×{{ ev.max_number_attempts }} 猎号
+                    <span v-if="ev.app_type"> · {{ isIosAppType(ev.app_type) ? 'iOS' : 'Android' }}</span>
                   </div>
                 </td>
                 <td class="nowrap mono">{{ ev.price_usd != null ? '$' + Number(ev.price_usd).toFixed(2) : '—' }}</td>
@@ -803,6 +827,10 @@ const trialBusy = reactive({})
 const trialAppTypeLabel = computed(() => {
   const hit = APP_TYPE_OPTIONS.find((opt) => opt.value === trialAppType.value)
   return hit?.label || trialAppType.value
+})
+const sniperAppTypeLabel = computed(() => {
+  const hit = APP_TYPE_OPTIONS.find((opt) => opt.value === config.smsall_sniper_app_type)
+  return hit?.label || config.smsall_sniper_app_type || 'Android 主版'
 })
 const setTrialAppType = (value) => {
   trialAppType.value = value

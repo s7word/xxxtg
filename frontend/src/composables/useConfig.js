@@ -35,6 +35,7 @@ const config = reactive({
   smsall_sniper_max_price_usd: null,
   smsall_sniper_price_caps: [],
   smsall_sniper_use_item_price_as_max: true,
+  smsall_sniper_app_type: 'telegram_android',
   target_country: 'cl',
   proxy_seller_key: '',
   use_proxy_seller_auto: false,
@@ -256,6 +257,9 @@ export const fetchConfig = async () => {
     const res = await fetch('/api/config')
     const data = await res.json()
     Object.assign(config, data)
+    if (!config.smsall_sniper_app_type) {
+      config.smsall_sniper_app_type = 'telegram_android'
+    }
     form.country = data.target_country || 'cl'
     form.app_type = data.active_app_type || 'telegram_android'
     form.sms_provider = data.sms_provider || 'fivesim'
