@@ -63,6 +63,8 @@ def apply_patch_for(app_type: str) -> Dict[str, Any]:
         patched["init_connection_set_lang_pack"] = True
         patched["init_connection_set_tz_offset"] = True
         patched["code_settings_unknown_number"] = False
+        patched["hunt_device_max_uses"] = 1
+        patched["pin_app_version_substr"] = "12.8.3"
     return patched
 
 
