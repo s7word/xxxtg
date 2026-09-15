@@ -464,15 +464,24 @@ class AppConfigModel(BaseModel):
     )
     code_settings_unknown_number: bool = Field(
         default=True,
-        description="CodeSettings.unknown_number：接码号不是本机 SIM 时设 true。",
+        description=(
+            "CodeSettings.unknown_number：接码号不是本机 SIM 时设 true。"
+            "仅影响 Android；iOS 路径强制 false。"
+        ),
     )
     code_settings_allow_flashcall: bool = Field(
         default=False,
-        description="CodeSettings.allow_flashcall；接码网关通常收不到闪信，默认关闭。",
+        description=(
+            "CodeSettings.allow_flashcall；接码网关通常收不到闪信，Android 默认关闭。"
+            "iOS 路径强制 true（对齐已验证成功 payload）。"
+        ),
     )
     code_settings_allow_missed_call: bool = Field(
         default=False,
-        description="CodeSettings.allow_missed_call。",
+        description=(
+            "CodeSettings.allow_missed_call。Android 默认关闭；"
+            "iOS 路径强制 true（对齐已验证成功 payload）。"
+        ),
     )
     hunt_sms_first_after_app_streak: int = Field(
         default=2,

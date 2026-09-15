@@ -13,6 +13,8 @@
   公开合同只写 ``tz_offset``。本仓 iOS 握手提交 ``tz_offset`` + 官方
   App Store ``bundleId=ph.telegra.Telegraph``（与 Recaptcha packageName 同源）。
   APNS 仍走 ``CodeSettings.token``，不伪造签名，不提交 ``device_token`` 进 params。
+  iOS ``CodeSettings`` 号码协商位对齐已验证成功的 grammers 注册客户端
+  （``unknown_number=false`` / 闪信 / 漏接），不是官方 iOS 源码。
   **没有** Android Expert 的 ``safety_net`` / ``cert_fingerprint`` /
   ``device=iphone`` / ``signature=unknown`` / ``perf_cat``。
 """
@@ -213,6 +215,24 @@ def resolve_ios_allow_firebase(attach_token: bool) -> bool:
     return bool(attach_token)
 
 
+def resolve_ios_code_settings_number_flags() -> Dict[str, bool]:
+    """iOS sendCode 的号码协商位。
+
+    对照的是已验证成功的 PH 注册客户端 ``com.tgios.registerclient``
+    （Windows Tauri + grammers）原文：``unknownNumber=false``、
+    ``allowFlashcall=true``、``allowMissedCall=true``。
+
+    这不是官方 App Store Telegram-iOS 源码；官方 iOS 通常不发闪信/漏接。
+    grammers 本身不值得换栈，但这组已跑通的 flag 值得 iOS 路径对齐。
+    Android 不得套用。
+    """
+    return {
+        "unknown_number": False,
+        "allow_flashcall": True,
+        "allow_missed_call": True,
+    }
+
+
 def describe_device_token_submission(token: Optional[str]) -> Dict[str, Any]:
     """日志用：只描述形态与编码，不回传 token 原文。"""
     raw = str(token or "").strip()
@@ -238,6 +258,8 @@ def format_ios_submission_audit(
     allow_firebase: Any = None,
     allow_app_hash: Any = None,
     unknown_number: Any = None,
+    allow_flashcall: Any = None,
+    allow_missed_call: Any = None,
 ) -> List[str]:
     """多行审计日志：只写实际提交/明确未提交，禁止用占位值冒充字段。"""
     profile = profile or {}
@@ -268,7 +290,10 @@ def format_ios_submission_audit(
         f"  allow_firebase={'是' if allow_firebase else '否'} "
         f"（官方 iOS token/app_sandbox 专供 Firebase auth，有 APNS 时应为是）",
         f"  allow_app_hash={'是' if allow_app_hash else '否'}（Android SMS Retriever，iOS 必须否）",
-        f"  unknown_number={'是' if unknown_number else '否'}",
+        f"  unknown_number={'是' if unknown_number else '否'} "
+        f"flashcall={'是' if allow_flashcall else '否'} "
+        f"missed={'是' if allow_missed_call else '否'} "
+        "（对齐已验证 grammers 成功 payload，非官方 iOS 源码）",
         "  明确未提交: cert_fingerprint（Android APK 签名指纹） / safety_net "
         "/ params.device / params.signature / params.device_token "
         "/ params.perf_cat / AID / 代码签名 issuerName",

@@ -34,6 +34,7 @@ from backend.app.services.ios_protocol import (  # noqa: E402
     reghelp_email_app_name,
     reghelp_push_app_name,
     resolve_ios_app_sandbox,
+    resolve_ios_code_settings_number_flags,
     resolve_login_email_types,
     should_migrate_to_nearest_dc,
     skip_antisafety_for_profile,
@@ -250,10 +251,27 @@ class TestTelegramIosProfile(unittest.TestCase):
         self.assertFalse(plan.allow_app_hash)
         self.assertTrue(plan.allow_firebase)
         self.assertIs(plan.app_sandbox, False)
+        self.assertFalse(plan.unknown_number)
+        self.assertTrue(plan.allow_flashcall)
+        self.assertTrue(plan.allow_missed_call)
         cs = RegistrationOrchestrator._build_code_settings_from_plan("a" * 64, plan, ios)
         self.assertIs(cs.app_sandbox, False)
         self.assertTrue(cs.allow_firebase)
         self.assertEqual(cs.token, "a" * 64)
+        self.assertFalse(cs.unknown_number)
+        self.assertTrue(cs.allow_flashcall)
+        self.assertTrue(cs.allow_missed_call)
+
+    def test_ios_codesettings_follow_verified_success_payload(self):
+        flags = resolve_ios_code_settings_number_flags()
+        self.assertEqual(
+            flags,
+            {
+                "unknown_number": False,
+                "allow_flashcall": True,
+                "allow_missed_call": True,
+            },
+        )
 
     def test_ios_rejects_fcm_in_codesettings_token(self):
         ios = DEFAULT_PROFILES["telegram_ios"]
@@ -261,9 +279,9 @@ class TestTelegramIosProfile(unittest.TestCase):
             allow_app_hash=False,
             attach_push_token=True,
             allow_firebase=True,
-            unknown_number=True,
-            allow_flashcall=False,
-            allow_missed_call=False,
+            unknown_number=False,
+            allow_flashcall=True,
+            allow_missed_call=True,
             app_sandbox=False,
         )
         cs = RegistrationOrchestrator._build_code_settings_from_plan("legacy:APA91xxxx", plan, ios)
@@ -279,12 +297,17 @@ class TestTelegramIosProfile(unittest.TestCase):
             app_sandbox=False,
             allow_firebase=True,
             allow_app_hash=False,
-            unknown_number=True,
+            unknown_number=False,
+            allow_flashcall=True,
+            allow_missed_call=True,
         )
         blob = "\n".join(lines)
         self.assertIn("cert_fingerprint（Android APK 签名指纹）", blob)
         self.assertIn("明确未提交", blob)
         self.assertIn("APNS 生产证书", blob)
+        self.assertIn("unknown_number=否", blob)
+        self.assertIn("flashcall=是", blob)
+        self.assertIn("missed=是", blob)
         self.assertIn("真机 bundleData 允许键=bundleId,tz_offset", blob)
         self.assertIn("params.perf_cat", blob)
         self.assertTrue(is_apns_hex_token("b" * 64))

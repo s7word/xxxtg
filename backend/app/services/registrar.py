@@ -1987,6 +1987,8 @@ class RegistrationOrchestrator:
                 allow_firebase=getattr(code_settings, "allow_firebase", None),
                 allow_app_hash=getattr(code_settings, "allow_app_hash", None),
                 unknown_number=getattr(code_settings, "unknown_number", None),
+                allow_flashcall=getattr(code_settings, "allow_flashcall", None),
+                allow_missed_call=getattr(code_settings, "allow_missed_call", None),
             ):
                 await manager.append_log(task_id, line)
 

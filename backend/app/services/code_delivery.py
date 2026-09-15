@@ -50,6 +50,7 @@ from backend.app.services.device_profile import PUBLISHED_API_ID_BLOCKLIST
 from backend.app.services.ios_protocol import (
     resolve_ios_allow_firebase,
     resolve_ios_app_sandbox,
+    resolve_ios_code_settings_number_flags,
 )
 
 CODE_DELIVERY_SMS_FIRST = "sms_first"
@@ -106,6 +107,10 @@ class CodeDeliveryPlan:
             parts.append("allow_firebase")
         if self.unknown_number:
             parts.append("unknown_number")
+        if self.allow_flashcall:
+            parts.append("flashcall")
+        if self.allow_missed_call:
+            parts.append("missed_call")
         if self.app_sandbox is True:
             parts.append("app_sandbox=是(APNS沙盒证书)")
         elif self.app_sandbox is False:
@@ -329,9 +334,18 @@ def resolve_code_delivery_plan(
         # 生产/沙盒证书，不是 iOS 进程沙盒。
         allow_firebase = resolve_ios_allow_firebase(attach)
         app_sandbox = resolve_ios_app_sandbox(attach)
+        ios_number_flags = resolve_ios_code_settings_number_flags()
+        unknown_number = bool(ios_number_flags["unknown_number"])
+        allow_flashcall = bool(ios_number_flags["allow_flashcall"])
+        allow_missed_call = bool(ios_number_flags["allow_missed_call"])
         notes.append(
             "iOS: allow_app_hash=否；allow_firebase 跟随 APNS token；"
             "app_sandbox=APNS生产证书(否)，不是进程沙盒"
+        )
+        notes.append(
+            "iOS CodeSettings 对齐已验证成功 payload："
+            "unknown_number=否 flashcall=是 missed=是"
+            "（grammers 注册客户端，非官方 iOS；不改 Android）"
         )
 
     return CodeDeliveryPlan(
