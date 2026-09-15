@@ -24,7 +24,8 @@ from backend.scripts.run_code_delivery_ab import (  # noqa: E402
 )
 
 COUNTRY_RE = re.compile(r"国家=([A-Za-z]{2})")
-ALIGN_RE = re.compile(r"出口拓扑对齐: IP=(\S+) 国家=([A-Za-z]{2}|-)")
+ALIGN_RE = re.compile(r"出口拓扑对齐: IP=(\S+) 国家=(\S+)")
+EGRESS_IP_RE = re.compile(r"(?:出口拓扑对齐: IP=|出口拓扑: IP=|egress_ip=)(?P<ip>[0-9a-fA-F:.]+)")
 ORIGIN_RE = re.compile(r"成功从 (.+?) 自动匹配到")
 API_ID_RE = re.compile(r"api_id=(\d+)")
 PUSH_RE = re.compile(r"Push Token|attach_token=是|跳过 Push")
@@ -68,11 +69,13 @@ def apply_patch_for(app_type: str) -> Dict[str, Any]:
 def enrich(row: Dict[str, Any], task: Dict[str, Any]) -> Dict[str, Any]:
     blob = "\n".join(task.get("logs") or [])
     align = ALIGN_RE.search(blob)
+    egress = EGRESS_IP_RE.search(blob)
     origin = ORIGIN_RE.search(blob)
     countries = COUNTRY_RE.findall(blob)
     out = dict(row)
-    out["egress_country"] = align.group(2) if align else (countries[-1] if countries else None)
-    out["egress_ip"] = (align.group(1) if align else row.get("egress_ip"))
+    align_ip = align.group(1) if align and align.group(1) not in {"-", "None"} else None
+    out["egress_country"] = align.group(2).rstrip(",") if align else (countries[-1] if countries else None)
+    out["egress_ip"] = align_ip or (egress.group("ip") if egress else row.get("egress_ip"))
     out["proxy_origin"] = origin.group(1) if origin else None
     out["sentcode_app"] = any(s.get("bucket") == "app" for s in row.get("samples") or [])
     out["sentcode_sms"] = any(s.get("bucket") == "sms" for s in row.get("samples") or [])

@@ -23,6 +23,7 @@ from backend.app.services.device_generator import (  # noqa: E402
 from backend.app.services.device_db_manager import parse_registrator_db  # noqa: E402
 from backend.app.services.registrar import RegistrationOrchestrator  # noqa: E402
 from backend.app.services.telegram_android_releases import (  # noqa: E402
+    PUBLIC_ANDROID_RELEASE,
     TELEGRAM_9_RELEASE,
     TELEGRAM_ANDROID_RELEASES,
     TELEGRAM_X_RELEASE,
@@ -64,8 +65,8 @@ class TestOfficialReleaseCatalog(unittest.TestCase):
 
     def test_public_and_x_and_nine_store_integrity_code(self):
         public = synthesize_rows("pt", 10, seed=3, app_type="telegram_android_public")
-        self.assertTrue(all(row["app_version"] == "12.7.3 (67509)" for row in public))
-        self.assertTrue(all(int(row["apk_version_code"]) == 67509 for row in public))
+        self.assertTrue(all(row["app_version"] == PUBLIC_ANDROID_RELEASE.app_version for row in public))
+        self.assertTrue(all(int(row["apk_version_code"]) == PUBLIC_ANDROID_RELEASE.apk_version_code for row in public))
         x_rows = synthesize_rows("pt", 10, seed=4, app_type="telegram_x")
         self.assertTrue(all(row["app_version"] == TELEGRAM_X_RELEASE.app_version for row in x_rows))
         self.assertTrue(all(int(row["apk_version_code"]) == 1692020 for row in x_rows))

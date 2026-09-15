@@ -334,7 +334,7 @@ MAX_NUMBER_ATTEMPTS_CAP = 500
 DEFAULT_HUNT_NO_NUMBER_RETRIES = 20
 DEFAULT_HUNT_NO_NUMBER_DELAY_SEC = 2.0
 DEFAULT_HUNT_PROXY_MAX_USES = 5
-DEFAULT_HUNT_DEVICE_MAX_USES = 8
+DEFAULT_HUNT_DEVICE_MAX_USES = 1
 # 猎号联合上限：单任务取号次数 × 批次任务数 = 本次最多向接码平台租号的次数。
 # 500 × 10 会一次把余额抽干，所以默认把乘积压到 200，可由 config.hunt_max_total_leases 覆盖。
 DEFAULT_HUNT_MAX_TOTAL_LEASES = 200
@@ -1476,6 +1476,18 @@ class RegistrationOrchestrator:
                 f"[代理槽位] 1:1 绑定预分配出口 {format_proxy_endpoint(proxy_override)}"
                 f"（同国 {target_country.upper()}，禁止跨区 fallback）",
             )
+            country_label = (
+                proxy_override.get("egress_country")
+                or proxy_override.get("country_code")
+                or proxy_override.get("country")
+                or target_country.upper()
+            )
+            await manager.append_log(
+                task_id,
+                f"[多径中继网关] 出口拓扑对齐: IP={proxy_override.get('egress_ip') or '-'} "
+                f"国家={country_label} "
+                f"(手机号区域/语言/时区将按 {target_country.upper()} 对齐)"
+            )
             return dict(proxy_override)
 
         # 使用者决定配对关系：explicit 100% 遵从指定节点，不施加隐式国家约束
@@ -1733,13 +1745,18 @@ class RegistrationOrchestrator:
                         f"[多径中继网关] 成功从 {origin} 自动匹配到 {target_country.upper()} "
                         f"区域代理: {endpoint}"
                     )
-                    if chosen.get("egress_ip") or chosen.get("egress_country"):
-                        await manager.append_log(
-                            task_id,
-                            f"[多径中继网关] 出口拓扑对齐: IP={chosen.get('egress_ip') or '-'} "
-                            f"国家={chosen.get('egress_country') or chosen.get('country') or target_country.upper()} "
-                            f"(手机号区域/语言/时区将按 {target_country.upper()} 对齐)"
-                        )
+                    country_label = (
+                        chosen.get("egress_country")
+                        or chosen.get("country_code")
+                        or chosen.get("country")
+                        or target_country.upper()
+                    )
+                    await manager.append_log(
+                        task_id,
+                        f"[多径中继网关] 出口拓扑对齐: IP={chosen.get('egress_ip') or '-'} "
+                        f"国家={country_label} "
+                        f"(手机号区域/语言/时区将按 {target_country.upper()} 对齐)"
+                    )
                     return chosen
                 await manager.append_log(
                     task_id,
@@ -1900,22 +1917,22 @@ class RegistrationOrchestrator:
         token 传 str 即可，Telethon 会走 serialize_bytes。
 
         SMS 优先策略靠 attach_push_token=False 生效。
-        token/app_sandbox：官方文档标为 iOS Firebase/APNS 槽；本仓历史兼容路径是把
-        Android FCM 塞进去（错槽），不是 APNS，也不是在跑 iOS 客户端。
+        token/app_sandbox 只给 iOS APNS。Android FCM 不得写入该槽，
+        官方位置是 InitConnection.params.device_token。
         allow_app_hash 只协商短信正文里的 Android SMS Retriever hash，应跟随设备平台
         而非投递模式。
         allow_firebase / unknown_number 由配置注入，对应官方 Android 的 Firebase
         通道协商与「号码非本机 SIM」标志。
         """
         token = push_token if (attach_push_token and push_token) else None
+        if token and not is_ios_profile(profile):
+            token = None
         if token and is_ios_profile(profile) and not is_apns_hex_token(token):
             # 禁止把 FCM / 其它形态写进官方 iOS token 槽
             token = None
             allow_firebase = False
         if token:
-            sandbox = resolve_ios_app_sandbox(True) if is_ios_profile(profile) else (
-                False if app_sandbox is None else bool(app_sandbox)
-            )
+            sandbox = resolve_ios_app_sandbox(True)
         else:
             sandbox = None
         return types.CodeSettings(
@@ -4084,7 +4101,6 @@ class RegistrationOrchestrator:
                     last_failure_reason = reason
                     if hunt_enabled:
                         proxy_send_uses += 1
-                        device_send_uses += 1
                         await manager.append_log(
                             task_id,
                             f"[猎号] {reason} 号码 {phone} 已拉黑退订，"

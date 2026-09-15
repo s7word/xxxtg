@@ -306,7 +306,7 @@
               目标只有两个：① 注册成功立刻停止；② 在试号次数内尽量扫号，不可用号（站内信 APP / 已注册 / 封禁）
               拉黑后退订换号。这不是「扫平台所有号码」——最多只试 {{ effectiveHuntAttempts }} 个号，用完即结束（HUNT_EXHAUSTED）。
               无库存软重试 {{ config.hunt_no_number_retries ?? 20 }} 次（全局配置）。
-              设备每 {{ config.hunt_device_max_uses || 8 }} 次 sendCode 换指纹并换新 Push（Push 与设备绑定）。
+              设备每 {{ config.hunt_device_max_uses || 1 }} 次 sendCode 换指纹并换新 Push（换号必须换设备+FCM）。
             </p>
             <p class="ce-tiny">
               <span :class="huntProxyPinned ? 'ce-badge is-warn' : 'ce-badge is-info'">

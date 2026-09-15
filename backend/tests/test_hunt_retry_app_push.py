@@ -147,11 +147,11 @@ class TestHuntRetryAppPush(unittest.IsolatedAsyncioTestCase):
         # 默认 balanced + 自建非泄露 api_id 根本不申请 Token（见 TestCodeDeliveryModeInHunt）
         return make_config(code_delivery_mode="push_required")
 
-    async def test_app_delivery_retries_with_same_push_token(self):
+    async def test_app_delivery_rotates_device_and_push(self):
         sms = FakeSms([
             ("act-1", "+56911110001"),
         ])
-        # 第二次取号故意无库存，证明 APP 换号后未退 Push、且只申请过一次 Token
+        # 第二次取号故意无库存；第 1 号 App 后必须先退 Push 再换设备，不能复用同一 FCM
         from backend.app.services.vaksms import NoNumberAvailableError
 
         original_get = sms.get_number
@@ -199,7 +199,8 @@ class TestHuntRetryAppPush(unittest.IsolatedAsyncioTestCase):
                  new=AsyncMock(side_effect=SentCodeAppDeliveryError("app only", reason="SENT_CODE_TYPE_APP")),
              ), \
              patch.object(RegistrationOrchestrator, "_connect_mtproto", new=AsyncMock(return_value=True)), \
-             patch("backend.app.services.registrar.TelegramClient", return_value=client):
+             patch("backend.app.services.registrar.TelegramClient", return_value=client), \
+             patch.dict("os.environ", {"EDGENODE_SKIP_PUSH_REFUND_WAIT": "1"}):
             await RegistrationOrchestrator.run_registration(
                 task_id=self.task_id,
                 country="cl",
@@ -209,7 +210,7 @@ class TestHuntRetryAppPush(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(gw.get_push_token.await_count, 1)
         self.assertEqual(sms.cancel_calls, ["act-1"])
-        gw.refund_push_token.assert_not_awaited()
+        gw.refund_push_token.assert_awaited()
         remember.assert_called()
         # APP 投递只临时拉黑（TTL），不得再写永久 already_registered
         kwargs = remember.call_args.kwargs
@@ -218,6 +219,7 @@ class TestHuntRetryAppPush(unittest.IsolatedAsyncioTestCase):
         logs = "\n".join(self.manager.get_task(self.task_id)["logs"])
         self.assertIn("APP 投递不可用（未必已注册）", logs)
         self.assertIn("换号继续", logs)
+        self.assertIn("重采样设备并更换 Push", logs)
         task = self.manager.get_task(self.task_id)
         self.assertEqual(task["status"], "failed")
         self.assertTrue(task.get("no_number"))
@@ -297,7 +299,7 @@ class TestHuntLimitsHelpers(unittest.IsolatedAsyncioTestCase):
         limits = RegistrationOrchestrator._resolve_hunt_limits(cfg)
         self.assertEqual(limits["no_number_retries"], 20)
         self.assertEqual(limits["proxy_max_uses"], 5)
-        self.assertEqual(limits["device_max_uses"], 8)
+        self.assertEqual(limits["device_max_uses"], 1)
 
     async def test_lease_number_retries_then_raises(self):
         from backend.app.services.vaksms import NoNumberAvailableError
@@ -636,7 +638,10 @@ class TestHuntNoDoubleCancel(HuntRunMixin, unittest.IsolatedAsyncioTestCase):
         self.assertTrue(sms.poll_attempts, "应已进入 OTP 阶段")
         self.assertGreaterEqual(sms.poll_attempts[-1], HUNT_MIN_SMS_POLL_ATTEMPTS)
         logs = "\n".join(self.manager.get_task(self.task_id)["logs"])
-        self.assertIn("先退旧 Token 再申请新的", logs)
+        self.assertTrue(
+            "先退旧 Token 再申请新的" in logs or "重采样设备并更换 Push" in logs,
+            logs,
+        )
 
 
 class TestHuntAppDeliveryFuse(HuntRunMixin, unittest.IsolatedAsyncioTestCase):

@@ -213,11 +213,15 @@ class TestCodeSettingsFirebaseFlags(unittest.TestCase):
             allow_flashcall=False,
             allow_missed_call=False,
         )
-        cs = RegistrationOrchestrator._build_code_settings_from_plan("FCM_TOKEN", plan)
+        cs = RegistrationOrchestrator._build_code_settings_from_plan(
+            "FCM_TOKEN",
+            plan,
+            {"app_device": "Android", "lang_pack": "android"},
+        )
         self.assertIsInstance(cs, types.CodeSettings)
         self.assertTrue(cs.allow_firebase)
         self.assertTrue(cs.unknown_number)
-        self.assertEqual(cs.token, "FCM_TOKEN")
+        self.assertFalse(cs.token)
 
 
 class TestGetResolvedProfileStrict(unittest.TestCase):
@@ -321,6 +325,19 @@ class TestPushSlotConflicts(unittest.TestCase):
         )
         self.assertTrue(any("错槽" in c for c in conflicts))
         self.assertFalse(any(c.startswith("类型冲突") for c in conflicts))
+
+    def test_android_fcm_in_init_slot_is_not_flagged(self):
+        conflicts = detect_push_slot_conflicts(
+            {
+                "app_device": "Android",
+                "lang_pack": "android",
+                "system_version": "SDK 29",
+                "device_model": "OPPOCPH2035",
+            },
+            "dGVzdA:APA91" + ("x" * 140),
+            attached=False,
+        )
+        self.assertEqual(conflicts, [])
 
     def test_android_with_apns_hex_is_hard_conflict(self):
         conflicts = detect_push_slot_conflicts(

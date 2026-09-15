@@ -22,6 +22,7 @@ RECAPTCHA_CHECK_RE = re.compile(
 )
 
 TELEGRAM_ANDROID_PACKAGE = "org.telegram.messenger"
+TELEGRAM_X_PACKAGE = "org.thunderdog.challegram"
 TELEGRAM_IOS_PACKAGE = "ph.telegra.Telegraph"
 
 
@@ -55,12 +56,26 @@ def parse_recaptcha_check(error: Any) -> Optional[Tuple[str, str]]:
     return match.group(1), match.group(2)
 
 
+def official_android_package_id(profile: Optional[dict] = None) -> str:
+    """官方 Android InitConnection.params.package_id / Recaptcha packageName。"""
+    profile = profile or {}
+    lang_pack = str(profile.get("lang_pack") or "").strip().lower()
+    app_type = str(profile.get("app_type") or profile.get("key") or "").strip().lower()
+    try:
+        api_id = int(profile.get("api_id") or 0)
+    except (TypeError, ValueError):
+        api_id = 0
+    if lang_pack == "android_x" or app_type == "telegram_x" or api_id == 21724:
+        return TELEGRAM_X_PACKAGE
+    return TELEGRAM_ANDROID_PACKAGE
+
+
 def recaptcha_app_name(profile: Optional[dict] = None) -> str:
     """按端点模板选择 REGHelp RecaptchaMobile 的 appName。"""
     device = str((profile or {}).get("app_device") or "Android").lower()
     if device == "ios":
         return TELEGRAM_IOS_PACKAGE
-    return TELEGRAM_ANDROID_PACKAGE
+    return official_android_package_id(profile)
 
 
 def recaptcha_app_device(profile: Optional[dict] = None) -> str:

@@ -327,9 +327,17 @@ def resolve_code_delivery_plan(
         should_request = True
         attach = True
         can_escalate = False
-        notes.append("push_required：申请 Push 并 attach token")
+        notes.append("push_required：申请 Push（iOS attach APNS；Android 不写 CodeSettings.token）")
 
     app_sandbox = False if attach else None
+    if not profile_looks_ios(profile):
+        # CodeSettings.token / app_sandbox 是 iOS 槽。Android 官方把 FCM 放进
+        # InitConnection.params.device_token，禁止再画蛇添足写进 token。
+        attach = False
+        app_sandbox = None
+        notes.append(
+            "Android: FCM 走 InitConnection.params.device_token，不写 CodeSettings.token"
+        )
     if profile_looks_ios(profile):
         # iOS 不能复用 Android「allow_firebase = allow_app_hash」：官方 token/app_sandbox
         # 专供 Firebase auth，有 APNS 就必须 allow_firebase=true；app_sandbox 是 APNS
@@ -442,12 +450,12 @@ def escalation_plan_after_published_flood(plan: CodeDeliveryPlan) -> CodeDeliver
     """sms_first / 强制 SMS 遇 API_ID_PUBLISHED_FLOOD 后的一次性 Push escalate。"""
     ios_like = not plan.allow_app_hash
     allow_firebase = resolve_ios_allow_firebase(True) if ios_like else plan.allow_firebase
-    app_sandbox = resolve_ios_app_sandbox(True) if ios_like else False
+    app_sandbox = resolve_ios_app_sandbox(True) if ios_like else None
     return CodeDeliveryPlan(
         mode=plan.mode,
         effective_mode=CODE_DELIVERY_PUSH_REQUIRED,
         should_request_push_token=True,
-        attach_push_token=True,
+        attach_push_token=bool(ios_like),
         allow_app_hash=plan.allow_app_hash,
         can_escalate_on_published_flood=False,
         use_published_api_id=plan.use_published_api_id,

@@ -21,9 +21,11 @@ from backend.app.services.device_alignment import (
     init_connection_should_set_lang_pack,
     init_connection_should_set_tz_offset,
     official_lang_pack_for_api_id,
+    profile_looks_android,
     profile_looks_ios,
 )
 from backend.app.services.ios_protocol import ANDROID_ONLY_INIT_KEYS, TELEGRAM_IOS_BUNDLE_ID
+from backend.app.services.recaptcha_check import official_android_package_id
 from telethon.tl import types
 
 
@@ -78,10 +80,11 @@ def build_init_connection_params(
 ) -> types.JsonObject:
     """构造 InitConnection.params。
 
-    全平台都写 tz_offset。iOS 再补官方 App Store bundleId
-    （``ph.telegra.Telegraph``，与 Recaptcha packageName 同源）。
+    全平台都写 tz_offset。
+    iOS：再补官方 App Store ``bundleId``（不把 APNS 写进 params）。
+    Android：官方 tgnet 写 ``package_id``；有 FCM 时写 ``device_token``
+    （不是 CodeSettings.token）。不伪造 cert / installer / perf_cat。
     """
-    _ = push_token
     values: List[Any] = [
         types.JsonObjectValue(
             key="tz_offset",
@@ -97,11 +100,34 @@ def build_init_connection_params(
                     value=types.JsonString(value=bundle_id),
                 )
             )
-    cleaned = [
-        item for item in values
-        if str(getattr(item, "key", "") or "") not in ANDROID_ONLY_INIT_KEYS
-    ]
-    return types.JsonObject(value=cleaned)
+        cleaned = [
+            item for item in values
+            if str(getattr(item, "key", "") or "") not in ANDROID_ONLY_INIT_KEYS
+        ]
+        return types.JsonObject(value=cleaned)
+
+    try:
+        android_api = int((profile or {}).get("api_id") or 0)
+    except (TypeError, ValueError):
+        android_api = 0
+    if profile_looks_android(profile) or android_api in {4, 6, 21724}:
+        package_id = str((profile or {}).get("package_id") or official_android_package_id(profile)).strip()
+        if package_id:
+            values.append(
+                types.JsonObjectValue(
+                    key="package_id",
+                    value=types.JsonString(value=package_id),
+                )
+            )
+        token = str(push_token or "").strip()
+        if token:
+            values.append(
+                types.JsonObjectValue(
+                    key="device_token",
+                    value=types.JsonString(value=token),
+                )
+            )
+    return types.JsonObject(value=values)
 
 
 def describe_init_connection(client: Any) -> str:

@@ -105,7 +105,14 @@ class TestTelegramIosProfile(unittest.TestCase):
             describe_push_slot(True, profile=ios, token="legacy:APA91xxxx"),
             PUSH_SLOT_IOS_NON_APNS,
         )
-        self.assertIn("android_fcm", describe_push_slot(True, profile=DEFAULT_PROFILES["telegram_android"]))
+        self.assertIn(
+            "device_token",
+            describe_push_slot(
+                False,
+                profile=DEFAULT_PROFILES["telegram_android"],
+                token="dGVzdA:APA91" + ("x" * 140),
+            ),
+        )
 
     def test_apns_hex_not_suspicious_on_ios(self):
         ios = DEFAULT_PROFILES["telegram_ios"]

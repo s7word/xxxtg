@@ -68,6 +68,11 @@ TELEGRAM_ANDROID_RELEASES: Tuple[AndroidRelease, ...] = (
     AndroidRelease("official", "12.10.0", "70312", 70312, 23, 3, "APKMirror 12.10.0 Android 6.0+ 70312"),
 )
 
+PUBLIC_ANDROID_RELEASE = next(
+    item for item in TELEGRAM_ANDROID_RELEASES
+    if item.version == "12.8.3" and item.app_build == "69222"
+)
+
 TELEGRAM_X_RELEASE = AndroidRelease(
     "telegram_x",
     "0.26.5",

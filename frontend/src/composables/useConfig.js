@@ -70,7 +70,7 @@ const config = reactive({
   official_client_emulation: false,
   device_alignment_mode: 'loose',
   strict_vault_device_alignment: false,
-  pin_app_version_substr: '12.7.3',
+  pin_app_version_substr: '',
   init_connection_set_lang_pack: false,
   init_connection_set_tz_offset: false,
   force_country_locale: false,
@@ -87,7 +87,7 @@ const config = reactive({
   hunt_no_number_retry_delay_sec: 2.0,
   hunt_proxy_max_uses: 5,
   proxy_require_country_match: true,
-  hunt_device_max_uses: 8,
+  hunt_device_max_uses: 1,
   hunt_default_max_attempts: 100,
   hunt_max_total_leases: 200,
   phone_precheck_enabled: true

@@ -140,10 +140,10 @@ DEFAULT_PROFILES = {
         "app_device": "Android",
         "device_model": "Samsung Galaxy S23 Ultra",
         "system_version": "SDK 33",
-        "app_version": "12.7.3 (67509)",
-        "app_version_pure": "12.7.3",
-        "app_build": "67509",
-        "apk_version_code": 67509,
+        "app_version": "12.8.3 (69222)",
+        "app_version_pure": "12.8.3",
+        "app_build": "69222",
+        "apk_version_code": 69222,
         "lang_pack": "android"
     },
     "telegram_x": {
@@ -653,15 +653,15 @@ class DeviceProfileManager:
 
         if pin and pin not in str(profile.get("app_version") or ""):
             # 指纹包没钉上时，严格模式仍用 vault 成功版本字符串，避免 12.9.x 漂移
-            pinned = split_app_version(f"{pin} (67509)" if pin == "12.7.3" else pin)
+            pinned = split_app_version(f"{pin} (69222)" if pin == "12.8.3" else pin)
             if pinned.get("app_version"):
                 profile["app_version"] = pinned["app_version"] if "(" in pinned["app_version"] else (
-                    f"{pin} (67509)" if pin == "12.7.3" else pin
+                    f"{pin} (69222)" if pin == "12.8.3" else pin
                 )
                 profile["app_version_pure"] = pin
-                if pin == "12.7.3":
-                    profile["app_build"] = "67509"
-                    profile["apk_version_code"] = 67509
+                if pin == "12.8.3":
+                    profile["app_build"] = "69222"
+                    profile["apk_version_code"] = 69222
                 profile["app_version_pinned"] = True
 
         if strict:

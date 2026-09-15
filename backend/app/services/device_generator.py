@@ -27,6 +27,7 @@ from backend.app.services.device_db_manager import (
 )
 from backend.app.services.device_profile import DeviceProfileManager, OFFICIAL_API_CREDENTIALS
 from backend.app.services.telegram_android_releases import (
+    PUBLIC_ANDROID_RELEASE,
     TELEGRAM_9_RELEASE,
     TELEGRAM_X_RELEASE,
     attach_apk_version_code,
@@ -61,9 +62,10 @@ ANDROID_GENERATE_PRESETS = {
         "lang_pack": "android",
         "aid_key": "telegram_android",
         "pin_version": True,
-        "app_version": "12.7.3 (67509)",
-        "app_version_pure": "12.7.3",
-        "apk_version_code": 67509,
+        "app_version": PUBLIC_ANDROID_RELEASE.app_version,
+        "app_version_pure": PUBLIC_ANDROID_RELEASE.app_version_pure,
+        "app_build": PUBLIC_ANDROID_RELEASE.app_build,
+        "apk_version_code": PUBLIC_ANDROID_RELEASE.apk_version_code,
         "label": "Android Public / vault",
     },
     "telegram_x": {

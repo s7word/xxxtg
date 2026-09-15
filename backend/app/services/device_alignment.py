@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple
 
-VAULT_STRICT_APP_VERSION_PIN = "12.7.3"
+VAULT_STRICT_APP_VERSION_PIN = "12.8.3"
 VAULT_STRICT_API_ID = 4
 VAULT_STRICT_LANG_PACK = "android"
 # 官方 Android / Telegram X 握手必须带 lang_pack；仅钉 api_id=4 会漏掉 6 与 21724。
@@ -42,10 +42,11 @@ EMU_DEVICE_MARKERS = (
     "desktop",
 )
 
-# 官方 TL 文档把 CodeSettings.token / app_sandbox 标成 iOS Firebase 专用；
-# 本仓实际塞的是 Android REGHelp FCM（api_id=4 过 published 闸的历史做法）。
-# 日志用 android_fcm_in_ios_doc_slot，避免被误读成「在跑 iOS 客户端」。
+# 官方 TL 文档把 CodeSettings.token / app_sandbox 标成 iOS Firebase 专用。
+# Android 官方 FCM 走 InitConnection.params.device_token，不再写进这个 iOS 槽。
+# 旧日志关键字保留，便于检索历史错槽报告。
 PUSH_SLOT_ANDROID_FCM_IN_IOS_DOC = "CodeSettings.token(android_fcm_in_ios_doc_slot)"
+PUSH_SLOT_ANDROID_INIT_DEVICE_TOKEN = "InitConnection.params.device_token"
 # 官方 iOS 客户端：CodeSettings.token 文档槽位就是 APNS
 PUSH_SLOT_IOS_APNS = "CodeSettings.token(ios_apns)"
 PUSH_SLOT_IOS_NON_APNS = "CodeSettings.token(ios_slot_non_apns)"
@@ -195,12 +196,14 @@ def describe_push_slot(
     profile: Optional[Dict[str, Any]] = None,
     token: Optional[str] = None,
 ) -> str:
-    if not attached:
-        return PUSH_SLOT_NONE
     if profile_looks_ios(profile):
+        if not attached:
+            return PUSH_SLOT_NONE
         kind = str(classify_push_token(token, profile).get("kind") or "")
         return PUSH_SLOT_IOS_APNS if kind == "apns_hex" else PUSH_SLOT_IOS_NON_APNS
-    return PUSH_SLOT_ANDROID_FCM_IN_IOS_DOC
+    if token:
+        return PUSH_SLOT_ANDROID_INIT_DEVICE_TOKEN
+    return PUSH_SLOT_NONE
 
 
 def profile_platform_markers(profile: Optional[Dict[str, Any]]) -> str:

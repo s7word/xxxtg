@@ -351,7 +351,7 @@ class AppConfigModel(BaseModel):
             "握手写入 InitConnection.lang_pack（android / ios / android_x）与号国 tz_offset；"
             "sendCode 后处理 SetUpEmailRequired / FirebaseSms / PaymentRequired，"
             "不再把非 App 通道一律当短信空等。猎号连续 App 强制 SMS 在此模式下关闭。"
-            "Android 路径 Push 仍走文档标为 iOS 的 CodeSettings.token（FCM 错槽兼容）；"
+            "Android FCM 走 InitConnection.params.device_token，不写 CodeSettings.token；"
             "telegram_ios 路径按官方 iOS 申请 appDevice=iOS 的 Push，token 槽位对本。"
             "vault 严格对齐只钉 Android api_id=4，不会覆盖 telegram_ios。"
         ),
@@ -360,7 +360,7 @@ class AppConfigModel(BaseModel):
         default="loose",
         description=(
             "设备指纹对齐: strict（对照 vault 成功样本 + Telegram Expert："
-            "api_id=4 正确 hash、钉 app_version=12.7.3、lang_pack=android、号国 tz/lang、"
+            "api_id=4 正确 hash、钉 app_version=12.8.3、lang_pack=android、号国 tz/lang、"
             "InitConnection 写入握手、非 emu Push attach、缺字段拒绝发码）/ "
             "loose（沿用指纹包抽样；api_id=4 路径仍会写入 InitConnection lang_pack/tz）"
         ),
@@ -372,8 +372,8 @@ class AppConfigModel(BaseModel):
     pin_app_version_substr: str = Field(
         default="",
         description=(
-            "设备指纹抽样时优先匹配 app_version 包含该子串的样本（如 12.7.3）。"
-            "空字符串在严格模式下回落到 12.7.3；loose 模式表示不钉死版本。"
+            "设备指纹抽样时优先匹配 app_version 包含该子串的样本（如 12.8.3）。"
+            "空字符串在严格模式下回落到 12.8.3；loose 模式表示不钉死版本。"
         ),
     )
     init_connection_set_lang_pack: bool = Field(
@@ -533,12 +533,12 @@ class AppConfigModel(BaseModel):
         ),
     )
     hunt_device_max_uses: int = Field(
-        default=8,
+        default=1,
         ge=1,
         le=50,
         description=(
-            "同一设备指纹在猎号任务内最多用于 sendCode 的次数；达到后重采样设备并换新 Push "
-            "（Push 与设备绑定，不能只换机不换 Token）"
+            "同一设备指纹在猎号任务内最多用于 sendCode 的次数。默认 1：换号必须换设备+Push，"
+            "避免第 2 号复用同一 FCM。"
         ),
     )
     hunt_default_max_attempts: int = Field(

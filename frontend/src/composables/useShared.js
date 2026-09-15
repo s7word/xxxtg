@@ -99,7 +99,7 @@ export const ANDROID_GENERATE_OPTIONS = [
     label: 'Android Public / vault · api_id=4',
     apiId: 4,
     aidKey: 'telegram_android',
-    version: '12.7.3 (67509)'
+    version: '12.8.3 (69222)'
   },
   {
     value: 'telegram_x',

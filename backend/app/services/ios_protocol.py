@@ -47,6 +47,10 @@ ANDROID_ONLY_INIT_KEYS = frozenset({
     "cert_fingerprint",
     "signature",
     "device",
+    "package_id",
+    "installer",
+    "perf_cat",
+    "data",
 })
 
 

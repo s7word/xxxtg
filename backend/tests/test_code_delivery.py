@@ -57,7 +57,7 @@ class TestCodeDeliveryPlan(unittest.TestCase):
         )
         self.assertEqual(plan.effective_mode, CODE_DELIVERY_PUSH_REQUIRED)
         self.assertTrue(plan.should_request_push_token)
-        self.assertTrue(plan.attach_push_token)
+        self.assertFalse(plan.attach_push_token)
         self.assertTrue(plan.allow_app_hash)
 
     def test_sms_first_never_attaches_without_escalate(self):
@@ -72,7 +72,7 @@ class TestCodeDeliveryPlan(unittest.TestCase):
             _config(code_delivery_mode=CODE_DELIVERY_PUSH_REQUIRED),
             _profile(api_id=35337905),
         )
-        self.assertTrue(plan.attach_push_token)
+        self.assertFalse(plan.attach_push_token)
         self.assertTrue(plan.should_request_push_token)
 
     def test_allow_app_hash_tracks_device_platform_not_mode(self):
@@ -173,6 +173,22 @@ class TestCodeDeliveryPlan(unittest.TestCase):
         self.assertFalse(plan.attach_push_token)
         self.assertEqual(plan.emulation_label, "balanced")
 
+    def test_android_official_summary_does_not_call_sandbox_apns(self):
+        plan = resolve_code_delivery_plan(
+            _config(
+                official_client_emulation=True,
+                api_credential_mode="official",
+                code_delivery_mode=CODE_DELIVERY_PUSH_REQUIRED,
+            ),
+            {"api_id": 4, "api_hash": "x", "app_device": "Android", "lang_pack": "android"},
+        )
+        blob = plan.summary_for_log()
+        self.assertTrue(plan.should_request_push_token)
+        self.assertFalse(plan.attach_push_token)
+        self.assertIsNone(plan.app_sandbox)
+        self.assertNotIn("APNS", blob)
+        self.assertIn("InitConnection.params.device_token", " ".join(plan.notes))
+
     def test_official_emulation_forces_push_and_ignores_hunt_streak(self):
         plan = resolve_code_delivery_plan(
             _config(
@@ -187,7 +203,7 @@ class TestCodeDeliveryPlan(unittest.TestCase):
         self.assertEqual(plan.emulation_label, "official")
         self.assertEqual(plan.effective_mode, CODE_DELIVERY_PUSH_REQUIRED)
         self.assertTrue(plan.should_request_push_token)
-        self.assertTrue(plan.attach_push_token)
+        self.assertFalse(plan.attach_push_token)
         self.assertFalse(plan.forced_sms)
         self.assertIn("official", plan.summary_for_log())
 
@@ -204,7 +220,7 @@ class TestCodeDeliveryPlan(unittest.TestCase):
         )
         self.assertEqual(plan.effective_mode, CODE_DELIVERY_PUSH_REQUIRED)
         self.assertTrue(plan.should_request_push_token)
-        self.assertTrue(plan.attach_push_token)
+        self.assertFalse(plan.attach_push_token)
         self.assertFalse(plan.forced_sms)
         self.assertIn("严格设备对齐", " ".join(plan.notes))
 
@@ -232,7 +248,7 @@ class TestCodeDeliveryPlan(unittest.TestCase):
     def test_escalation_after_flood(self):
         base = resolve_code_delivery_plan(_config(), _profile())
         escalated = escalation_plan_after_published_flood(base)
-        self.assertTrue(escalated.attach_push_token)
+        self.assertFalse(escalated.attach_push_token)
         self.assertTrue(escalated.should_request_push_token)
         self.assertFalse(escalated.can_escalate_on_published_flood)
         self.assertEqual(escalated.allow_app_hash, base.allow_app_hash)
@@ -252,7 +268,7 @@ class TestCodeDeliveryPlan(unittest.TestCase):
         )
         self.assertEqual(plan.effective_mode, CODE_DELIVERY_PUSH_REQUIRED)
         self.assertTrue(plan.should_request_push_token)
-        self.assertTrue(plan.attach_push_token)
+        self.assertFalse(plan.attach_push_token)
         self.assertTrue(plan.use_published_api_id)
         self.assertTrue(any("误判" in n for n in plan.notes))
 
@@ -283,7 +299,7 @@ class TestCodeDeliveryPlan(unittest.TestCase):
             ),
             _profile(api_id=4),
         )
-        self.assertTrue(prior.attach_push_token)
+        self.assertFalse(prior.attach_push_token)
         fallen_back = {
             "api_id": 35337905,
             "api_hash": "deadbeefcafebabe",
@@ -314,7 +330,7 @@ class TestCodeDeliveryPlan(unittest.TestCase):
             cfg, {**_profile(api_id=6), "credential_source": "official"}, prior
         )
         self.assertIs(same, prior)
-        self.assertTrue(same.attach_push_token)
+        self.assertFalse(same.attach_push_token)
 
 class TestBuildCodeSettings(unittest.TestCase):
     def test_sms_first_settings_no_token(self):
@@ -328,15 +344,27 @@ class TestBuildCodeSettings(unittest.TestCase):
         self.assertFalse(cs.token)
         self.assertIsNone(cs.app_sandbox)
 
-    def test_push_required_settings_with_token(self):
+    def test_push_required_android_does_not_put_fcm_in_ios_slot(self):
         cs = RegistrationOrchestrator._build_code_settings(
             "FCM_TOKEN",
             allow_app_hash=True,
             attach_push_token=True,
+            profile={"app_device": "Android", "lang_pack": "android"},
         )
         self.assertTrue(cs.allow_app_hash)
-        self.assertEqual(cs.token, "FCM_TOKEN")
-        self.assertFalse(cs.app_sandbox)
+        self.assertFalse(cs.token)
+        self.assertIsNone(cs.app_sandbox)
+
+    def test_push_required_ios_keeps_apns_token(self):
+        token = "a" * 64
+        cs = RegistrationOrchestrator._build_code_settings(
+            token,
+            allow_app_hash=False,
+            attach_push_token=True,
+            profile={"app_device": "iOS", "device_model": "iPhone 16"},
+        )
+        self.assertEqual(cs.token, token)
+        self.assertIs(cs.app_sandbox, False)
 
 
 class TestSendCodeRespectingDeliveryPlan(unittest.IsolatedAsyncioTestCase):
@@ -408,7 +436,7 @@ class TestSendCodeRespectingDeliveryPlan(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((token, push_task_id, provider, obtained_at),
                          ("TOKEN", "push-task-1", "reghelp", 1234.5))
         self.assertEqual(out_plan.effective_mode, CODE_DELIVERY_PUSH_REQUIRED)
-        self.assertTrue(out_plan.attach_push_token)
+        self.assertFalse(out_plan.attach_push_token)
 
     async def test_flood_is_reraised_when_escalation_is_exhausted(self):
         plan = escalation_plan_after_published_flood(

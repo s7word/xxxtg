@@ -571,16 +571,17 @@
           <select v-model="config.code_delivery_mode" class="ce-select">
             <option value="balanced">balanced（默认：自建 api_id 优先 SMS，泄露 ID 需 Push）</option>
             <option value="sms_first">sms_first（始终优先 SMS，FLOOD 时再 escalate Push）</option>
-            <option value="push_required">push_required（legacy：始终 attach Push Token）</option>
+            <option value="push_required">push_required（始终申请 Push；iOS attach APNS，Android 写 InitConnection.device_token）</option>
           </select>
           <p class="ce-tiny ce-muted" style="margin-top:6px">
-            控制 auth.sendCode 是否申请并 attach REGHelp Push Token（CodeSettings.token）。
+            控制是否申请 REGHelp Push。iOS 才把 APNS 写入 <code>CodeSettings.token</code>；
+            Android FCM 只进 <code>InitConnection.params.device_token</code>，不再写文档标为 iOS 的槽。
             自建 api_id 下 balanced 会跳过 Push，提高 SentCodeTypeSms 概率。
           </p>
         </div>
         <label class="ce-check">
           <input type="checkbox" v-model="config.official_client_emulation" />
-          官方客户端模拟（官方模板 api_id + 每轮 Push attach + Email / Play Integrity / 内购快退）
+          官方客户端模拟（官方模板 api_id + 每轮申请 Push + Email / Play Integrity / 内购快退）
         </label>
         <p class="ce-tiny ce-muted">
           开启后运行时覆盖凭证与通道计划：强制官方模板 api_id/api_hash（
@@ -591,8 +592,8 @@
           （默认 SMS Bower Google 邮箱，REGHelp 候补）、
           FirebaseSms（Play Integrity）、PaymentRequired（标记需官方 App 内购并快退）。
           猎号连续 App 强制 SMS 在此模式下关闭。
-          Push attach 仍把 Android FCM 塞进文档标为 iOS 的 <code>CodeSettings.token</code>
-          （错槽兼容，<strong>不是</strong> iOS 客户端）。
+          Android FCM 走 <code>InitConnection.params.device_token</code>，
+          不再塞进文档标为 iOS 的 <code>CodeSettings.token</code>。
           <strong>vault 严格对齐开启时会钉死 api_id=4</strong>，不会漂到 6（Payment 路径）。
         </p>
         <div>
@@ -619,7 +620,7 @@
         <p class="ce-tiny ce-muted">
           <code>device_alignment_mode=strict</code>：对照 vault 成功 JSON 与俄语农场手册，发码前强制齐套
           <code>api_id=4</code> + 配对 hash、<code>device_model</code>、<code>system_version</code>、
-          <code>app_version</code>（钉 12.7.3）、<code>lang_code</code> / <code>system_lang_code</code>、
+          <code>app_version</code>（钉 12.8.3）、<code>lang_code</code> / <code>system_lang_code</code>、
           <code>lang_pack=android</code>、号国 <code>tz_offset</code>，并在
           <code>connect()</code> 前写入 InitConnection。缺字段或模拟器机型 → <strong>拒绝发码</strong>。
           非 emu 必须 attach Push；<code>SentCodeTypeApp</code> 且无 <code>next_type</code> 快丢号；
@@ -750,7 +751,7 @@
             <label class="ce-label">同一设备指纹最多 sendCode 次数</label>
             <input v-model.number="config.hunt_device_max_uses" type="number" min="1" max="50" class="ce-input mono w-sm" />
             <p class="ce-tiny ce-muted" style="margin-top:6px">
-              <code>hunt_device_max_uses</code>：达到后重采样设备并换新 Push（Push 与设备绑定，不能只换机不换 Token）。
+              <code>hunt_device_max_uses</code>：默认 1，换号必须换设备+Push，避免第 2 号复用同一 FCM。
             </p>
           </div>
         </div>
@@ -782,7 +783,7 @@ const onStrictAlignmentToggle = (checked) => {
   config.strict_vault_device_alignment = !!checked
   config.device_alignment_mode = checked ? 'strict' : 'loose'
   if (checked) {
-    config.pin_app_version_substr = config.pin_app_version_substr || '12.7.3'
+    config.pin_app_version_substr = config.pin_app_version_substr || '12.8.3'
     config.app_delivery_fast_drop = true
     config.flood_rotate_push_token = true
   }

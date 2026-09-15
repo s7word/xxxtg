@@ -460,7 +460,7 @@ class TestIosPhReservePack(unittest.TestCase):
         public_rows = synthesize_rows("pt", 12, seed=3, app_type="telegram_android_public")
         validate_android_rows(public_rows, "pt")
         self.assertTrue(all(int(row["api_id"]) == 4 for row in public_rows))
-        self.assertTrue(all(row["app_version"] == "12.7.3 (67509)" for row in public_rows))
+        self.assertTrue(all(row["app_version"] == "12.8.3 (69222)" for row in public_rows))
         x_rows = synthesize_rows("pt", 12, seed=4, app_type="telegram_x")
         validate_android_rows(x_rows, "pt")
         self.assertTrue(all(int(row["api_id"]) == 21724 for row in x_rows))

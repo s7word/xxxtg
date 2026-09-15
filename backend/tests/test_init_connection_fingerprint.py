@@ -26,6 +26,7 @@ from backend.app.services.device_profile import (  # noqa: E402
 from backend.app.services.init_connection import (  # noqa: E402
     apply_init_connection_overrides,
     describe_init_connection,
+    inspect_init_param_keys,
     inspect_tz_offset,
 )
 
@@ -93,6 +94,39 @@ class TestInitConnectionOverrides(unittest.TestCase):
         self.assertEqual(inspect_tz_offset(client._init_request.params), 19800)
         self.assertIn("lang_pack=android", describe_init_connection(client))
         self.assertIn("tz_offset=19800", describe_init_connection(client))
+        self.assertEqual(
+            inspect_init_param_keys(client._init_request.params),
+            ["tz_offset", "package_id"],
+        )
+
+    def test_android_writes_package_id_and_device_token_not_codesettings_slot(self):
+        client = FakeClient()
+        apply_init_connection_overrides(
+            client,
+            {
+                "lang_pack": "android",
+                "tz_offset": 0,
+                "app_device": "Android",
+                "api_id": 4,
+            },
+            SimpleNamespace(
+                init_connection_set_lang_pack=True,
+                init_connection_set_tz_offset=True,
+                init_connection_tz_offset_override=None,
+            ),
+            push_token="dGVzdA:APA91" + ("x" * 140),
+        )
+        keys = inspect_init_param_keys(client._init_request.params)
+        self.assertEqual(keys, ["tz_offset", "package_id", "device_token"])
+        values = {
+            item.key: getattr(item.value, "value", None)
+            for item in client._init_request.params.value
+        }
+        self.assertEqual(values["package_id"], "org.telegram.messenger")
+        self.assertTrue(str(values["device_token"]).startswith("dGVzdA:APA91"))
+        self.assertNotIn("bundleId", keys)
+        self.assertNotIn("perf_cat", keys)
+        self.assertNotIn("installer", keys)
 
     def test_tz_override_chile_default(self):
         client = FakeClient()
