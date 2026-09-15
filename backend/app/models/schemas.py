@@ -232,7 +232,7 @@ class AppConfigModel(BaseModel):
         description=(
             "API 凭证选择策略: "
             "official (始终使用官方内置 api_id/api_hash，需要有效 Push Token 才能规避 API_ID_PUBLISHED_FLOOD) / "
-            "custom (始终强制使用下方自建开发者 api_id/api_hash) / "
+            "custom (不再覆盖 Android / iOS 的 App ID 与设备参数；自建栏不干预指纹包) / "
             "auto (优先按官方 ID 申请 Push；若本次未拿到 Token 且官方 ID 已泄露，"
             "则回退到自建开发者 ID 并按该凭证重算通道计划，避免仍按「必须 attach」裸发失败)"
         )
@@ -1821,6 +1821,10 @@ class DeviceDbPack(BaseModel):
     country: Optional[str] = None
     country_name: Optional[str] = None
     platform: str = Field(default="android", description="android 或 ios；两套调度互不混抽")
+    app_type: Optional[str] = Field(
+        default=None,
+        description="Android 合成途径：telegram_android / telegram_android_public / telegram_x / telegram_9",
+    )
     enabled: bool = True
     source: str = Field(default="upload", description="upload / generated / imported")
     sample_count: int = 0
@@ -1866,6 +1870,14 @@ class DeviceDbToggleRequest(BaseModel):
 class DeviceDbGenerateRequest(BaseModel):
     country: str = Field(..., description="目标国家 ISO-2，如 cl / id / pt")
     platform: str = Field(default="ios", description="ios 或 android；默认 iOS")
+    app_type: Optional[str] = Field(
+        default=None,
+        description=(
+            "仅 Android：与 AntiSafety AID 对齐的模板 "
+            "telegram_android(api_id=6) / telegram_android_public(4) / "
+            "telegram_x(21724) / telegram_9(6)"
+        ),
+    )
     count: int = Field(default=48, ge=8, le=5000, description="合成样本条数")
     alias: Optional[str] = Field(default=None, description="生成后的展示别名")
     enabled: bool = Field(default=True, description="生成后是否立即投入调度")

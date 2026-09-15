@@ -597,6 +597,14 @@ def compute_stats(rows: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
+def pack_android_app_type(item: Optional[Dict[str, Any]] = None) -> str:
+    item = item or {}
+    raw = str(item.get("app_type") or "").strip()
+    if raw:
+        return raw
+    return "telegram_android"
+
+
 def infer_pack_platform(item: Optional[Dict[str, Any]] = None) -> str:
     item = item or {}
     raw = str(item.get("platform") or "").strip().lower()
@@ -755,11 +763,12 @@ class DeviceDbManager:
         stats: Dict[str, Any],
         enabled: bool = True,
         platform: str = "android",
+        app_type: Optional[str] = None,
     ) -> Dict[str, Any]:
         now = _utc_now()
         resolved_platform = str(platform or infer_pack_platform({"stats": stats}) or "android")
         quality = assess_quality(stats, country, platform=resolved_platform)
-        return {
+        item = {
             "id": uuid.uuid4().hex,
             "origin_name": origin_name,
             "stored_name": stored_name,
@@ -775,6 +784,9 @@ class DeviceDbManager:
             "created_at": now,
             "updated_at": now,
         }
+        if resolved_platform != "ios" and app_type:
+            item["app_type"] = str(app_type).strip()
+        return item
 
     @classmethod
     def list_packs(cls, root: Optional[Path] = None) -> List[Dict[str, Any]]:
@@ -871,6 +883,7 @@ class DeviceDbManager:
         enabled: bool = True,
         root: Optional[Path] = None,
         platform: str = "android",
+        app_type: Optional[str] = None,
     ) -> Dict[str, Any]:
         stored = Path(db_path).name
         item = cls._new_item(
@@ -882,6 +895,7 @@ class DeviceDbManager:
             stats=stats,
             enabled=enabled,
             platform=platform,
+            app_type=app_type,
         )
         with _LOCK:
             catalog = cls.ensure_ready(root)
@@ -987,6 +1001,7 @@ class DeviceDbManager:
         country: Optional[str] = None,
         root: Optional[Path] = None,
         platform: str = "android",
+        app_type: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         code = normalize_country(country) if country else None
         want = str(platform or "android").strip().lower() or "android"
@@ -995,8 +1010,10 @@ class DeviceDbManager:
             if item.get("enabled") and infer_pack_platform(item) == want
         ]
         if code:
-            matched = [item for item in packs if item.get("country") == code]
-            return matched
+            packs = [item for item in packs if item.get("country") == code]
+        want_type = str(app_type or "").strip()
+        if want == "android" and want_type:
+            return [item for item in packs if pack_android_app_type(item) == want_type]
         return packs
 
     @classmethod
@@ -1031,6 +1048,7 @@ class DeviceDbManager:
         country: Optional[str],
         root: Optional[Path] = None,
         count: int = AUTO_ADAPT_SAMPLE_COUNT,
+        app_type: Optional[str] = None,
     ) -> Tuple[Optional[Dict[str, Any]], str, bool]:
         """确保目标国有已激活指纹包；没有则按该国规则即时合成。
 
@@ -1045,12 +1063,13 @@ class DeviceDbManager:
         import random
 
         code = normalize_country(country)
+        resolved_type = str(app_type or "telegram_android").strip() or "telegram_android"
         if not code:
             pack, match = cls.select_pack(country, root)
             return pack, match, False
 
-        with _country_ensure_lock(code):
-            matched = cls.enabled_packs(code, root, platform="android")
+        with _country_ensure_lock(f"{code}:{resolved_type}"):
+            matched = cls.enabled_packs(code, root, platform="android", app_type=resolved_type)
             if matched:
                 weights = [max(1, int(item.get("sample_count") or 1)) for item in matched]
                 return random.choices(matched, weights=weights, k=1)[0], "country", False
@@ -1066,6 +1085,7 @@ class DeviceDbManager:
                     alias=alias,
                     enabled=True,
                     root=root,
+                    app_type=resolved_type,
                 )
                 logger.info("已自动适配合成硬件指纹包 %s (%s, %s 条)", alias, code, pack.get("sample_count"))
                 return pack, "auto", True
@@ -1119,6 +1139,7 @@ class DeviceDbManager:
         root: Optional[Path] = None,
         auto_adapt: bool = True,
         platform: str = "android",
+        app_type: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         import random
 
@@ -1127,7 +1148,9 @@ class DeviceDbManager:
         if want == "ios" and auto_adapt:
             pack, match, created = cls.ensure_ios_country_pack(country, root=root)
         elif auto_adapt:
-            pack, match, created = cls.ensure_country_pack(country, root=root)
+            pack, match, created = cls.ensure_country_pack(
+                country, root=root, app_type=app_type
+            )
         else:
             pack, match = cls.select_pack(country, root, platform=want)
         if not pack:

@@ -266,8 +266,8 @@ class TestTelegramIosProfile(unittest.TestCase):
         self.assertEqual(ios["template_api_id"], 8)
         self.assertTrue(ios["is_ios"])
         self.assertNotEqual(ios["api_id"], 35337905)
-        self.assertEqual(android["api_id"], 35337905)
-        self.assertTrue(android.get("custom_overlay"))
+        self.assertEqual(android["api_id"], 6)
+        self.assertFalse(android.get("custom_overlay"))
 
         resolved = DeviceProfileManager.resolve_effective_credentials(
             dict(DEFAULT_PROFILES["telegram_ios"]),
@@ -276,6 +276,13 @@ class TestTelegramIosProfile(unittest.TestCase):
         )
         self.assertEqual(resolved["api_id"], 8)
         self.assertEqual(resolved["credential_source"], "official")
+        android_resolved = DeviceProfileManager.resolve_effective_credentials(
+            dict(DEFAULT_PROFILES["telegram_android"]),
+            cfg,
+            has_push_token=False,
+        )
+        self.assertEqual(android_resolved["api_id"], 6)
+        self.assertNotEqual(android_resolved["api_id"], 35337905)
 
     def test_resolved_ios_profile_follows_portugal(self):
         profile = DeviceProfileManager.get_resolved_profile("telegram_ios", "pt")

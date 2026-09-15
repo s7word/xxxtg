@@ -446,12 +446,27 @@ class TestIosPhReservePack(unittest.TestCase):
         rows = synthesize_rows("pt", 24, seed=11)
         validate_android_rows(rows, "pt")
         self.assertTrue(all(row["lang_pack"] == "android" for row in rows))
-        self.assertTrue(all(int(row["api_id"]) in {4, 6} for row in rows))
+        self.assertTrue(all(int(row["api_id"]) == 6 for row in rows))
         self.assertFalse(any(str(row["device_model"]).startswith("iPhone") for row in rows))
         bad = list(rows)
         bad[0] = {**bad[0], "device_model": "iPhone 16 Pro", "lang_pack": "ios"}
         with self.assertRaises(ValueError):
             validate_android_rows(bad, "pt")
+
+    def test_android_synth_follows_antisafety_app_type(self):
+        public_rows = synthesize_rows("pt", 12, seed=3, app_type="telegram_android_public")
+        validate_android_rows(public_rows, "pt")
+        self.assertTrue(all(int(row["api_id"]) == 4 for row in public_rows))
+        self.assertTrue(all(row["app_version"] == "12.7.3 (67509)" for row in public_rows))
+        x_rows = synthesize_rows("pt", 12, seed=4, app_type="telegram_x")
+        validate_android_rows(x_rows, "pt")
+        self.assertTrue(all(int(row["api_id"]) == 21724 for row in x_rows))
+        self.assertTrue(all(row["lang_pack"] == "android_x" for row in x_rows))
+        pack = generate_country_db(
+            "pt", count=12, root=self.root, seed=6, app_type="telegram_android_public"
+        )
+        self.assertEqual(pack.get("app_type"), "telegram_android_public")
+        self.assertEqual((pack.get("generated") or {}).get("api_id"), 4)
 
     def test_purge_android_keeps_ios(self):
         generate_ios_country_db("pt", count=8, root=self.root, seed=1)

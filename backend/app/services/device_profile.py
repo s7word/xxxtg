@@ -339,19 +339,8 @@ class DeviceProfileManager:
             item["is_ios"] = key == "telegram_ios" or str(base.get("lang_pack") or "") == "ios"
             item["is_published_api_id"] = base["api_id"] in PUBLISHED_API_ID_BLOCKLIST
             item["credential_source"] = "official"
-            # Android custom 只覆盖 Android 模板。iOS 必须显示官方 api_id=8，
-            # 不能把全局 custom（室友/自建栏）盖到 iOS 卡片上。
-            if (
-                (not item["is_ios"])
-                and config.api_credential_mode == "custom"
-                and config.custom_api_id
-                and config.custom_api_hash
-            ):
-                item["api_id"] = config.custom_api_id
-                item["api_hash"] = config.custom_api_hash
-                item["is_published_api_id"] = int(config.custom_api_id) in PUBLISHED_API_ID_BLOCKLIST
-                item["credential_source"] = "custom"
-                item["custom_overlay"] = True
+            # custom 不再覆盖 Android / iOS 模板 App ID 或设备参数。
+            # 自建栏只留给 auto 回退；合成菜单按 AntiSafety 模板选官方 4/6/21724。
             result.append(item)
         return result
 
@@ -366,7 +355,7 @@ class DeviceProfileManager:
         根据 `api_credential_mode` 策略与本次 Push Token 获取结果，决定最终生效的 api_id/api_hash。
 
         - official: 始终使用模板内置的官方 api_id/api_hash (依赖 Push Token 规避 API_ID_PUBLISHED_FLOOD)
-        - custom:   始终强制使用自建开发者 api_id/api_hash
+        - custom:   不再改 Android / iOS 的 App ID 与设备参数；自建栏不盖指纹包
         - auto:     优先使用官方 ID；若本次未拿到有效 Push Token，且官方 ID 属于已知公开泄露 ID
                     (几乎必然触发 API_ID_PUBLISHED_FLOOD)，则在已配置自建凭证的前提下自动回退
         """
@@ -391,17 +380,9 @@ class DeviceProfileManager:
             return cls._finalize_credentials(resolved, config)
 
         if mode == "custom":
-            if has_custom:
-                resolved["api_id"] = int(custom_id)
-                resolved["api_hash"] = custom_hash
-                custom_published = int(custom_id) in PUBLISHED_API_ID_BLOCKLIST
-                resolved["is_published_api_id"] = custom_published
-                resolved["credential_source"] = "custom"
-                if custom_published and not has_push_token:
-                    resolved["credential_risk"] = "published_id_without_push_token"
-            else:
-                # 用户强制指定 custom 模式却未填写凭证，明确标注风险而不是静默回退
-                resolved["credential_risk"] = "custom_mode_missing_credentials"
+            # Android 设备参数与 App ID 以指纹包 / AntiSafety 模板为准，自建栏不再覆盖。
+            if is_published and not has_push_token:
+                resolved["credential_risk"] = "published_id_without_push_token"
             return cls._finalize_credentials(resolved, config)
 
         if mode == "official":
@@ -546,7 +527,11 @@ class DeviceProfileManager:
         profile["device_alignment_mode"] = "strict" if strict else "loose"
 
         sample_platform = "ios" if app_type == "telegram_ios" else "android"
-        selection = cls._manager().select_sample(country, platform=sample_platform)
+        selection = cls._manager().select_sample(
+            country,
+            platform=sample_platform,
+            app_type=None if app_type == "telegram_ios" else app_type,
+        )
         pin = "" if app_type == "telegram_ios" else strict_app_version_pin(config)
         if pin and selection:
             ver0 = str((selection.get("row") or {}).get("app_version") or "")
@@ -591,16 +576,23 @@ class DeviceProfileManager:
             profile["device_pack_match"] = match
             profile["device_pack_auto"] = bool(selection.get("created")) or match == "auto"
             if app_type in ("telegram_android", "telegram_android_public"):
-                profile["app_version"] = sampled_dev["app_version"]
-                profile["app_version_pure"] = sampled_dev["app_version_pure"]
-                profile["app_build"] = sampled_dev["app_build"]
+                if sampled_dev.get("app_version"):
+                    profile["app_version"] = sampled_dev["app_version"]
+                    profile["app_version_pure"] = sampled_dev.get("app_version_pure") or profile.get("app_version_pure")
+                    profile["app_build"] = sampled_dev.get("app_build") or profile.get("app_build")
                 sampled_id = sampled_dev.get("api_id")
-                if app_type == "telegram_android" and not strict:
-                    profile["api_id"] = sampled_id if sampled_id is not None else base["api_id"]
+                if sampled_id is not None:
+                    profile["api_id"] = sampled_id
                     profile["api_hash"] = sampled_dev.get("api_hash", base["api_hash"])
-                elif int(sampled_id or base["api_id"]) == int(base["api_id"]):
+            elif app_type in ("telegram_x", "telegram_9"):
+                sampled_id = sampled_dev.get("api_id")
+                if sampled_id is not None and int(sampled_id) == int(base["api_id"]):
                     profile["api_id"] = int(base["api_id"])
                     profile["api_hash"] = sampled_dev.get("api_hash", base["api_hash"])
+                    if sampled_dev.get("app_version"):
+                        profile["app_version"] = sampled_dev["app_version"]
+                        profile["app_version_pure"] = sampled_dev.get("app_version_pure") or profile.get("app_version_pure")
+                        profile["app_build"] = sampled_dev.get("app_build") or profile.get("app_build")
 
         force_country = bool(getattr(config, "force_country_locale", False)) or strict
         if app_type == "telegram_ios":

@@ -86,6 +86,37 @@ export const APP_TYPE_SHORTCUTS = [
   { value: 'telegram_android', label: 'Android 主版' }
 ]
 
+export const ANDROID_GENERATE_OPTIONS = [
+  {
+    value: 'telegram_android',
+    label: 'Android 主版 · api_id=6',
+    apiId: 6,
+    aidKey: 'telegram_android',
+    version: '12.x 矩阵（模板 12.9.1）'
+  },
+  {
+    value: 'telegram_android_public',
+    label: 'Android Public / vault · api_id=4',
+    apiId: 4,
+    aidKey: 'telegram_android',
+    version: '12.7.3 (67509)'
+  },
+  {
+    value: 'telegram_x',
+    label: 'Telegram X / TDLib · api_id=21724',
+    apiId: 21724,
+    aidKey: 'telegram_x',
+    version: '0.26.5.1692'
+  },
+  {
+    value: 'telegram_9',
+    label: 'Telegram 9 Legacy · api_id=6',
+    apiId: 6,
+    aidKey: 'telegram_9',
+    version: '9.6.7 (33219)'
+  }
+]
+
 export const isIosAppType = (appType) => String(appType || '').trim() === 'telegram_ios'
 
 export const maskHash = (hash) => {

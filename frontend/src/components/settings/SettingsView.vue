@@ -682,7 +682,7 @@
           <label class="ce-label">API 凭证选择策略</label>
           <select v-model="config.api_credential_mode" class="ce-select">
             <option value="auto">auto（先按官方 ID 申请 Push；未拿到且已泄露时回退自建凭证并重算通道）</option>
-            <option value="custom">custom（始终强制使用自建开发者凭证）</option>
+            <option value="custom">custom（不再覆盖 Android / iOS 的 App ID 与设备参数）</option>
             <option value="official">official（始终使用官方内置凭证，依赖 Push Token）</option>
           </select>
         </div>
@@ -699,6 +699,7 @@
         <div class="ce-alert is-warn">
           官方内置 api_id（如 4 / 6 / 21724）已被公开泄露。未附带合法 Push Token 时几乎必然返回
           <code>API_ID_PUBLISHED_FLOOD</code>。REGHelp 与 AntiSafety 密钥/网关不能交叉混用。
+          custom 模式不再改 Android / iOS 的设备参数和 App ID；合成菜单按 AntiSafety 模板写入官方配对。
         </div>
       </div>
 
