@@ -45,9 +45,13 @@ from backend.app.services.device_profile import DeviceProfileManager
 from backend.app.services.init_connection import (
     apply_init_connection_overrides,
     describe_init_connection,
+    inspect_init_param_keys,
 )
 from backend.app.services.ios_protocol import (
+    format_ios_submission_audit,
+    is_apns_hex_token,
     is_ios_profile,
+    resolve_ios_app_sandbox,
     resolve_login_email_types,
     should_migrate_to_nearest_dc,
 )
@@ -1880,6 +1884,8 @@ class RegistrationOrchestrator:
         unknown_number: bool = False,
         allow_flashcall: bool = False,
         allow_missed_call: bool = False,
+        app_sandbox: Optional[bool] = None,
+        profile: Optional[Dict[str, Any]] = None,
     ) -> types.CodeSettings:
         """构造 auth.sendCode 的 CodeSettings。
 
@@ -1897,6 +1903,16 @@ class RegistrationOrchestrator:
         通道协商与「号码非本机 SIM」标志。
         """
         token = push_token if (attach_push_token and push_token) else None
+        if token and is_ios_profile(profile) and not is_apns_hex_token(token):
+            # 禁止把 FCM / 其它形态写进官方 iOS token 槽
+            token = None
+            allow_firebase = False
+        if token:
+            sandbox = resolve_ios_app_sandbox(True) if is_ios_profile(profile) else (
+                False if app_sandbox is None else bool(app_sandbox)
+            )
+        else:
+            sandbox = None
         return types.CodeSettings(
             allow_flashcall=bool(allow_flashcall) or None,
             current_number=False,
@@ -1905,7 +1921,7 @@ class RegistrationOrchestrator:
             allow_firebase=bool(allow_firebase) or None,
             unknown_number=bool(unknown_number) or None,
             token=token,
-            app_sandbox=False if token else None,
+            app_sandbox=sandbox,
         )
 
     @staticmethod
@@ -1941,6 +1957,7 @@ class RegistrationOrchestrator:
         push_token: Optional[str],
         plan,
         code_settings,
+        client=None,
     ) -> None:
         await manager.append_log(
             task_id,
@@ -1954,21 +1971,30 @@ class RegistrationOrchestrator:
             f"unknown={'是' if getattr(code_settings, 'unknown_number', None) else '否'} "
             f"flashcall={'是' if getattr(code_settings, 'allow_flashcall', None) else '否'} "
             f"missed={'是' if getattr(code_settings, 'allow_missed_call', None) else '否'} "
+            f"app_sandbox={getattr(code_settings, 'app_sandbox', None)} "
             f"{cls._log_push_token_slot(push_token, plan, profile)}"
         )
         if is_ios_profile(profile):
-            await manager.append_log(
-                task_id,
-                "iOS sendCode 仅提交 CodeSettings."
-                "token/app_sandbox/unknown_number/allow_app_hash=否；"
-                "不提交 Play Integrity / safety_net / cert_fingerprint / signature"
+            init_keys = inspect_init_param_keys(
+                getattr(getattr(client, "_init_request", None), "params", None)
             )
+            for line in format_ios_submission_audit(
+                profile=profile,
+                push_token=push_token if (plan.attach_push_token and push_token) else None,
+                init_keys=init_keys,
+                app_sandbox=getattr(code_settings, "app_sandbox", None),
+                allow_firebase=getattr(code_settings, "allow_firebase", None),
+                allow_app_hash=getattr(code_settings, "allow_app_hash", None),
+                unknown_number=getattr(code_settings, "unknown_number", None),
+            ):
+                await manager.append_log(task_id, line)
 
     @classmethod
     def _build_code_settings_from_plan(
         cls,
         push_token: Optional[str],
         plan,
+        profile: Optional[Dict[str, Any]] = None,
     ) -> types.CodeSettings:
         return cls._build_code_settings(
             push_token,
@@ -1978,6 +2004,8 @@ class RegistrationOrchestrator:
             unknown_number=bool(getattr(plan, "unknown_number", False)),
             allow_flashcall=bool(getattr(plan, "allow_flashcall", False)),
             allow_missed_call=bool(getattr(plan, "allow_missed_call", False)),
+            app_sandbox=getattr(plan, "app_sandbox", None),
+            profile=profile,
         )
 
     @staticmethod
@@ -2819,9 +2847,9 @@ class RegistrationOrchestrator:
                     "拒绝塞进 CodeSettings.token",
                     api_id=profile.get("api_id") if isinstance(profile.get("api_id"), int) else None,
                 )
-        code_settings = cls._build_code_settings_from_plan(push_token, plan)
+        code_settings = cls._build_code_settings_from_plan(push_token, plan, profile)
         await cls._append_send_code_credential_log(
-            task_id, manager, profile, push_token, plan, code_settings
+            task_id, manager, profile, push_token, plan, code_settings, client=client
         )
         await manager.append_log(task_id, "调用 auth.sendCode 触发服务端瞬时握手挑战分发...")
         try:
@@ -2865,9 +2893,9 @@ class RegistrationOrchestrator:
                     f"FLOOD escalate 后仍未拿到 Push Token，拒绝以 api_id={api_id} 再次裸发 sendCode",
                     api_id=api_id if isinstance(api_id, int) else None,
                 )
-            code_settings = cls._build_code_settings_from_plan(push_token, plan)
+            code_settings = cls._build_code_settings_from_plan(push_token, plan, profile)
             await cls._append_send_code_credential_log(
-                task_id, manager, profile, push_token, plan, code_settings
+                task_id, manager, profile, push_token, plan, code_settings, client=client
             )
             sent_code = await cls._send_code_with_recaptcha(
                 client=client,
@@ -3677,6 +3705,15 @@ class RegistrationOrchestrator:
                     )
                 else:
                     await manager.append_log(task_id, describe_init_connection(client))
+                    if is_ios_profile(profile):
+                        for line in format_ios_submission_audit(
+                            profile=profile,
+                            push_token=push_token,
+                            init_keys=init_snap.get("param_keys") or inspect_init_param_keys(
+                                getattr(getattr(client, "_init_request", None), "params", None)
+                            ),
+                        ):
+                            await manager.append_log(task_id, line)
 
                 if not await cls._connect_mtproto(
                     client, task_id, manager, sms_svc, act_id,

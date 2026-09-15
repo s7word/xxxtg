@@ -22,6 +22,7 @@ from backend.app.services.device_alignment import (
     profile_looks_ios,
 )
 from backend.app.services.ios_protocol import (
+    ANDROID_ONLY_INIT_KEYS,
     TELEGRAM_IOS_BUNDLE_ID,
     ios_apns_device_token_b64,
 )
@@ -99,7 +100,11 @@ def build_init_connection_params(
                     value=types.JsonString(value=token_b64),
                 )
             )
-    return types.JsonObject(value=values)
+    cleaned = [
+        item for item in values
+        if str(getattr(item, "key", "") or "") not in ANDROID_ONLY_INIT_KEYS
+    ]
+    return types.JsonObject(value=cleaned)
 
 
 def describe_init_connection(client: Any) -> str:

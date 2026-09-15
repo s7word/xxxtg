@@ -13,7 +13,25 @@ if str(REPO_ROOT) not in sys.path:
 
 os.chdir(REPO_ROOT)
 
-from backend.app.services.code_delivery import profile_allows_app_hash  # noqa: E402
+from backend.app.services.code_delivery import (  # noqa: E402
+    profile_allows_app_hash,
+    resolve_code_delivery_plan,
+)
+from backend.app.services.ios_protocol import (  # noqa: E402
+    REGHELP_IOS_PUSH_APP_NAME,
+    TELEGRAM_IOS_BUNDLE_ID,
+    UNOFFICIAL_IOS_API_CANDIDATES,
+    assert_no_android_init_keys,
+    format_ios_submission_audit,
+    is_apns_hex_token,
+    ios_apns_device_token_b64,
+    reghelp_email_app_name,
+    reghelp_push_app_name,
+    resolve_ios_app_sandbox,
+    resolve_login_email_types,
+    should_migrate_to_nearest_dc,
+    skip_antisafety_for_profile,
+)
 from backend.app.services.device_alignment import (  # noqa: E402
     OFFICIAL_IOS_API_ID,
     PUSH_SLOT_IOS_APNS,
@@ -31,17 +49,6 @@ from backend.app.services.device_profile import (  # noqa: E402
 from backend.app.services.init_connection import (  # noqa: E402
     apply_init_connection_overrides,
     inspect_init_param_keys,
-)
-from backend.app.services.ios_protocol import (  # noqa: E402
-    REGHELP_IOS_PUSH_APP_NAME,
-    TELEGRAM_IOS_BUNDLE_ID,
-    UNOFFICIAL_IOS_API_CANDIDATES,
-    assert_no_android_init_keys,
-    reghelp_email_app_name,
-    reghelp_push_app_name,
-    resolve_login_email_types,
-    should_migrate_to_nearest_dc,
-    skip_antisafety_for_profile,
 )
 from backend.app.services.registrar import (  # noqa: E402
     DEFAULT_SMS_POLL_ATTEMPTS,
@@ -179,6 +186,63 @@ class TestTelegramIosProfile(unittest.TestCase):
         self.assertEqual(assert_no_android_init_keys(keys), [])
         values = {item.key: getattr(item.value, "value", None) for item in client._init_request.params.value}
         self.assertEqual(values["bundleId"], TELEGRAM_IOS_BUNDLE_ID)
+        self.assertEqual(values["device_token"], ios_apns_device_token_b64(apns))
+        self.assertNotIn("cert_fingerprint", keys)
+        self.assertNotIn("safety_net", keys)
+
+    def test_app_sandbox_is_apns_production_not_process_sandbox(self):
+        self.assertIs(resolve_ios_app_sandbox(True), False)
+        self.assertIsNone(resolve_ios_app_sandbox(False))
+        ios = DEFAULT_PROFILES["telegram_ios"]
+        plan = resolve_code_delivery_plan(
+            SimpleNamespace(
+                official_client_emulation=True,
+                code_delivery_mode="balanced",
+                code_settings_allow_firebase=True,
+                code_settings_unknown_number=True,
+            ),
+            ios,
+        )
+        self.assertFalse(plan.allow_app_hash)
+        self.assertTrue(plan.allow_firebase)
+        self.assertIs(plan.app_sandbox, False)
+        cs = RegistrationOrchestrator._build_code_settings_from_plan("a" * 64, plan, ios)
+        self.assertIs(cs.app_sandbox, False)
+        self.assertTrue(cs.allow_firebase)
+        self.assertEqual(cs.token, "a" * 64)
+
+    def test_ios_rejects_fcm_in_codesettings_token(self):
+        ios = DEFAULT_PROFILES["telegram_ios"]
+        plan = SimpleNamespace(
+            allow_app_hash=False,
+            attach_push_token=True,
+            allow_firebase=True,
+            unknown_number=True,
+            allow_flashcall=False,
+            allow_missed_call=False,
+            app_sandbox=False,
+        )
+        cs = RegistrationOrchestrator._build_code_settings_from_plan("legacy:APA91xxxx", plan, ios)
+        self.assertFalse(cs.token)
+        self.assertIsNone(cs.app_sandbox)
+        self.assertFalse(cs.allow_firebase)
+
+    def test_submission_audit_never_mentions_cert_as_submitted(self):
+        lines = format_ios_submission_audit(
+            profile=DEFAULT_PROFILES["telegram_ios"],
+            push_token="b" * 64,
+            init_keys=["tz_offset", "bundleId", "device_token"],
+            app_sandbox=False,
+            allow_firebase=True,
+            allow_app_hash=False,
+            unknown_number=True,
+        )
+        blob = "\n".join(lines)
+        self.assertIn("cert_fingerprint（Android APK 签名指纹）", blob)
+        self.assertIn("明确未提交", blob)
+        self.assertIn("APNS 生产证书", blob)
+        self.assertTrue(is_apns_hex_token("b" * 64))
+        self.assertNotIn("cert_fingerprint=unknown", blob)
 
 
 if __name__ == "__main__":
