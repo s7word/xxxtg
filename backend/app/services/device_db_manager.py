@@ -21,6 +21,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from backend.app.config import DATA_DIR, DEVICE_DBS_DIR
 from backend.app.services.device_profile import COUNTRY_LANG_MAP
+from backend.app.services.telegram_android_releases import attach_apk_version_code
 
 logger = logging.getLogger("DeviceDbCatalog")
 
@@ -479,7 +480,7 @@ def parse_app_version(raw: Any) -> Tuple[str, str, str]:
     return text, text, "69792"
 
 
-def row_to_profile(row: Tuple[Any, ...]) -> Dict[str, Any]:
+def row_to_profile(row: Tuple[Any, ...], apk_version_code: Any = None) -> Dict[str, Any]:
     app_version, pure_ver, build_code = parse_app_version(row[4])
     try:
         tz_offset = int(row[8])
@@ -493,7 +494,7 @@ def row_to_profile(row: Tuple[Any, ...]) -> Dict[str, Any]:
         api_id = int(row[0])
     except (TypeError, ValueError):
         api_id = 6
-    return {
+    profile = {
         "api_id": api_id,
         "api_hash": str(row[1] or ""),
         "system_version": str(row[2] or "SDK 33"),
@@ -507,6 +508,9 @@ def row_to_profile(row: Tuple[Any, ...]) -> Dict[str, Any]:
         "tz_offset": tz_offset,
         "perf_cat": perf_cat,
     }
+    if apk_version_code not in (None, "", 0, "0"):
+        profile["apk_version_code"] = apk_version_code
+    return attach_apk_version_code(profile)
 
 
 def _table_columns(conn: sqlite3.Connection, table: str = "REGISTRATOR") -> List[str]:
@@ -538,12 +542,18 @@ def parse_registrator_db(db_path: Path) -> List[Dict[str, Any]]:
         missing = [col for col in REGISTRATOR_COLUMNS if col not in columns]
         if missing:
             raise ValueError(f"REGISTRATOR 缺少必要列: {', '.join(missing)}")
-        cursor = conn.execute(
+        has_apk_code = "APK_VERSION_CODE" in columns
+        select_sql = (
             "SELECT APP_ID, APP_HASH, SDK, DEVICE, APP_VERSION, "
-            "LANG_CODE, SYSTEM_LANG_CODE, LANG_PACK, TZ_OFFSET, PERF_CAT "
-            "FROM REGISTRATOR"
+            "LANG_CODE, SYSTEM_LANG_CODE, LANG_PACK, TZ_OFFSET, PERF_CAT"
+            + (", APK_VERSION_CODE" if has_apk_code else "")
+            + " FROM REGISTRATOR"
         )
-        return [row_to_profile(row) for row in cursor.fetchall()]
+        rows = []
+        for raw in conn.execute(select_sql):
+            apk_code = raw[10] if has_apk_code and len(raw) > 10 else None
+            rows.append(row_to_profile(raw[:10], apk_code))
+        return rows
     finally:
         conn.close()
 

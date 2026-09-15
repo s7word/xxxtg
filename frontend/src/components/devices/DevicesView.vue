@@ -93,7 +93,8 @@
         </div>
         <p class="ce-tiny">
           iOS：16/17 系机型、iOS 18.x、App 12.9.3、<code>lang_pack=ios</code>，语言/时区跟出口国 overlay。
-          Android：真机 SKU + 国别 locale，App ID 必须与 AntiSafety AID 模板对齐；custom 自建栏不再改设备参数。
+          Android：真机 SKU + 国别 locale，主版版本只抽 APKMirror 真实矩阵。
+          REGHelp Integrity 单独传 APK <code>versionCode</code>，不是 Settings 显示 build。
         </p>
         <div class="grid-2">
           <div>

@@ -92,7 +92,7 @@ export const ANDROID_GENERATE_OPTIONS = [
     label: 'Android 主版 · api_id=6',
     apiId: 6,
     aidKey: 'telegram_android',
-    version: '12.x 矩阵（模板 12.9.1）'
+    version: 'APKMirror 10.14–12.10 真实矩阵'
   },
   {
     value: 'telegram_android_public',
@@ -106,14 +106,14 @@ export const ANDROID_GENERATE_OPTIONS = [
     label: 'Telegram X / TDLib · api_id=21724',
     apiId: 21724,
     aidKey: 'telegram_x',
-    version: '0.26.5.1692'
+    version: '0.26.5.1692 / Integrity 1692020'
   },
   {
     value: 'telegram_9',
     label: 'Telegram 9 Legacy · api_id=6',
     apiId: 6,
     aidKey: 'telegram_9',
-    version: '9.6.7 (33219)'
+    version: '9.6.7 (33632)'
   }
 ]
 

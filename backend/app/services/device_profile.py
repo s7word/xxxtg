@@ -126,6 +126,7 @@ DEFAULT_PROFILES = {
         "app_version": "12.9.1 (69792)",
         "app_version_pure": "12.9.1",
         "app_build": "69792",
+        "apk_version_code": 69792,
         "lang_pack": "android"
     },
     # 早期 Android 公开泄露凭证 (api_id=4)，vault 成功样本与严格对齐默认身份
@@ -142,6 +143,7 @@ DEFAULT_PROFILES = {
         "app_version": "12.7.3 (67509)",
         "app_version_pure": "12.7.3",
         "app_build": "67509",
+        "apk_version_code": 67509,
         "lang_pack": "android"
     },
     "telegram_x": {
@@ -157,6 +159,7 @@ DEFAULT_PROFILES = {
         "app_version": "0.26.5.1692",
         "app_version_pure": "0.26.5",
         "app_build": "1692",
+        "apk_version_code": 1692020,
         "lang_pack": "android_x"
     },
     "telegram_9": {
@@ -169,9 +172,10 @@ DEFAULT_PROFILES = {
         "app_device": "Android",
         "device_model": "Xiaomi 13",
         "system_version": "SDK 32",
-        "app_version": "9.6.7 (33219)",
+        "app_version": "9.6.7 (33632)",
         "app_version_pure": "9.6.7",
-        "app_build": "33219",
+        "app_build": "33632",
+        "apk_version_code": 33632,
         "lang_pack": "android"
     },
     # 官方 Telegram-iOS App Store 构建（build-system/verify.sh）：
@@ -580,6 +584,8 @@ class DeviceProfileManager:
                     profile["app_version"] = sampled_dev["app_version"]
                     profile["app_version_pure"] = sampled_dev.get("app_version_pure") or profile.get("app_version_pure")
                     profile["app_build"] = sampled_dev.get("app_build") or profile.get("app_build")
+                    if sampled_dev.get("apk_version_code"):
+                        profile["apk_version_code"] = sampled_dev.get("apk_version_code")
                 sampled_id = sampled_dev.get("api_id")
                 if sampled_id is not None:
                     profile["api_id"] = sampled_id
@@ -593,6 +599,8 @@ class DeviceProfileManager:
                         profile["app_version"] = sampled_dev["app_version"]
                         profile["app_version_pure"] = sampled_dev.get("app_version_pure") or profile.get("app_version_pure")
                         profile["app_build"] = sampled_dev.get("app_build") or profile.get("app_build")
+                        if sampled_dev.get("apk_version_code"):
+                            profile["apk_version_code"] = sampled_dev.get("apk_version_code")
 
         force_country = bool(getattr(config, "force_country_locale", False)) or strict
         if app_type == "telegram_ios":
@@ -619,6 +627,7 @@ class DeviceProfileManager:
                     profile["app_version"] = vault_fp["app_version"]
                     profile["app_version_pure"] = vault_fp.get("app_version_pure") or profile.get("app_version_pure")
                     profile["app_build"] = vault_fp.get("app_build") or profile.get("app_build")
+                    profile.pop("apk_version_code", None)
                 if vault_fp.get("lang_pack"):
                     profile["lang_pack"] = vault_fp["lang_pack"]
                 profile["vault_fingerprint_source"] = vault_fp.get("file")
@@ -645,6 +654,7 @@ class DeviceProfileManager:
                 profile["app_version_pure"] = pin
                 if pin == "12.7.3":
                     profile["app_build"] = "67509"
+                    profile["apk_version_code"] = 67509
                 profile["app_version_pinned"] = True
 
         if strict:
@@ -661,7 +671,12 @@ class DeviceProfileManager:
             official_id = 0
         if official_id in OFFICIAL_API_CREDENTIALS:
             profile = apply_official_api_id(profile, official_id)
-        return normalize_official_api_credentials(profile)
+        profile = normalize_official_api_credentials(profile)
+        if app_type != "telegram_ios":
+            from backend.app.services.telegram_android_releases import attach_apk_version_code
+
+            profile = attach_apk_version_code(profile)
+        return profile
 
     @classmethod
     def describe_pack_match(cls, match: str, auto_created: bool = False) -> str:

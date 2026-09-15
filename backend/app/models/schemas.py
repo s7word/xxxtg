@@ -832,6 +832,10 @@ class DeviceProfileSchema(BaseModel):
     app_version: str
     app_version_pure: str
     app_build: str
+    apk_version_code: int = Field(
+        default=0,
+        description="REGHelp Integrity 用的 APK versionCode，与 Settings 显示 build 分开存",
+    )
     lang_pack: str
     lang_code: str
     system_lang_code: str

@@ -303,6 +303,7 @@
         <div class="ce-tiny">
           对接 REGHelp Key API（<a href="https://reghelp.net" target="_blank">reghelp.net</a>）：
           GET <code>/push/getToken</code> → 轮询 <code>/push/getStatus</code>，appName/appDevice 与内置端点模板对齐。
+          Integrity 的 <code>appVersionCode</code> 走指纹里单独存的 APK versionCode（查 APKMirror），不要用显示 build。
         </div>
         <div class="ce-alert is-info">
           RecaptchaMobile 通道与 REGHelp Key 绑定：引导过程遇到 RECAPTCHA_CHECK 时自动解题，无需额外 AID。

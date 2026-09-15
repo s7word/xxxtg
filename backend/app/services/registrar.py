@@ -2170,18 +2170,10 @@ class RegistrationOrchestrator:
 
     @classmethod
     def _app_version_code(cls, profile: Optional[Dict[str, Any]]) -> int:
-        profile = profile or {}
-        for key in ("app_build", "app_version_code"):
-            val = profile.get(key)
-            if val is None:
-                continue
-            digits = "".join(ch for ch in str(val) if ch.isdigit())
-            if digits:
-                try:
-                    return int(digits)
-                except ValueError:
-                    continue
-        return 0
+        """REGHelp Integrity 的 APK versionCode。不是 Settings 显示 build。"""
+        from backend.app.services.telegram_android_releases import resolve_apk_version_code
+
+        return resolve_apk_version_code(profile)
 
     @classmethod
     async def _complete_setup_email(
