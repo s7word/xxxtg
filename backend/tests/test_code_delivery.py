@@ -93,6 +93,30 @@ class TestCodeDeliveryPlan(unittest.TestCase):
                 mode,
             )
 
+    def test_ios_number_flags_do_not_change_android_defaults(self):
+        android = resolve_code_delivery_plan(
+            _config(
+                code_settings_unknown_number=True,
+                code_settings_allow_flashcall=False,
+                code_settings_allow_missed_call=False,
+            ),
+            {"api_id": 6, "api_hash": "x", "app_device": "Android", "lang_pack": "android"},
+        )
+        ios = resolve_code_delivery_plan(
+            _config(
+                code_settings_unknown_number=True,
+                code_settings_allow_flashcall=False,
+                code_settings_allow_missed_call=False,
+            ),
+            {"api_id": 8, "api_hash": "x", "app_device": "iOS", "device_model": "iPhone 16"},
+        )
+        self.assertTrue(android.unknown_number)
+        self.assertFalse(android.allow_flashcall)
+        self.assertFalse(android.allow_missed_call)
+        self.assertFalse(ios.unknown_number)
+        self.assertTrue(ios.allow_flashcall)
+        self.assertTrue(ios.allow_missed_call)
+
     def test_hunt_streak_forces_sms_even_with_published_id(self):
         plan = resolve_code_delivery_plan(
             _config(api_credential_mode="official"),

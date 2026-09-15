@@ -95,7 +95,8 @@ STATIC_CATALOG_TYPE = "resident_static"
 RESIDENT_TG_SOURCE = "resident_tg"
 RESIDENT_TG_CATALOG = "resident_tg"
 RESIDENT_TG_PORT_START = 10000
-RESIDENT_TG_PORT_CAP = 20
+# 30 路单线不复用时需要至少 30 个 session 口；跳板已绑 10000-10999。
+RESIDENT_TG_PORT_CAP = 40
 RESIDENT_TG_TITLE_RE = re.compile(r"^([A-Za-z]{2})_tg$", re.IGNORECASE)
 API_TOOLS_TITLES = frozenset({"api-tools", "apitools"})
 STATIC_REGIONAL_POOLS: Dict[str, Dict[str, Any]] = {
@@ -779,7 +780,7 @@ def find_tg_resident_list(lists: Iterable[Dict[str, Any]], iso2: str) -> Optiona
 def resident_list_to_proxies(
     list_row: Optional[Dict[str, Any]],
     *,
-    max_ports: int = 10,
+    max_ports: int = RESIDENT_TG_PORT_CAP,
     tools_login: Optional[str] = None,
     tools_password: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
@@ -815,10 +816,10 @@ def resident_list_to_proxies(
     if iso2:
         iso2 = iso2.lower()
 
-    cap = _as_int(max_ports, 10) or 10
+    cap = _as_int(max_ports, RESIDENT_TG_PORT_CAP) or RESIDENT_TG_PORT_CAP
     cap = max(1, min(cap, RESIDENT_TG_PORT_CAP))
-    parsed_ports = parse_export_ports(list_row.get("export"), default=10)
-    n = min(parsed_ports or 10, cap, RESIDENT_TG_PORT_CAP)
+    # export.ports 只是官方下载条数。单线不复用时按 cap 展开独立 session 口。
+    n = cap
     n = max(1, n)
 
     list_id = list_row.get("id")
@@ -998,7 +999,13 @@ class ProxySellerService:
         self.api_key = (api_key or "").strip()
         self.cache_ttl = cache_ttl
         self.include_static = include_static
-        self.client = httpx.AsyncClient(timeout=30.0, follow_redirects=True)
+        # Proxy-Seller 管理 API 经常拒绝本机 IPv6（IP not allowed / 503 Engineering works）。
+        # 钉 IPv4，避免容器解析到 Cloudflare AAAA 后整表读失败、批次预分配成空。
+        self.client = httpx.AsyncClient(
+            timeout=30.0,
+            follow_redirects=True,
+            transport=httpx.AsyncHTTPTransport(local_address="0.0.0.0"),
+        )
 
     async def close(self):
         try:
@@ -1109,7 +1116,7 @@ class ProxySellerService:
                         resident_items.extend(
                             resident_list_to_proxies(
                                 row,
-                                max_ports=10,
+                                max_ports=RESIDENT_TG_PORT_CAP,
                                 tools_login=tools_login,
                                 tools_password=tools_password,
                             )

@@ -7,6 +7,7 @@ const config = reactive({
   antisafety_api_key: '',
   antisafety_aids: {
     telegram_android: '',
+    telegram_ios: '',
     telegram_x: '',
     telegram_9: ''
   },
@@ -60,6 +61,8 @@ const config = reactive({
   reghelp_connect_timeout: 6.0,
   reghelp_total_timeout: 20.0,
   attestation_provider_mode: 'reghelp_primary',
+  email_provider_mode: 'smsbower_primary',
+  email_smsbower_fallback_enabled: true,
   push_token_reuse_enabled: false,
   push_token_reuse_max_uses: 2,
   push_token_save_issued: true,

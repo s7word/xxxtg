@@ -181,6 +181,8 @@ class TestAttestationGatewayPreference(unittest.TestCase):
             self.assertEqual(gw.antisafety.api_bases, ["https://api.antisafety.net"])
             order = gw._provider_order()
             self.assertEqual([name for name, _ in order], ["reghelp", "antisafety"])
+            ios_order = gw._provider_order({"app_device": "iOS", "lang_pack": "ios", "app_name": "tgiOS"})
+            self.assertEqual([name for name, _ in ios_order], ["reghelp"])
         finally:
             asyncio.run(gw.close())
 

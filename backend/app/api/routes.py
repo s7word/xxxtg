@@ -281,6 +281,7 @@ def _device_db_list_payload(message: str = "") -> DeviceDbListResponse:
 @router.get("/device-dbs", response_model=DeviceDbListResponse, summary="列出已持久化的多国家硬件指纹包")
 async def list_device_dbs():
     DeviceDbManager.ensure_ready()
+    DeviceDbManager.ensure_ios_country_pack("ph")
     return _device_db_list_payload("已载入硬件指纹 & 拓扑库目录")
 
 

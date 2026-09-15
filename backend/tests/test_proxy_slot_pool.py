@@ -58,6 +58,14 @@ class TestBatchProxySlotPool(unittest.IsolatedAsyncioTestCase):
         second = await pool.acquire("t2")
         self.assertEqual(second["port"], port)
 
+    async def test_consume_once_does_not_return_to_queue(self):
+        pool = BatchProxySlotPool("za", [_proxy(10000), _proxy(10001)], "batch1", consume_once=True)
+        first = await pool.acquire("t1")
+        await pool.release(first, "t1")
+        second = await pool.acquire("t2")
+        self.assertNotEqual(second["port"], first["port"])
+        self.assertTrue((await ProxyLeaseRegistry.get_instance()).is_leased(first))
+
 
 def proxy_identity(proxy):
     from backend.app.services.proxyseller import proxy_identity as pi
@@ -104,6 +112,62 @@ class TestPrepareBatchProxyPool(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(limit, 2)
         self.assertEqual(pool.size, 2)
         self.assertTrue(any("降为 2" in line for line in logs))
+
+    async def test_unique_ip_skips_retired_across_batches(self):
+        cfg = type("Cfg", (), {"proxy_seller_key": "k", "proxy_unique_ip_per_task": True})()
+        first_wave = [_proxy(10000), _proxy(10001)]
+        second_wave = [_proxy(10000), _proxy(10001), _proxy(10002), _proxy(10003)]
+        with patch(
+            "backend.app.services.proxy_slot_pool._allocate_from_proxy_seller",
+            new=AsyncMock(return_value=first_wave),
+        ):
+            pool1, _, logs1 = await prepare_batch_proxy_pool(
+                batch_id="w1",
+                country="za",
+                slots=2,
+                config=cfg,
+                proxy_mode="auto",
+            )
+        self.assertTrue(pool1.consume_once)
+        self.assertTrue(any("不复用" in line for line in logs1))
+        a = await pool1.acquire("t1")
+        b = await pool1.acquire("t2")
+        await pool1.release(a, "t1")
+        await pool1.release(b, "t2")
+
+        with patch(
+            "backend.app.services.proxy_slot_pool._allocate_from_proxy_seller",
+            new=AsyncMock(return_value=second_wave),
+        ):
+            pool2, limit2, _ = await prepare_batch_proxy_pool(
+                batch_id="w2",
+                country="za",
+                slots=2,
+                config=cfg,
+                proxy_mode="auto",
+            )
+        self.assertEqual(limit2, 2)
+        c = await pool2.acquire("t3")
+        d = await pool2.acquire("t4")
+        self.assertEqual({c["port"], d["port"]}, {10002, 10003})
+
+    async def test_unique_prepare_uses_task_count_not_concurrency(self):
+        cfg = type("Cfg", (), {"proxy_seller_key": "k", "proxy_unique_ip_per_task": True})()
+        proxies = [_proxy(10000 + i) for i in range(10)]
+        with patch(
+            "backend.app.services.proxy_slot_pool._allocate_from_proxy_seller",
+            new=AsyncMock(return_value=proxies),
+        ) as alloc:
+            pool, limit, _ = await prepare_batch_proxy_pool(
+                batch_id="full",
+                country="za",
+                slots=10,
+                config=cfg,
+                proxy_mode="auto",
+            )
+        self.assertEqual(pool.size, 10)
+        self.assertEqual(limit, 10)
+        alloc.assert_awaited()
 
 
 class TestRunBatchWithSlotPool(unittest.IsolatedAsyncioTestCase):

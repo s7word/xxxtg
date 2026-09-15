@@ -38,12 +38,23 @@ from backend.app.services.device_alignment import (
     describe_push_slot,
     detect_push_slot_conflicts,
     is_strict_alignment,
+    profile_looks_ios,
     validate_strict_device_profile,
 )
 from backend.app.services.device_profile import DeviceProfileManager
 from backend.app.services.init_connection import (
     apply_init_connection_overrides,
     describe_init_connection,
+    inspect_init_param_keys,
+)
+from backend.app.services.ios_protocol import (
+    format_ios_locale_alignment,
+    format_ios_submission_audit,
+    is_apns_hex_token,
+    is_ios_profile,
+    resolve_ios_app_sandbox,
+    resolve_login_email_types,
+    should_migrate_to_nearest_dc,
 )
 from backend.app.services.vault_attestation import take_injected_device_secret
 from backend.app.services.vaksms import NoNumberAvailableError, VakSmsService, format_no_number_message
@@ -284,6 +295,15 @@ SMS_NEXT_TYPE_NAMES = frozenset({
     "CodeTypeSms",
     "SentCodeTypeSms",
 })
+# 短信窗口走尽后仍值得立刻 resendCode 的 next_type（Call/漏接来电能再给一次码）。
+RESEND_AFTER_OTP_TIMEOUT_NEXT_TYPES = frozenset({
+    "CodeTypeSms",
+    "SentCodeTypeSms",
+    "CodeTypeCall",
+    "CodeTypeMissedCall",
+    "CodeTypeFlashCall",
+})
+SMS_POLL_TIMEOUT_BUFFER_SECONDS = 30.0
 PAYMENT_REQUIRED_TYPE_NAMES = frozenset({
     "SentCodePaymentRequired",
 })
@@ -923,6 +943,37 @@ class RegistrationOrchestrator:
         if remain <= interval:
             return floor
         return min(requested, max(floor, int(remain // interval)))
+
+    @classmethod
+    def _sms_poll_attempts_for_sent_code(
+        cls,
+        sent_code: Any,
+        requested_attempts: int,
+        interval: float = SMS_POLL_INTERVAL_SECONDS,
+        extra_seconds: float = SMS_POLL_TIMEOUT_BUFFER_SECONDS,
+    ) -> int:
+        """按 Telegram sent_code.timeout 保底收码轮询次数，不被 REGHelp 退款窗口砍短。
+
+        官方 iOS 过邮箱后常见 timeout=90：30 次×4s=120s 才能覆盖 90s + 余量。
+        退款只是成本；真 SMS 号收不到码是白扫。
+        """
+        requested = max(1, int(requested_attempts or 1))
+        timeout = getattr(sent_code, "timeout", None)
+        try:
+            timeout_s = float(timeout) if timeout is not None else 0.0
+        except (TypeError, ValueError):
+            timeout_s = 0.0
+        if timeout_s <= 0:
+            return requested
+        needed = int((timeout_s + max(0.0, float(extra_seconds))) // interval)
+        return max(requested, max(1, needed))
+
+    @classmethod
+    def _next_type_allows_otp_resend(cls, sent_code: Any) -> bool:
+        name = cls._tl_type_name(getattr(sent_code, "next_type", None))
+        if not name:
+            return False
+        return name in RESEND_AFTER_OTP_TIMEOUT_NEXT_TYPES or "Sms" in name or "Call" in name
 
     @classmethod
     def _push_token_age_seconds(
@@ -1834,6 +1885,8 @@ class RegistrationOrchestrator:
         unknown_number: bool = False,
         allow_flashcall: bool = False,
         allow_missed_call: bool = False,
+        app_sandbox: Optional[bool] = None,
+        profile: Optional[Dict[str, Any]] = None,
     ) -> types.CodeSettings:
         """构造 auth.sendCode 的 CodeSettings。
 
@@ -1851,6 +1904,16 @@ class RegistrationOrchestrator:
         通道协商与「号码非本机 SIM」标志。
         """
         token = push_token if (attach_push_token and push_token) else None
+        if token and is_ios_profile(profile) and not is_apns_hex_token(token):
+            # 禁止把 FCM / 其它形态写进官方 iOS token 槽
+            token = None
+            allow_firebase = False
+        if token:
+            sandbox = resolve_ios_app_sandbox(True) if is_ios_profile(profile) else (
+                False if app_sandbox is None else bool(app_sandbox)
+            )
+        else:
+            sandbox = None
         return types.CodeSettings(
             allow_flashcall=bool(allow_flashcall) or None,
             current_number=False,
@@ -1859,7 +1922,7 @@ class RegistrationOrchestrator:
             allow_firebase=bool(allow_firebase) or None,
             unknown_number=bool(unknown_number) or None,
             token=token,
-            app_sandbox=False if token else None,
+            app_sandbox=sandbox,
         )
 
     @staticmethod
@@ -1876,10 +1939,11 @@ class RegistrationOrchestrator:
         cls,
         push_token: Optional[str],
         plan,
+        profile: Optional[Dict[str, Any]] = None,
     ) -> str:
         attached = bool(getattr(plan, "attach_push_token", False) and push_token)
-        info = classify_push_token(push_token)
-        slot = describe_push_slot(attached)
+        info = classify_push_token(push_token, profile)
+        slot = describe_push_slot(attached, profile=profile, token=push_token)
         return (
             f"push_slot={slot} token_kind={info['kind']} "
             f"token_len={info['length']} suspicious={'是' if info['suspicious'] else '否'}"
@@ -1894,6 +1958,7 @@ class RegistrationOrchestrator:
         push_token: Optional[str],
         plan,
         code_settings,
+        client=None,
     ) -> None:
         await manager.append_log(
             task_id,
@@ -1907,14 +1972,32 @@ class RegistrationOrchestrator:
             f"unknown={'是' if getattr(code_settings, 'unknown_number', None) else '否'} "
             f"flashcall={'是' if getattr(code_settings, 'allow_flashcall', None) else '否'} "
             f"missed={'是' if getattr(code_settings, 'allow_missed_call', None) else '否'} "
-            f"{cls._log_push_token_slot(push_token, plan)}"
+            f"app_sandbox={getattr(code_settings, 'app_sandbox', None)} "
+            f"{cls._log_push_token_slot(push_token, plan, profile)}"
         )
+        if is_ios_profile(profile):
+            init_keys = inspect_init_param_keys(
+                getattr(getattr(client, "_init_request", None), "params", None)
+            )
+            for line in format_ios_submission_audit(
+                profile=profile,
+                push_token=push_token if (plan.attach_push_token and push_token) else None,
+                init_keys=init_keys,
+                app_sandbox=getattr(code_settings, "app_sandbox", None),
+                allow_firebase=getattr(code_settings, "allow_firebase", None),
+                allow_app_hash=getattr(code_settings, "allow_app_hash", None),
+                unknown_number=getattr(code_settings, "unknown_number", None),
+                allow_flashcall=getattr(code_settings, "allow_flashcall", None),
+                allow_missed_call=getattr(code_settings, "allow_missed_call", None),
+            ):
+                await manager.append_log(task_id, line)
 
     @classmethod
     def _build_code_settings_from_plan(
         cls,
         push_token: Optional[str],
         plan,
+        profile: Optional[Dict[str, Any]] = None,
     ) -> types.CodeSettings:
         return cls._build_code_settings(
             push_token,
@@ -1924,6 +2007,8 @@ class RegistrationOrchestrator:
             unknown_number=bool(getattr(plan, "unknown_number", False)),
             allow_flashcall=bool(getattr(plan, "allow_flashcall", False)),
             allow_missed_call=bool(getattr(plan, "allow_missed_call", False)),
+            app_sandbox=getattr(plan, "app_sandbox", None),
+            profile=profile,
         )
 
     @staticmethod
@@ -2019,6 +2104,7 @@ class RegistrationOrchestrator:
         task_id: str,
         manager: RegistrationTaskManager,
         wait_timeout: Optional[float] = None,
+        reason: Optional[str] = None,
     ) -> Tuple[Optional[Any], Optional[Exception]]:
         """等待 next_type 冷却窗口后调用 auth.resendCode，尝试强制切换到短信通道。"""
         timeout = wait_timeout if wait_timeout is not None else getattr(sent_code, "timeout", None)
@@ -2048,6 +2134,7 @@ class RegistrationOrchestrator:
             resent = await client(functions.auth.ResendCodeRequest(
                 phone_number=phone,
                 phone_code_hash=phone_code_hash,
+                reason=reason,
             ))
         except Exception as exc:
             await manager.append_log(
@@ -2104,10 +2191,10 @@ class RegistrationOrchestrator:
         profile: Optional[Dict[str, Any]],
         emulation_label: str,
     ) -> Any:
-        """官方流程：SetUpEmailRequired → REGHelp 临时邮箱 → verifyEmail → 新 sent_code。"""
+        """官方流程：SetUpEmailRequired → 临时邮箱提供源 → verifyEmail → 新 sent_code。"""
         if bypass_svc is None or not hasattr(bypass_svc, "get_login_email"):
             raise SentCodeAppDeliveryError(
-                "SentCodeTypeSetUpEmailRequired：无 REGHelp Email 客户端，无法完成登录邮箱绑定",
+                "SentCodeTypeSetUpEmailRequired：无 Email 提供源客户端，无法完成登录邮箱绑定",
                 reason="EMAIL_SETUP_FAILED",
             )
         profile = profile or {}
@@ -2120,11 +2207,9 @@ class RegistrationOrchestrator:
         await manager.append_log(
             task_id,
             f"[{emulation_label}] 官方流程 SetUpEmailRequired：account.sendVerifyEmailCode "
-            f"(purpose=EmailVerifyPurposeLoginSetup) + REGHelp /email/getEmail",
+            f"(purpose=EmailVerifyPurposeLoginSetup) + 临时邮箱提供源",
         )
-        markers = str(profile.get("app_device") or "").lower()
-        preferred = "icloud" if "ios" in markers else "gmail"
-        types_to_try = [preferred] + [item for item in ("gmail", "icloud") if item != preferred]
+        types_to_try = resolve_login_email_types(profile, getattr(bypass_svc, "config", None))
         inbox = None
         last_err: Optional[Exception] = None
         for email_type in types_to_try:
@@ -2140,14 +2225,23 @@ class RegistrationOrchestrator:
                     break
             except Exception as exc:
                 last_err = exc
-                await manager.append_log(task_id, f"⚠️ REGHelp Email type={email_type} 失败: {exc}")
+                await manager.append_log(task_id, f"⚠️ Email type={email_type} 失败: {exc}")
                 inbox = None
         if not inbox or not getattr(inbox, "email", None):
             raise SentCodeAppDeliveryError(
-                f"REGHelp 未能提供临时邮箱: {last_err}",
+                f"未能提供临时邮箱: {last_err}",
                 reason="EMAIL_SETUP_FAILED",
             )
-        await manager.append_log(task_id, f"[{emulation_label}] 临时邮箱已就绪: {inbox.email}")
+        email_domain = ""
+        if "@" in str(inbox.email or ""):
+            email_domain = str(inbox.email).rsplit("@", 1)[-1].lower()
+        provider = getattr(bypass_svc, "last_used_email_provider", None) or "-"
+        await manager.append_log(
+            task_id,
+            f"[{emulation_label}] 临时邮箱已就绪: {inbox.email} "
+            f"(provider={provider} type={getattr(inbox, 'email_type', None) or '-'} "
+            f"domain={email_domain or '-'})"
+        )
         purpose = types.EmailVerifyPurposeLoginSetup(
             phone_number=phone,
             phone_code_hash=phone_code_hash,
@@ -2172,12 +2266,12 @@ class RegistrationOrchestrator:
                 )
             except Exception as exc:
                 raise SentCodeAppDeliveryError(
-                    f"REGHelp Email 验证码超时/失败: {exc}",
+                    f"Email 验证码超时/失败: {exc}",
                     reason="EMAIL_SETUP_FAILED",
                 ) from exc
         if not code:
             raise SentCodeAppDeliveryError(
-                "REGHelp Email 未返回验证码",
+                "Email 未返回验证码",
                 reason="EMAIL_SETUP_FAILED",
             )
         await manager.append_log(
@@ -2219,7 +2313,16 @@ class RegistrationOrchestrator:
         profile: Optional[Dict[str, Any]],
         emulation_label: str,
     ) -> None:
-        """官方流程：FirebaseSms → Play Integrity → auth.requestFirebaseSms。"""
+        """官方流程：FirebaseSms → Play Integrity → auth.requestFirebaseSms。
+
+        iOS 不走这条 Android Play Integrity 路径。
+        """
+        if is_ios_profile(profile):
+            await manager.append_log(
+                task_id,
+                f"[{emulation_label}] iOS 跳过 Play Integrity / requestFirebaseSms",
+            )
+            return
         code_type = getattr(sent_code, "type", None)
         nonce = cls._play_integrity_nonce(code_type)
         version_code = cls._app_version_code(profile)
@@ -2360,6 +2463,45 @@ class RegistrationOrchestrator:
             )
 
         if cls._is_firebase_sms(sent_code):
+            if profile_looks_ios(profile):
+                await manager.append_log(
+                    task_id,
+                    f"[{emulation_label}] iOS SentCodeTypeFirebaseSms 需要 APNS ios_push_secret；"
+                    "本机没有真机推送收件箱，立即 auth.resendCode 降级到 next_type（通常是 SMS）",
+                )
+                resent, resend_err = await cls._maybe_resend_to_sms(
+                    client=client,
+                    phone=phone,
+                    sent_code=sent_code,
+                    task_id=task_id,
+                    manager=manager,
+                    wait_timeout=0.0,
+                    reason="ios_push_secret_unavailable",
+                )
+                if resent is not None:
+                    if cls._is_firebase_sms(resent):
+                        await manager.append_log(
+                            task_id,
+                            "iOS FirebaseSms resend 后仍是 FirebaseSms，不再循环，按短信通道轮询",
+                        )
+                        return resent, DEFAULT_SMS_POLL_ATTEMPTS
+                    return await cls.resolve_sent_code_channel(
+                        client,
+                        phone,
+                        resent,
+                        task_id,
+                        manager,
+                        wait_timeout=wait_timeout,
+                        bypass_svc=bypass_svc,
+                        profile=profile,
+                        emulation_label=emulation_label,
+                        _email_depth=_email_depth,
+                    )
+                await manager.append_log(
+                    task_id,
+                    f"⚠️ iOS FirebaseSms resendCode 失败: {resend_err}，仍按短信通道轮询",
+                )
+                return sent_code, DEFAULT_SMS_POLL_ATTEMPTS
             await cls._complete_firebase_sms(
                 client=client,
                 phone=phone,
@@ -2464,7 +2606,26 @@ class RegistrationOrchestrator:
         await manager.append_log(task_id, "开始执行协议端点初始化握手序列...")
         
         nearest_dc = await client(functions.help.GetNearestDcRequest())
-        await manager.append_log(task_id, f"探测数据中心拓扑: 建议最近 DC {nearest_dc.nearest_dc}, 本地接入 DC {nearest_dc.this_dc}")
+        await manager.append_log(
+            task_id,
+            f"探测数据中心拓扑: 建议最近 DC {nearest_dc.nearest_dc}, "
+            f"本地接入 DC {nearest_dc.this_dc}"
+        )
+        if should_migrate_to_nearest_dc(profile, nearest_dc.this_dc, nearest_dc.nearest_dc):
+            await manager.append_log(
+                task_id,
+                f"GetNearestDc 按出口 IP 建议 DC{nearest_dc.nearest_dc}；"
+                f"Telethon 默认从 DC{nearest_dc.this_dc} 起连。"
+                "官方 iOS 会切到建议 DC，正在迁移以免 DC/出口地理不一致。"
+            )
+            try:
+                await client._switch_dc(int(nearest_dc.nearest_dc))
+                await manager.append_log(task_id, f"已切换到建议 DC{nearest_dc.nearest_dc}")
+            except Exception as dc_err:
+                await manager.append_log(
+                    task_id,
+                    f"⚠️ 切换到 DC{nearest_dc.nearest_dc} 失败，继续留在 DC{nearest_dc.this_dc}: {dc_err}"
+                )
         await asyncio.sleep(random.uniform(0.3, 0.7))
 
         server_config = await client(functions.help.GetConfigRequest())
@@ -2596,7 +2757,7 @@ class RegistrationOrchestrator:
             )
             if push_token:
                 push_token_obtained_at = time.monotonic()
-                info = classify_push_token(push_token)
+                info = classify_push_token(push_token, profile)
                 manager.update_task_status(
                     task_id,
                     "running",
@@ -2666,7 +2827,7 @@ class RegistrationOrchestrator:
                 api_id=api_id if isinstance(api_id, int) else None,
             )
         if plan.attach_push_token and push_token:
-            info = classify_push_token(push_token)
+            info = classify_push_token(push_token, profile)
             config = ConfigManager.get_instance().config
             conflicts = detect_push_slot_conflicts(
                 profile, push_token, attached=True
@@ -2689,9 +2850,9 @@ class RegistrationOrchestrator:
                     "拒绝塞进 CodeSettings.token",
                     api_id=profile.get("api_id") if isinstance(profile.get("api_id"), int) else None,
                 )
-        code_settings = cls._build_code_settings_from_plan(push_token, plan)
+        code_settings = cls._build_code_settings_from_plan(push_token, plan, profile)
         await cls._append_send_code_credential_log(
-            task_id, manager, profile, push_token, plan, code_settings
+            task_id, manager, profile, push_token, plan, code_settings, client=client
         )
         await manager.append_log(task_id, "调用 auth.sendCode 触发服务端瞬时握手挑战分发...")
         try:
@@ -2735,9 +2896,9 @@ class RegistrationOrchestrator:
                     f"FLOOD escalate 后仍未拿到 Push Token，拒绝以 api_id={api_id} 再次裸发 sendCode",
                     api_id=api_id if isinstance(api_id, int) else None,
                 )
-            code_settings = cls._build_code_settings_from_plan(push_token, plan)
+            code_settings = cls._build_code_settings_from_plan(push_token, plan, profile)
             await cls._append_send_code_credential_log(
-                task_id, manager, profile, push_token, plan, code_settings
+                task_id, manager, profile, push_token, plan, code_settings, client=client
             )
             sent_code = await cls._send_code_with_recaptcha(
                 client=client,
@@ -3099,7 +3260,16 @@ class RegistrationOrchestrator:
                 task_id,
                 f"[接码平台] 当前使用接码通道: {cls._sms_provider_label(sms_svc, resolved_sms_provider)}"
             )
-            await manager.append_log(task_id, f"选定端点模板: {profile['name']} (AID: {aid})")
+            if is_ios_profile(profile):
+                await manager.append_log(
+                    task_id,
+                    f"选定端点模板: {profile['name']} "
+                    f"(REGHelp appName={profile.get('app_name') or 'tgiOS'} / "
+                    f"appDevice={profile.get('app_device') or 'iOS'}；"
+                    "iOS 不使用 AntiSafety AID)"
+                )
+            else:
+                await manager.append_log(task_id, f"选定端点模板: {profile['name']} (AID: {aid})")
             pack_alias = profile.get("device_pack_alias")
             pack_country = (profile.get("device_pack_country") or "").upper()
             pack_match = profile.get("device_pack_match") or "none"
@@ -3115,7 +3285,16 @@ class RegistrationOrchestrator:
             elif pack_match == "none":
                 await manager.append_log(task_id, "硬件指纹包: 目录为空，回退端点模板默认机型")
             await manager.append_log(task_id, f"绑定硬件特征: {profile['device_model']} ({profile['system_version']}), App: {profile['app_version']}")
-            await manager.append_log(task_id, f"网络语言拓扑: {profile['system_lang_code']}, 时区偏置: {profile.get('tz_offset', -14400)}")
+            if is_ios_profile(profile):
+                await manager.append_log(
+                    task_id,
+                    format_ios_locale_alignment(country=target_country, profile=profile),
+                )
+            else:
+                await manager.append_log(
+                    task_id,
+                    f"网络语言拓扑: {profile['system_lang_code']}, 时区偏置: {profile.get('tz_offset', -14400)}",
+                )
             await manager.append_log(task_id, alignment_summary_for_log(profile, config))
             if profile.get("vault_fingerprint_source"):
                 await manager.append_log(
@@ -3374,7 +3553,9 @@ class RegistrationOrchestrator:
 
                 # 2. 端点信誉预检
                 await manager.append_log(task_id, "正在对通信句柄进行历史安全状态审计...")
-                check_data = await bypass_svc.check_phone_history(phone, aid)
+                check_data = await bypass_svc.check_phone_history(
+                    phone, aid, profile=profile
+                )
                 if check_data:
                     check_id = check_data.get("id")
                     if "BANNED" in check_data.get("statuses", []):
@@ -3526,7 +3707,9 @@ class RegistrationOrchestrator:
                     lang_code=profile["lang_code"],
                     system_lang_code=profile["system_lang_code"]
                 )
-                init_snap = apply_init_connection_overrides(client, profile, config)
+                init_snap = apply_init_connection_overrides(
+                    client, profile, config, push_token=push_token
+                )
                 if init_snap.get("blocked"):
                     await manager.append_log(
                         task_id,
@@ -3534,6 +3717,15 @@ class RegistrationOrchestrator:
                     )
                 else:
                     await manager.append_log(task_id, describe_init_connection(client))
+                    if is_ios_profile(profile):
+                        for line in format_ios_submission_audit(
+                            profile=profile,
+                            push_token=push_token,
+                            init_keys=init_snap.get("param_keys") or inspect_init_param_keys(
+                                getattr(getattr(client, "_init_request", None), "params", None)
+                            ),
+                        ):
+                            await manager.append_log(task_id, line)
 
                 if not await cls._connect_mtproto(
                     client, task_id, manager, sms_svc, act_id,
@@ -3892,13 +4084,19 @@ class RegistrationOrchestrator:
 
                 hunt_app_streak = 0
 
-                # 猎号收码保底：宁可放弃这枚 Token 的退款，也不能把真 SMS 号的
-                # OTP 窗口截到收不到码（上面已在进轮前轮换过老 Token，这里只兜底）
+                # 已经进入短信/OTP：按 Telegram timeout 保底轮询。
+                # REGHelp 180s 退款窗口不能再把 90s SMS 窗砍到 60~80s（实测 iOS 过邮箱后就是这样丢码）。
+                sms_poll_attempts = cls._sms_poll_attempts_for_sent_code(
+                    sent_code, sms_poll_attempts
+                )
+                refund_floor = sms_poll_attempts if (
+                    hunt_enabled or cls._is_sms_delivery(sent_code)
+                ) else (HUNT_MIN_SMS_POLL_ATTEMPTS if hunt_enabled else 1)
                 capped_attempts = cls._sms_poll_attempts_for_push_window(
                     sms_poll_attempts,
                     push_provider,
                     push_token_obtained_at,
-                    min_attempts=HUNT_MIN_SMS_POLL_ATTEMPTS if hunt_enabled else 1,
+                    min_attempts=refund_floor,
                 )
                 if capped_attempts < sms_poll_attempts:
                     elapsed = (
@@ -3909,6 +4107,12 @@ class RegistrationOrchestrator:
                         task_id,
                         f"[REGHelp 退款] 短信轮询由 {sms_poll_attempts} 次截断为 {capped_attempts} 次"
                         f"（Token 已签发 {elapsed:.0f}s，需在 {int(PUSH_REFUND_WINDOW_SECONDS)}s 内 setStatus）"
+                    )
+                elif cls._is_sms_delivery(sent_code):
+                    await manager.append_log(
+                        task_id,
+                        f"短信通道已确认，按 Telegram timeout 保底轮询 {sms_poll_attempts} 次"
+                        f"（约 {sms_poll_attempts * SMS_POLL_INTERVAL_SECONDS:.0f}s，不因 REGHelp 退款窗口缩短）"
                     )
                 sms_poll_attempts = capped_attempts
                 phone_code_hash = sent_code.phone_code_hash
@@ -3941,13 +4145,49 @@ class RegistrationOrchestrator:
                 )
                 return
 
-            # 7. 异步等待带外挑战证明
+            # 7. 异步等待带外挑战证明；窗口走尽且仍有 next_type 时立刻 resendCode 再等一轮
             await manager.append_log(task_id, "正在等待带外遥测通道下发瞬时挑战证明 (OTP)...")
-            sms_code = await sms_svc.wait_for_code(
-                act_id,
-                max_attempts=sms_poll_attempts,
-                log_callback=lambda msg: manager.append_log(task_id, msg)
-            )
+            sms_code = None
+            last_otp_timeout: Optional[BaseException] = None
+            for otp_round in range(2):
+                try:
+                    sms_code = await sms_svc.wait_for_code(
+                        act_id,
+                        max_attempts=sms_poll_attempts,
+                        log_callback=lambda msg: manager.append_log(task_id, msg),
+                    )
+                    last_otp_timeout = None
+                    break
+                except TimeoutError as otp_exc:
+                    last_otp_timeout = otp_exc
+                    if otp_round >= 1 or not cls._next_type_allows_otp_resend(sent_code):
+                        break
+                    next_name = cls._tl_type_name(getattr(sent_code, "next_type", None)) or "None"
+                    await manager.append_log(
+                        task_id,
+                        f"短信窗口已尽仍无码，立即 auth.resendCode 切换 next_type={next_name} 再收一轮"
+                    )
+                    resent, resend_err = await cls._maybe_resend_to_sms(
+                        client=client,
+                        phone=phone,
+                        sent_code=sent_code,
+                        task_id=task_id,
+                        manager=manager,
+                        wait_timeout=0.0,
+                    )
+                    if resent is None:
+                        await manager.append_log(
+                            task_id,
+                            f"⚠️ OTP 超时后 resendCode 失败: {resend_err}，不再空等"
+                        )
+                        break
+                    sent_code = resent
+                    phone_code_hash = getattr(resent, "phone_code_hash", None) or phone_code_hash
+                    sms_poll_attempts = cls._sms_poll_attempts_for_sent_code(
+                        resent, DEFAULT_SMS_POLL_ATTEMPTS
+                    )
+            if sms_code is None:
+                raise last_otp_timeout or TimeoutError("等待带外挑战证明超时 (NO_CODE)")
             await manager.append_log(task_id, f"带外挑战证明获取成功: {sms_code}")
 
             # 8. 状态机迁移与鉴权验证：新号 SignUp 与已存在旧号 SignIn 明确分离
@@ -4295,10 +4535,12 @@ class RegistrationOrchestrator:
 
         slot_pool = None
         if not proxy_override and not proxy_id:
+            unique_ip = bool(getattr(config, "proxy_unique_ip_per_task", False))
+            slot_need = max(limit, len(task_ids)) if unique_ip else limit
             slot_pool, pool_limit, pool_logs = await prepare_batch_proxy_pool(
                 batch_id=batch_id,
                 country=target_country,
-                slots=limit,
+                slots=slot_need,
                 config=config,
                 proxy_mode=proxy_mode,
             )

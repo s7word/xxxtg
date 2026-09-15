@@ -275,6 +275,8 @@ BRAND_PREFIXES = (
     ("nokia", "nokia"),
     ("sony", "sony"),
     ("lg", "lg"),
+    ("iphone", "apple"),
+    ("ipad", "apple"),
 )
 
 _LOCK = threading.RLock()
@@ -587,7 +589,23 @@ def compute_stats(rows: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
-def assess_quality(stats: Dict[str, Any], country: Optional[str] = None) -> Dict[str, Any]:
+def infer_pack_platform(item: Optional[Dict[str, Any]] = None) -> str:
+    item = item or {}
+    raw = str(item.get("platform") or "").strip().lower()
+    if raw in {"ios", "android"}:
+        return raw
+    packs = (item.get("stats") or {}).get("lang_packs") or {}
+    keys = {str(key).lower() for key in packs if key}
+    if keys and keys <= {"ios"}:
+        return "ios"
+    return "android"
+
+
+def assess_quality(
+    stats: Dict[str, Any],
+    country: Optional[str] = None,
+    platform: Optional[str] = None,
+) -> Dict[str, Any]:
     flags: List[str] = []
     score = 100
     total = int(stats.get("total") or 0)
@@ -605,7 +623,9 @@ def assess_quality(stats: Dict[str, Any], country: Optional[str] = None) -> Dict
         flags.append("brand_monoculture")
         score -= 8
     lang_packs = stats.get("lang_packs") or {}
-    if lang_packs and "android" not in {k.lower() for k in lang_packs}:
+    pack_keys = {str(key).lower() for key in lang_packs if key}
+    expected_pack = "ios" if str(platform or "").lower() == "ios" else "android"
+    if pack_keys and expected_pack not in pack_keys:
         flags.append("unexpected_lang_pack")
         score -= 20
     if country:
@@ -724,9 +744,11 @@ class DeviceDbManager:
         source: str,
         stats: Dict[str, Any],
         enabled: bool = True,
+        platform: str = "android",
     ) -> Dict[str, Any]:
         now = _utc_now()
-        quality = assess_quality(stats, country)
+        resolved_platform = str(platform or infer_pack_platform({"stats": stats}) or "android")
+        quality = assess_quality(stats, country, platform=resolved_platform)
         return {
             "id": uuid.uuid4().hex,
             "origin_name": origin_name,
@@ -734,6 +756,7 @@ class DeviceDbManager:
             "alias": alias or origin_name,
             "country": country,
             "country_name": country_display_name(country),
+            "platform": resolved_platform,
             "enabled": bool(enabled),
             "source": source,
             "sample_count": int(stats.get("total") or 0),
@@ -837,6 +860,7 @@ class DeviceDbManager:
         stats: Dict[str, Any],
         enabled: bool = True,
         root: Optional[Path] = None,
+        platform: str = "android",
     ) -> Dict[str, Any]:
         stored = Path(db_path).name
         item = cls._new_item(
@@ -847,6 +871,7 @@ class DeviceDbManager:
             source="generated",
             stats=stats,
             enabled=enabled,
+            platform=platform,
         )
         with _LOCK:
             catalog = cls.ensure_ready(root)
@@ -933,16 +958,30 @@ class DeviceDbManager:
         return pack
 
     @classmethod
-    def enabled_packs(cls, country: Optional[str] = None, root: Optional[Path] = None) -> List[Dict[str, Any]]:
+    def enabled_packs(
+        cls,
+        country: Optional[str] = None,
+        root: Optional[Path] = None,
+        platform: str = "android",
+    ) -> List[Dict[str, Any]]:
         code = normalize_country(country) if country else None
-        packs = [item for item in cls.list_packs(root) if item.get("enabled")]
+        want = str(platform or "android").strip().lower() or "android"
+        packs = [
+            item for item in cls.list_packs(root)
+            if item.get("enabled") and infer_pack_platform(item) == want
+        ]
         if code:
             matched = [item for item in packs if item.get("country") == code]
             return matched
         return packs
 
     @classmethod
-    def select_pack(cls, country: Optional[str], root: Optional[Path] = None) -> Tuple[Optional[Dict[str, Any]], str]:
+    def select_pack(
+        cls,
+        country: Optional[str],
+        root: Optional[Path] = None,
+        platform: str = "android",
+    ) -> Tuple[Optional[Dict[str, Any]], str]:
         """按目标国家挑选已激活指纹包（不合成）。
 
         返回 (pack, match_mode)：
@@ -952,11 +991,11 @@ class DeviceDbManager:
         """
         import random
 
-        matched = cls.enabled_packs(country, root)
+        matched = cls.enabled_packs(country, root, platform=platform)
         if matched:
             weights = [max(1, int(item.get("sample_count") or 1)) for item in matched]
             return random.choices(matched, weights=weights, k=1)[0], "country"
-        any_enabled = cls.enabled_packs(None, root)
+        any_enabled = cls.enabled_packs(None, root, platform=platform)
         if any_enabled:
             weights = [max(1, int(item.get("sample_count") or 1)) for item in any_enabled]
             return random.choices(any_enabled, weights=weights, k=1)[0], "fallback"
@@ -987,7 +1026,7 @@ class DeviceDbManager:
             return pack, match, False
 
         with _country_ensure_lock(code):
-            matched = cls.enabled_packs(code, root)
+            matched = cls.enabled_packs(code, root, platform="android")
             if matched:
                 weights = [max(1, int(item.get("sample_count") or 1)) for item in matched]
                 return random.choices(matched, weights=weights, k=1)[0], "country", False
@@ -1012,19 +1051,63 @@ class DeviceDbManager:
                 return pack, match, False
 
     @classmethod
+    def ensure_ios_country_pack(
+        cls,
+        country: Optional[str],
+        root: Optional[Path] = None,
+        count: int = 48,
+    ) -> Tuple[Optional[Dict[str, Any]], str, bool]:
+        """iOS 备用包：目前只自动生成 PH，且绝不走 Android 合成器。"""
+        import random
+
+        code = normalize_country(country)
+        if not code:
+            pack, match = cls.select_pack(country, root, platform="ios")
+            return pack, match, False
+        with _country_ensure_lock(f"ios:{code}"):
+            matched = cls.enabled_packs(code, root, platform="ios")
+            if matched:
+                weights = [max(1, int(item.get("sample_count") or 1)) for item in matched]
+                return random.choices(matched, weights=weights, k=1)[0], "country", False
+            if code != "ph":
+                pack, match = cls.select_pack(country, root, platform="ios")
+                return pack, match, False
+            try:
+                from backend.app.services.ios_device_catalog import generate_ios_country_db
+
+                alias = f"iOS 备用 菲律宾 PH · {int(count)}.db"
+                pack = generate_ios_country_db(
+                    country=code,
+                    count=max(8, int(count or 48)),
+                    alias=alias,
+                    enabled=True,
+                    root=root,
+                )
+                logger.info("已写入 iOS 备用指纹包 %s (%s 条)", alias, pack.get("sample_count"))
+                return pack, "auto", True
+            except Exception as exc:
+                logger.warning("生成 iOS 备用指纹包失败: %s", exc)
+                pack, match = cls.select_pack(country, root, platform="ios")
+                return pack, match, False
+
+    @classmethod
     def select_sample(
         cls,
         country: Optional[str],
         root: Optional[Path] = None,
         auto_adapt: bool = True,
+        platform: str = "android",
     ) -> Optional[Dict[str, Any]]:
         import random
 
         created = False
-        if auto_adapt:
+        want = str(platform or "android").strip().lower() or "android"
+        if want == "ios" and auto_adapt:
+            pack, match, created = cls.ensure_ios_country_pack(country, root=root)
+        elif auto_adapt:
             pack, match, created = cls.ensure_country_pack(country, root=root)
         else:
-            pack, match = cls.select_pack(country, root)
+            pack, match = cls.select_pack(country, root, platform=want)
         if not pack:
             return None
         rows = cls.load_rows(str(pack["id"]), root)

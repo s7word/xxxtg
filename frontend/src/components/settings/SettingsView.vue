@@ -452,6 +452,8 @@
         <div class="ce-tiny">
           协议与 SMS-Activate / Grizzly 兼容，Telegram 服务码 <code>tg</code>。
           将上方「当前接码提供源」切到 SMS Bower 后生效。失败路径自动 <code>setStatus=8</code> 退款。
+          同一 API Key 也提供 Telegram 用 Google 邮箱（<code>/api/mail</code>，domain=gmail.com），
+          供官方模拟 <code>SetUpEmailRequired</code> 使用。
         </div>
         <div v-if="testResults.smsbower" class="ce-alert" :class="testResults.smsbower.success ? 'is-ok' : 'is-danger'">
           <div>{{ testResults.smsbower.message }}</div>
@@ -563,13 +565,27 @@
           <code>telegram_android</code>=6，<code>telegram_android_public</code>=4，
           <code>telegram_x</code>=21724）、push_required，并在
           <code>connect()</code> 前写入 InitConnection（<code>lang_pack=android</code> /
-          <code>android_x</code> + 号国 tz）。处理 SetUpEmailRequired（REGHelp Email）、
+          <code>android_x</code> + 号国 tz）。处理 SetUpEmailRequired
+          （默认 SMS Bower Google 邮箱，REGHelp 候补）、
           FirebaseSms（Play Integrity）、PaymentRequired（标记需官方 App 内购并快退）。
           猎号连续 App 强制 SMS 在此模式下关闭。
           Push attach 仍把 Android FCM 塞进文档标为 iOS 的 <code>CodeSettings.token</code>
           （错槽兼容，<strong>不是</strong> iOS 客户端）。
           <strong>vault 严格对齐开启时会钉死 api_id=4</strong>，不会漂到 6（Payment 路径）。
         </p>
+        <div>
+          <label class="ce-label">Email 临时邮箱调度策略</label>
+          <select v-model="config.email_provider_mode" class="ce-select">
+            <option value="smsbower_primary">smsbower_primary（SMS Bower Google 优先，REGHelp 备选）</option>
+            <option value="smsbower_only">smsbower_only（仅 SMS Bower Google 邮箱）</option>
+            <option value="reghelp_primary">reghelp_primary（REGHelp 优先，SMS Bower 备选）</option>
+            <option value="reghelp_only">reghelp_only（仅 REGHelp）</option>
+          </select>
+        </div>
+        <label class="ce-check">
+          <input type="checkbox" v-model="config.email_smsbower_fallback_enabled" />
+          Email 主源失败时自动切换候补提供源
+        </label>
         <label class="ce-check">
           <input
             type="checkbox"

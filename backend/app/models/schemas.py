@@ -140,7 +140,7 @@ class AppConfigModel(BaseModel):
     """系统全局仿真实验与节点编排配置"""
     active_app_type: str = Field(
         default="telegram_android",
-        description="当前激活的端点环境模板 (telegram_android / telegram_android_public / telegram_x / telegram_9)"
+        description="当前激活的端点环境模板 (telegram_android / telegram_android_public / telegram_ios / telegram_x / telegram_9)"
     )
     antisafety_api_key: str = Field(
         default="as2b21dc7b71b5ce8166a42c22b54566",
@@ -152,7 +152,10 @@ class AppConfigModel(BaseModel):
             "telegram_x": "47f7d612-fe1a-4167-a450-db8a52048e9c",
             "telegram_9": "59e59906-5177-4f6f-8f7e-ced3fe370997"
         },
-        description="各端点环境模板绑定的 Attestation 实例标识 (AID)"
+        description=(
+            "各 Android 端点模板绑定的 AntiSafety AID。"
+            "REGHelp 无 AID；telegram_ios 不使用 AntiSafety，不得填入 Android AID"
+        )
     )
     vak_sms_api_key: str = Field(
         default="16aa4499a3954317aaf002a55e354eed",
@@ -294,6 +297,23 @@ class AppConfigModel(BaseModel):
             "reghelp_only (仅使用 REGHelp) / antisafety_only (仅使用 AntiSafety)"
         )
     )
+    email_provider_mode: str = Field(
+        default="smsbower_primary",
+        description=(
+            "SetUpEmailRequired 临时邮箱调度策略: "
+            "smsbower_primary (SMS Bower Google 邮箱优先，REGHelp 备选，默认) / "
+            "smsbower_only (仅 SMS Bower) / "
+            "reghelp_primary (REGHelp 优先，SMS Bower 备选) / "
+            "reghelp_only (仅 REGHelp)"
+        ),
+    )
+    email_smsbower_fallback_enabled: bool = Field(
+        default=True,
+        description=(
+            "smsbower_primary / reghelp_primary 模式下，主源失败"
+            "（SERVICE_DISABLED、超时、无库存）时是否自动切换候补提供源"
+        ),
+    )
     push_token_reuse_enabled: bool = Field(
         default=False,
         description=(
@@ -326,14 +346,14 @@ class AppConfigModel(BaseModel):
         default=False,
         description=(
             "官方客户端模拟：开启后强制使用模板官方 api_id/api_hash（telegram_android 为 6，"
-            "telegram_android_public 为 4，telegram_x 为 21724）"
+            "telegram_android_public 为 4，telegram_ios 为 8，telegram_x 为 21724）"
             "并以 push_required 每轮申请并 attach REGHelp Push Token；"
-            "握手写入 InitConnection.lang_pack（android / android_x）与号国 tz_offset；"
+            "握手写入 InitConnection.lang_pack（android / ios / android_x）与号国 tz_offset；"
             "sendCode 后处理 SetUpEmailRequired / FirebaseSms / PaymentRequired，"
             "不再把非 App 通道一律当短信空等。猎号连续 App 强制 SMS 在此模式下关闭。"
-            "Push attach 仍走文档标为 iOS 的 CodeSettings.token（Android FCM 错槽兼容），"
-            "不是在跑 iOS 客户端。"
-            "vault 严格对齐开启时会覆盖为 api_id=4，避免漂到 6 触发 Payment。"
+            "Android 路径 Push 仍走文档标为 iOS 的 CodeSettings.token（FCM 错槽兼容）；"
+            "telegram_ios 路径按官方 iOS 申请 appDevice=iOS 的 Push，token 槽位对本。"
+            "vault 严格对齐只钉 Android api_id=4，不会覆盖 telegram_ios。"
         ),
     )
     device_alignment_mode: str = Field(
@@ -444,15 +464,24 @@ class AppConfigModel(BaseModel):
     )
     code_settings_unknown_number: bool = Field(
         default=True,
-        description="CodeSettings.unknown_number：接码号不是本机 SIM 时设 true。",
+        description=(
+            "CodeSettings.unknown_number：接码号不是本机 SIM 时设 true。"
+            "仅影响 Android；iOS 路径强制 false。"
+        ),
     )
     code_settings_allow_flashcall: bool = Field(
         default=False,
-        description="CodeSettings.allow_flashcall；接码网关通常收不到闪信，默认关闭。",
+        description=(
+            "CodeSettings.allow_flashcall；接码网关通常收不到闪信，Android 默认关闭。"
+            "iOS 路径强制 true（对齐已验证成功 payload）。"
+        ),
     )
     code_settings_allow_missed_call: bool = Field(
         default=False,
-        description="CodeSettings.allow_missed_call。",
+        description=(
+            "CodeSettings.allow_missed_call。Android 默认关闭；"
+            "iOS 路径强制 true（对齐已验证成功 payload）。"
+        ),
     )
     hunt_sms_first_after_app_streak: int = Field(
         default=2,
@@ -487,6 +516,13 @@ class AppConfigModel(BaseModel):
             "猎号/租号强制代理 geo 与号码国家一致。已标注异国的节点（含 fallback）拒绝使用；"
             "未标注国家的全球节点仍可用。显式指定 proxy_id / 槽位绑定除外。"
             "严格设备对齐开启时同样强制。"
+        ),
+    )
+    proxy_unique_ip_per_task: bool = Field(
+        default=False,
+        description=(
+            "每个注册任务消耗一条同国住宅单线，任务结束后不归还、跨批次也不复用。"
+            "30 路即需要至少 30 条独立 session 口。"
         ),
     )
     hunt_device_max_uses: int = Field(
@@ -713,6 +749,7 @@ class AppConfigModel(BaseModel):
         "flood_block_new_sends",
         "ignore_published_flood_window",
         "proxy_require_country_match",
+        "proxy_unique_ip_per_task",
         "code_settings_allow_firebase",
         "code_settings_unknown_number",
         "code_settings_allow_flashcall",
@@ -1769,6 +1806,7 @@ class DeviceDbPack(BaseModel):
     alias: str
     country: Optional[str] = None
     country_name: Optional[str] = None
+    platform: str = Field(default="android", description="android 或 ios；两套调度互不混抽")
     enabled: bool = True
     source: str = Field(default="upload", description="upload / generated / imported")
     sample_count: int = 0

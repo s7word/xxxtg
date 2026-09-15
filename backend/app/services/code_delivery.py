@@ -44,8 +44,14 @@ from typing import Any, Dict, List, Optional
 from backend.app.services.device_alignment import (
     VAULT_STRICT_API_ID,
     is_strict_alignment,
+    profile_looks_ios,
 )
 from backend.app.services.device_profile import PUBLISHED_API_ID_BLOCKLIST
+from backend.app.services.ios_protocol import (
+    resolve_ios_allow_firebase,
+    resolve_ios_app_sandbox,
+    resolve_ios_code_settings_number_flags,
+)
 
 CODE_DELIVERY_SMS_FIRST = "sms_first"
 CODE_DELIVERY_BALANCED = "balanced"
@@ -80,6 +86,7 @@ class CodeDeliveryPlan:
     unknown_number: bool = False
     allow_flashcall: bool = False
     allow_missed_call: bool = False
+    app_sandbox: Optional[bool] = None
     notes: tuple[str, ...] = field(default_factory=tuple)
 
     def summary_for_log(self) -> str:
@@ -100,6 +107,14 @@ class CodeDeliveryPlan:
             parts.append("allow_firebase")
         if self.unknown_number:
             parts.append("unknown_number")
+        if self.allow_flashcall:
+            parts.append("flashcall")
+        if self.allow_missed_call:
+            parts.append("missed_call")
+        if self.app_sandbox is True:
+            parts.append("app_sandbox=是(APNS沙盒证书)")
+        elif self.app_sandbox is False:
+            parts.append("app_sandbox=否(APNS生产证书)")
         return "，".join(parts)
 
 
@@ -312,6 +327,27 @@ def resolve_code_delivery_plan(
         can_escalate = False
         notes.append("push_required：申请 Push 并 attach token")
 
+    app_sandbox = False if attach else None
+    if profile_looks_ios(profile):
+        # iOS 不能复用 Android「allow_firebase = allow_app_hash」：官方 token/app_sandbox
+        # 专供 Firebase auth，有 APNS 就必须 allow_firebase=true；app_sandbox 是 APNS
+        # 生产/沙盒证书，不是 iOS 进程沙盒。
+        allow_firebase = resolve_ios_allow_firebase(attach)
+        app_sandbox = resolve_ios_app_sandbox(attach)
+        ios_number_flags = resolve_ios_code_settings_number_flags()
+        unknown_number = bool(ios_number_flags["unknown_number"])
+        allow_flashcall = bool(ios_number_flags["allow_flashcall"])
+        allow_missed_call = bool(ios_number_flags["allow_missed_call"])
+        notes.append(
+            "iOS: allow_app_hash=否；allow_firebase 跟随 APNS token；"
+            "app_sandbox=APNS生产证书(否)，不是进程沙盒"
+        )
+        notes.append(
+            "iOS CodeSettings 对齐已验证成功 payload："
+            "unknown_number=否 flashcall=是 missed=是"
+            "（grammers 注册客户端，非官方 iOS；不改 Android）"
+        )
+
     return CodeDeliveryPlan(
         mode=base_mode,
         effective_mode=effective,
@@ -328,6 +364,7 @@ def resolve_code_delivery_plan(
         unknown_number=unknown_number,
         allow_flashcall=allow_flashcall,
         allow_missed_call=allow_missed_call,
+        app_sandbox=app_sandbox,
         notes=tuple(notes),
     )
 
@@ -379,12 +416,16 @@ def reconcile_delivery_plan_after_credentials(
         unknown_number=fresh.unknown_number,
         allow_flashcall=fresh.allow_flashcall,
         allow_missed_call=fresh.allow_missed_call,
+        app_sandbox=fresh.app_sandbox,
         notes=fresh.notes + (extra,),
     )
 
 
 def escalation_plan_after_published_flood(plan: CodeDeliveryPlan) -> CodeDeliveryPlan:
     """sms_first / 强制 SMS 遇 API_ID_PUBLISHED_FLOOD 后的一次性 Push escalate。"""
+    ios_like = not plan.allow_app_hash
+    allow_firebase = resolve_ios_allow_firebase(True) if ios_like else plan.allow_firebase
+    app_sandbox = resolve_ios_app_sandbox(True) if ios_like else False
     return CodeDeliveryPlan(
         mode=plan.mode,
         effective_mode=CODE_DELIVERY_PUSH_REQUIRED,
@@ -397,9 +438,10 @@ def escalation_plan_after_published_flood(plan: CodeDeliveryPlan) -> CodeDeliver
         forced_sms=plan.forced_sms,
         official_client_emulation=plan.official_client_emulation,
         emulation_label=plan.emulation_label,
-        allow_firebase=plan.allow_firebase,
+        allow_firebase=allow_firebase,
         unknown_number=plan.unknown_number,
         allow_flashcall=plan.allow_flashcall,
         allow_missed_call=plan.allow_missed_call,
+        app_sandbox=app_sandbox,
         notes=plan.notes + ("API_ID_PUBLISHED_FLOOD → escalate 至 push_required",),
     )

@@ -71,6 +71,8 @@ PUBLISHED_API_ID_BLOCKLIST = {4, 6, 8, 10, 2040, 2100, 17349, 21724}
 OFFICIAL_API_CREDENTIALS: Dict[int, str] = {
     4: "014b35b6184100b085b0d0572f9b5103",
     6: "eb06d4abfb49dc3eeb1aeb98ae0f581e",
+    # Telegram-iOS 开源仓库 build-system/verify.sh 公开样例（languagesCategory=ios）
+    8: "7245de8e747a0d6fbe11f7cc14fcc0bb",
     21724: "3e0cb5efcd52300aec5994fdfc5bdc16",
 }
 
@@ -170,7 +172,25 @@ DEFAULT_PROFILES = {
         "app_version_pure": "9.6.7",
         "app_build": "33219",
         "lang_pack": "android"
-    }
+    },
+    # 官方 Telegram-iOS App Store 构建（build-system/verify.sh）：
+    # api_id=8 / lang_pack=ios。REGHelp Push 必须 appName=tgiOS，不是 Android 的 tg。
+    # AntiSafety 无 iOS，不绑定 AID。
+    "telegram_ios": {
+        "key": "telegram_ios",
+        "name": "MTProto iOS Official (api_id=8 / lang_pack=ios)",
+        "default_aid": "",
+        "api_id": 8,
+        "api_hash": "7245de8e747a0d6fbe11f7cc14fcc0bb",
+        "app_name": "tgiOS",
+        "app_device": "iOS",
+        "device_model": "iPhone 15 Pro",
+        "system_version": "18.6.2",
+        "app_version": "12.9.3",
+        "app_version_pure": "12.9.3",
+        "app_build": "",
+        "lang_pack": "ios",
+    },
 }
 
 _VAULT_FP_INDEX = 0
@@ -308,7 +328,10 @@ class DeviceProfileManager:
         config = ConfigManager.get_instance().config
         result = []
         for key, base in DEFAULT_PROFILES.items():
-            aid = config.antisafety_aids.get(key, base["default_aid"])
+            if key == "telegram_ios":
+                aid = ""
+            else:
+                aid = config.antisafety_aids.get(key, base.get("default_aid") or "")
             item = dict(base)
             item["aid"] = aid
             item["is_published_api_id"] = base["api_id"] in PUBLISHED_API_ID_BLOCKLIST
@@ -402,6 +425,9 @@ class DeviceProfileManager:
             current_id = int(out.get("api_id") or 0)
         except (TypeError, ValueError):
             current_id = 0
+        # iOS 官方路线（api_id=8 / lang_pack=ios）不能被 vault Android 严格对齐钉成 4
+        if current_id == 8 or str(out.get("lang_pack") or "").strip().lower() == "ios":
+            return out
         if current_id != VAULT_STRICT_API_ID:
             out = apply_official_api_id(out, VAULT_STRICT_API_ID)
             out["credential_source"] = "vault_strict_api4"
@@ -472,16 +498,25 @@ class DeviceProfileManager:
             is_strict_alignment,
             strict_app_version_pin,
         )
-        from backend.app.services.vault_attestation import attach_attestation_metadata
+        try:
+            from backend.app.services.vault_attestation import attach_attestation_metadata
+        except ImportError:
+            attach_attestation_metadata = None
 
         config = ConfigManager.get_instance().config
         strict = is_strict_alignment(config)
+        if str(app_type or "").strip() == "telegram_ios":
+            # iOS 模板与 Android vault/指纹包互斥，避免 lang_pack 被盖成 android、api_id 被钉成 4
+            strict = False
         if strict and app_type == "telegram_android":
             app_type = "telegram_android_public"
         base = DEFAULT_PROFILES.get(app_type, DEFAULT_PROFILES["telegram_android"])
-        aid = config.antisafety_aids.get(app_type) or config.antisafety_aids.get(
-            "telegram_android", base["default_aid"]
-        )
+        if str(app_type or "").strip() == "telegram_ios":
+            aid = ""
+        else:
+            aid = config.antisafety_aids.get(app_type) or config.antisafety_aids.get(
+                "telegram_android", base.get("default_aid") or ""
+            )
 
         profile = dict(base)
         profile["aid"] = aid
@@ -492,8 +527,9 @@ class DeviceProfileManager:
         profile["device_pack_auto"] = False
         profile["device_alignment_mode"] = "strict" if strict else "loose"
 
-        selection = cls._manager().select_sample(country)
-        pin = strict_app_version_pin(config)
+        sample_platform = "ios" if app_type == "telegram_ios" else "android"
+        selection = cls._manager().select_sample(country, platform=sample_platform)
+        pin = "" if app_type == "telegram_ios" else strict_app_version_pin(config)
         if pin and selection:
             ver0 = str((selection.get("row") or {}).get("app_version") or "")
             if pin in ver0:
@@ -501,7 +537,7 @@ class DeviceProfileManager:
             else:
                 matched = None
                 for _ in range(16):
-                    cand = cls._manager().select_sample(country)
+                    cand = cls._manager().select_sample(country, platform=sample_platform)
                     if not cand:
                         break
                     ver = str((cand.get("row") or {}).get("app_version") or "")
@@ -521,7 +557,8 @@ class DeviceProfileManager:
             match = selection.get("match") or "none"
             profile["device_model"] = sampled_dev["device_model"]
             profile["system_version"] = sampled_dev["system_version"]
-            profile["perf_cat"] = sampled_dev.get("perf_cat", 2)
+            if app_type != "telegram_ios":
+                profile["perf_cat"] = sampled_dev.get("perf_cat", 2)
             # 指纹包来自 Android Registrator，lang_pack 几乎总是 android。
             # telegram_x 模板是 android_x，不能被包里的 android 覆盖，否则握手与 api_id=21724 自相矛盾。
             sampled_lp = str(sampled_dev.get("lang_pack") or "").strip()
@@ -548,12 +585,19 @@ class DeviceProfileManager:
                     profile["api_hash"] = sampled_dev.get("api_hash", base["api_hash"])
 
         force_country = bool(getattr(config, "force_country_locale", False)) or strict
-        if force_country:
+        if app_type == "telegram_ios":
+            from backend.app.services.ios_protocol import apply_ios_country_locale
+
+            apply_ios_country_locale(profile, country)
+        elif force_country:
             cls._apply_locale(profile, country, None, "none")
         else:
             cls._apply_locale(profile, country, sampled_dev, match)
 
-        want_vault = bool(getattr(config, "vault_fingerprint_replay", False)) or strict
+        want_vault = (
+            app_type != "telegram_ios"
+            and (bool(getattr(config, "vault_fingerprint_replay", False)) or strict)
+        )
         if want_vault:
             vault_fp = pick_vault_fingerprint()
             if vault_fp:
@@ -596,9 +640,10 @@ class DeviceProfileManager:
         if strict:
             profile["lang_pack"] = VAULT_STRICT_LANG_PACK
             profile = apply_official_api_id(profile, VAULT_STRICT_API_ID)
-            profile = attach_attestation_metadata(
-                profile, config, source_file=profile.get("vault_fingerprint_source")
-            )
+            if attach_attestation_metadata is not None:
+                profile = attach_attestation_metadata(
+                    profile, config, source_file=profile.get("vault_fingerprint_source")
+                )
 
         try:
             official_id = int(profile.get("api_id") or 0)
