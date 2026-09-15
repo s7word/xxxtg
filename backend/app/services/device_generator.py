@@ -308,6 +308,19 @@ COUNTRY_SYNTH: Dict[str, Dict[str, Any]] = {
             "vivo": 8, "huawei": 8, "motorola": 4, "other": 10,
         },
     },
+    "pt": {
+        "name": "Portugal",
+        "locales": [
+            ("pt", "pt-pt", 86),
+            ("en", "en-gb", 8),
+            ("en", "en-us", 6),
+        ],
+        "tz_offsets": [(0, 100)],
+        "brands": {
+            "samsung": 32, "xiaomi": 16, "oppo": 10, "huawei": 8,
+            "motorola": 8, "realme": 6, "vivo": 6, "other": 14,
+        },
+    },
     "ca": {
         "name": "Canada",
         "locales": [

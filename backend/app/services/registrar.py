@@ -184,6 +184,10 @@ SYNTHETIC_IDENTITY_POOLS = {
         "first": ["Mehmet", "Ayşe", "Mustafa", "Fatma", "Ahmet", "Elif", "Emre", "Zeynep", "Yusuf", "Hatice"],
         "last": ["Yılmaz", "Kaya", "Demir", "Şahin", "Çelik", "Yıldız", "Yıldırım", "Öztürk", "Aydin", "Özdemir"]
     },
+    "pt": {
+        "first": ["João", "Maria", "Francisco", "Ana", "António", "Inês", "Miguel", "Beatriz", "Pedro", "Catarina"],
+        "last": ["Silva", "Santos", "Ferreira", "Pereira", "Oliveira", "Costa", "Rodrigues", "Martins", "Sousa", "Fernandes"]
+    },
     "in": {
         "first": ["Aarav", "Vivaan", "Aditya", "Ananya", "Diya", "Ishaan", "Kiara", "Rohan", "Priya", "Arjun"],
         "last": ["Sharma", "Patel", "Singh", "Kumar", "Gupta", "Reddy", "Nair", "Mehta", "Joshi", "Iyer"]

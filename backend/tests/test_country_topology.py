@@ -49,7 +49,7 @@ from backend.app.services.registrar import (  # noqa: E402
 REQUIRED_COUNTRIES = (
     "ca", "gb", "de", "fr", "au", "jp", "kr", "th", "vn", "ph",
     "mx", "co", "pe", "ar", "eg", "za", "ng", "ke", "ua", "uz",
-    "ae", "sa", "tr", "br", "us", "kz", "ru", "af", "cl", "in", "id",
+    "ae", "sa", "tr", "pt", "br", "us", "kz", "ru", "af", "cl", "in", "id",
 )
 
 
@@ -111,6 +111,7 @@ class TestPhoneDialIntelligence(unittest.TestCase):
             "254": "ke",
             "93": "af",
             "90": "tr",
+            "351": "pt",
             "55": "br",
         }
         for prefix, iso2 in expected.items():
@@ -145,6 +146,7 @@ class TestPhoneDialIntelligence(unittest.TestCase):
         self.assertEqual(infer_country_from_phone("+998901234567"), "uz")
         self.assertEqual(infer_country_from_phone("+971501234567"), "ae")
         self.assertEqual(infer_country_from_phone("+966501234567"), "sa")
+        self.assertEqual(infer_country_from_phone("+351912345678"), "pt")
 
     def test_canada_proxy_aliases(self):
         aliases = expand_country_aliases("ca")
@@ -215,6 +217,25 @@ class TestDeviceFingerprintSynth(unittest.TestCase):
         self.assertEqual(profile["system_lang_code"], "en-ca")
         self.assertEqual(profile["tz_offset"], -18000)
         self.assertEqual(profile["locale_source"], "country_overlay")
+
+    def test_portugal_locale_and_names(self):
+        pt = COUNTRY_LANG_MAP["pt"]
+        self.assertEqual(pt["lang_code"], "pt")
+        self.assertEqual(pt["system_lang_code"], "pt-pt")
+        self.assertEqual(pt["tz_offset"], 0)
+        self.assertEqual(pt["dial"], "351")
+        profile = {}
+        DeviceProfileManager._apply_locale(profile, "pt", None, "none")
+        self.assertEqual(profile["lang_code"], "pt")
+        self.assertEqual(profile["system_lang_code"], "pt-pt")
+        self.assertEqual(profile["tz_offset"], 0)
+        first, last = RegistrationOrchestrator._get_random_name("pt")
+        self.assertIn(first, SYNTHETIC_IDENTITY_POOLS["pt"]["first"])
+        self.assertIn(last, SYNTHETIC_IDENTITY_POOLS["pt"]["last"])
+        self.assertEqual(country_display_name("pt"), "Portugal")
+        self.assertEqual(country_display_name_zh("pt"), "葡萄牙")
+        self.assertEqual(country_dial_code("pt"), "351")
+        self.assertEqual(normalize_country("Portugal"), "pt")
 
 
 class TestCatalogHelpers(unittest.TestCase):
