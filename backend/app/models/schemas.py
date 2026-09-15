@@ -472,15 +472,17 @@ class AppConfigModel(BaseModel):
     code_settings_allow_flashcall: bool = Field(
         default=False,
         description=(
-            "CodeSettings.allow_flashcall；接码网关通常收不到闪信，Android 默认关闭。"
-            "iOS 是否开启由 ios_code_settings_call_flags 决定。"
+            "CodeSettings.allow_flashcall。官方 Android（api 4/6/21724 / official emu）"
+            "强制 true（有 SIM + 通话权限）。仅自建 api_id 的非官方 Android 读此开关。"
+            "iOS 由 ios_code_settings_call_flags 决定。"
         ),
     )
     code_settings_allow_missed_call: bool = Field(
         default=False,
         description=(
-            "CodeSettings.allow_missed_call。Android 默认关闭；"
-            "iOS 是否开启由 ios_code_settings_call_flags 决定。"
+            "CodeSettings.allow_missed_call。官方 Android 强制 true（有 SIM + 通话权限）。"
+            "仅自建 api_id 的非官方 Android 读此开关。"
+            "iOS 由 ios_code_settings_call_flags 决定。"
         ),
     )
     ios_code_settings_call_flags: str = Field(

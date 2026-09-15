@@ -43,3 +43,17 @@ class TestPhWarpEgressReport(unittest.TestCase):
         )
         self.assertEqual(row["egress_ip"], "198.51.100.22")
         self.assertEqual(row["egress_country"], "葡萄牙")
+
+    def test_credential_log_flashcall_flags(self):
+        row = enrich(
+            {},
+            {
+                "logs": [
+                    "sendCode 凭证核对: api_id=6 attach_token=否 "
+                    "firebase=是 unknown=否 flashcall=是 missed=是 app_sandbox=None",
+                ]
+            },
+        )
+        self.assertEqual(row["unknown_number"], "否")
+        self.assertEqual(row["flashcall"], "是")
+        self.assertEqual(row["missed_call"], "是")

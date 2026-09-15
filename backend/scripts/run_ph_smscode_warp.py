@@ -31,6 +31,8 @@ API_ID_RE = re.compile(r"api_id=(\d+)")
 PUSH_RE = re.compile(r"Push Token|attach_token=是|跳过 Push")
 SLOT_PORT_RE = re.compile(r"res\.proxy-seller\.com:(\d+)")
 UNKNOWN_RE = re.compile(r"unknown=([是否])")
+FLASHCALL_RE = re.compile(r"flashcall=([是否])")
+MISSED_RE = re.compile(r"missed=([是否])")
 
 # 控制台 /register/batch 的 count/concurrency 上限是 10。
 BATCH_CAP = 10
@@ -64,6 +66,8 @@ def apply_patch_for(app_type: str) -> Dict[str, Any]:
         patched["init_connection_set_lang_pack"] = True
         patched["init_connection_set_tz_offset"] = True
         patched["code_settings_unknown_number"] = False
+        patched["code_settings_allow_flashcall"] = True
+        patched["code_settings_allow_missed_call"] = True
         patched["hunt_device_max_uses"] = 1
         patched["pin_app_version_substr"] = "12.8.3"
     return patched
@@ -87,6 +91,10 @@ def enrich(row: Dict[str, Any], task: Dict[str, Any]) -> Dict[str, Any]:
     out["push_mentioned"] = bool(PUSH_RE.search(blob))
     unknowns = UNKNOWN_RE.findall(blob)
     out["unknown_number"] = unknowns[-1] if unknowns else None
+    flashcalls = FLASHCALL_RE.findall(blob)
+    out["flashcall"] = flashcalls[-1] if flashcalls else None
+    missed = MISSED_RE.findall(blob)
+    out["missed_call"] = missed[-1] if missed else None
     ports = [int(x) for x in SLOT_PORT_RE.findall(blob)]
     out["proxy_ports"] = sorted(set(ports))
     return out
@@ -187,9 +195,7 @@ def main() -> int:
                 "claim": (
                     "官方 iOS api_id=8 / lang_pack=ios"
                     if args.app_type == "telegram_ios"
-                    else "Android Public unknown_number=false + official emu"
-                    if args.app_type == "telegram_android_public"
-                    else "push_required + official emu"
+                    else "Android SIM-present flashcall/missed + official emu"
                 ),
                 "follow_task": "90aa174f",
                 "warp_hop": True,

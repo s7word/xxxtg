@@ -366,11 +366,16 @@ def resolve_code_delivery_plan(
         or predicted_api_id in {4, 6, 21724}
         or template_api_id in {4, 6, 21724}
     ):
-        # 对齐 iOS PT 10/10：官方 Android 不再把接码号标成 unknown_number。
-        # 配置开关只留给自建 api_id 的非官方 Android。
+        # 官方 Android LoginActivity：有 SIM + 通话/读通话记录权限时
+        # allow_flashcall/allow_missed_call=true；能读到本机号所以
+        # unknown_number=false；输入的接码号对不上 SIM → current_number
+        # 仍由 registrar 硬编码 false。配置开关只留给自建 api_id。
         unknown_number = False
+        allow_flashcall = True
+        allow_missed_call = True
         notes.append(
-            "Android: unknown_number=否（对齐 iOS 成功合同；官方客户端不谎称接码号未知）"
+            "Android: unknown_number=否 flashcall=是 missed=是"
+            "（有 SIM + 通话权限；输入号非本机卡，current_number=否）"
         )
 
     return CodeDeliveryPlan(
