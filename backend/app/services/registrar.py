@@ -2612,7 +2612,7 @@ class RegistrationOrchestrator:
                 task_id,
                 f"GetNearestDc 按出口 IP 建议 DC{nearest_dc.nearest_dc}；"
                 f"Telethon 默认从 DC{nearest_dc.this_dc} 起连。"
-                "官方 iOS 会切到建议 DC，正在迁移以免 DC/出口地理不一致。"
+                "官方客户端会切到建议 DC，正在迁移以免 DC/出口地理不一致。"
             )
             try:
                 await client._switch_dc(int(nearest_dc.nearest_dc))
