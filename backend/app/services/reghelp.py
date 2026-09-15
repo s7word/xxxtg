@@ -122,6 +122,9 @@ class RegHelpService:
 
         GET /integrity/getToken   {apiKey, appName, appDevice, nonce,
                                     appVersionCode, [type=std|classic], [ref], [webHook]}
+            appVersionCode 是签名 APK 的 versionCode（查 APKMirror / aapt），
+            不是 InitConnection 的显示 build。Telegram X 显示 1692，
+            arm64 APK versionCode 是 1692020。文档举例 85101930 是旧版 Telegram。
         GET /integrity/getStatus  {apiKey, id}
 
         GET /RecaptchaMobile/getToken

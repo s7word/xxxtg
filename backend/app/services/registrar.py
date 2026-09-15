@@ -2170,18 +2170,10 @@ class RegistrationOrchestrator:
 
     @classmethod
     def _app_version_code(cls, profile: Optional[Dict[str, Any]]) -> int:
-        profile = profile or {}
-        for key in ("app_build", "app_version_code"):
-            val = profile.get(key)
-            if val is None:
-                continue
-            digits = "".join(ch for ch in str(val) if ch.isdigit())
-            if digits:
-                try:
-                    return int(digits)
-                except ValueError:
-                    continue
-        return 0
+        """REGHelp Integrity 的 APK versionCode。不是 Settings 显示 build。"""
+        from backend.app.services.telegram_android_releases import resolve_apk_version_code
+
+        return resolve_apk_version_code(profile)
 
     @classmethod
     async def _complete_setup_email(
@@ -2620,7 +2612,7 @@ class RegistrationOrchestrator:
                 task_id,
                 f"GetNearestDc 按出口 IP 建议 DC{nearest_dc.nearest_dc}；"
                 f"Telethon 默认从 DC{nearest_dc.this_dc} 起连。"
-                "官方 iOS 会切到建议 DC，正在迁移以免 DC/出口地理不一致。"
+                "官方客户端会切到建议 DC，正在迁移以免 DC/出口地理不一致。"
             )
             try:
                 await client._switch_dc(int(nearest_dc.nearest_dc))
@@ -3295,9 +3287,25 @@ class RegistrationOrchestrator:
                     format_ios_locale_alignment(country=target_country, profile=profile),
                 )
             else:
+                overlay = DeviceProfileManager.infer_locale(target_country)
+                try:
+                    tz = int(profile.get("tz_offset"))
+                except (TypeError, ValueError):
+                    tz = None
+                aligned = (
+                    str(profile.get("lang_code") or "").lower()
+                    == str(overlay.get("lang_code") or "").lower()
+                    and str(profile.get("system_lang_code") or "").lower()
+                    == str(overlay.get("system_lang_code") or "").lower()
+                    and tz == int(overlay.get("tz_offset") or 0)
+                )
                 await manager.append_log(
                     task_id,
-                    f"网络语言拓扑: {profile['system_lang_code']}, 时区偏置: {profile.get('tz_offset', -14400)}",
+                    f"语言/时区/出口对齐: country={target_country.upper()} "
+                    f"lang={profile.get('lang_code')} system_lang={profile.get('system_lang_code')} "
+                    f"tz={profile.get('tz_offset')} source={profile.get('locale_source') or 'unknown'} "
+                    f"aligned={'是' if aligned else '否'} "
+                    f"(Android 小写 locale；对照 iOS 合同是同一套出口国 overlay)",
                 )
             await manager.append_log(task_id, alignment_summary_for_log(profile, config))
             if profile.get("vault_fingerprint_source"):

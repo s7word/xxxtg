@@ -169,8 +169,18 @@ def resolve_login_email_types(
 
 
 def should_migrate_to_nearest_dc(profile: Optional[Dict[str, Any]], this_dc: Any, nearest_dc: Any) -> bool:
-    """官方 iOS 会按 GetNearestDc 切到建议 DC。Telethon 默认从 DC2 起连。"""
-    if not is_ios_profile(profile):
+    """官方客户端按 GetNearestDc 切到建议 DC。Telethon 默认从 DC2 起连。
+
+    iOS 葡萄牙 10/10 依赖此切到 DC4。官方 Android（api_id 4/6/21724）同样不能钉死 DC2，
+    否则和 iOS 成功对照只差「平台」时，其实还差一个数据中心。
+    """
+    from backend.app.services.device_alignment import OFFICIAL_INIT_API_IDS
+
+    try:
+        api_id = int((profile or {}).get("api_id") or 0)
+    except (TypeError, ValueError):
+        api_id = 0
+    if not (is_ios_profile(profile) or api_id in OFFICIAL_INIT_API_IDS):
         return False
     try:
         current = int(this_dc)

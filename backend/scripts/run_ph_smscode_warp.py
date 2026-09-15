@@ -49,6 +49,20 @@ APPLY = {
 }
 
 
+def apply_patch_for(app_type: str) -> Dict[str, Any]:
+    """iOS 成功对照走 REGHelp；Android Public 对齐同一套出口/握手，不先打 AntiSafety。"""
+    patched = dict(APPLY)
+    patched["active_app_type"] = app_type
+    if app_type == "telegram_ios":
+        patched["attestation_provider_mode"] = "reghelp_primary"
+    elif app_type == "telegram_android_public":
+        patched["attestation_provider_mode"] = "reghelp_primary"
+        patched["force_country_locale"] = True
+        patched["init_connection_set_lang_pack"] = True
+        patched["init_connection_set_tz_offset"] = True
+    return patched
+
+
 def enrich(row: Dict[str, Any], task: Dict[str, Any]) -> Dict[str, Any]:
     blob = "\n".join(task.get("logs") or [])
     align = ALIGN_RE.search(blob)
@@ -118,8 +132,7 @@ def main() -> int:
     client = ApiClient(args.base, args.user, args.password or None)
     snapshot = client.get_config()
     patched = dict(snapshot)
-    patched.update(APPLY)
-    patched["active_app_type"] = args.app_type
+    patched.update(apply_patch_for(args.app_type))
     client.put_config(patched)
     saved = client.get_config()
     print(
