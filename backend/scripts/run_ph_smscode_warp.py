@@ -29,6 +29,7 @@ ORIGIN_RE = re.compile(r"成功从 (.+?) 自动匹配到")
 API_ID_RE = re.compile(r"api_id=(\d+)")
 PUSH_RE = re.compile(r"Push Token|attach_token=是|跳过 Push")
 SLOT_PORT_RE = re.compile(r"res\.proxy-seller\.com:(\d+)")
+UNKNOWN_RE = re.compile(r"unknown=([是否])")
 
 # 控制台 /register/batch 的 count/concurrency 上限是 10。
 BATCH_CAP = 10
@@ -60,6 +61,7 @@ def apply_patch_for(app_type: str) -> Dict[str, Any]:
         patched["force_country_locale"] = True
         patched["init_connection_set_lang_pack"] = True
         patched["init_connection_set_tz_offset"] = True
+        patched["code_settings_unknown_number"] = False
     return patched
 
 
@@ -77,6 +79,8 @@ def enrich(row: Dict[str, Any], task: Dict[str, Any]) -> Dict[str, Any]:
     api_ids = API_ID_RE.findall(blob)
     out["api_ids"] = sorted({int(x) for x in api_ids}) if api_ids else []
     out["push_mentioned"] = bool(PUSH_RE.search(blob))
+    unknowns = UNKNOWN_RE.findall(blob)
+    out["unknown_number"] = unknowns[-1] if unknowns else None
     ports = [int(x) for x in SLOT_PORT_RE.findall(blob)]
     out["proxy_ports"] = sorted(set(ports))
     return out
@@ -177,6 +181,8 @@ def main() -> int:
                 "claim": (
                     "官方 iOS api_id=8 / lang_pack=ios"
                     if args.app_type == "telegram_ios"
+                    else "Android Public unknown_number=false + official emu"
+                    if args.app_type == "telegram_android_public"
                     else "push_required + official emu"
                 ),
                 "follow_task": "90aa174f",

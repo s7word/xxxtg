@@ -463,10 +463,10 @@ class AppConfigModel(BaseModel):
         description="auth.sendCode CodeSettings.allow_firebase。官方 Android 为 true。",
     )
     code_settings_unknown_number: bool = Field(
-        default=True,
+        default=False,
         description=(
-            "CodeSettings.unknown_number：接码号不是本机 SIM 时设 true。"
-            "仅影响 Android；iOS 路径强制 false。"
+            "CodeSettings.unknown_number。官方 Android / iOS 都强制 false"
+            "（对齐 iOS PT 10/10）。仅自建 api_id 的非官方 Android 可读此开关。"
         ),
     )
     code_settings_allow_flashcall: bool = Field(

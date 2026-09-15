@@ -44,6 +44,7 @@ from typing import Any, Dict, List, Optional
 from backend.app.services.device_alignment import (
     VAULT_STRICT_API_ID,
     is_strict_alignment,
+    profile_looks_android,
     profile_looks_ios,
 )
 from backend.app.services.device_profile import PUBLISHED_API_ID_BLOCKLIST
@@ -309,7 +310,7 @@ def resolve_code_delivery_plan(
     # allow_app_hash 只跟设备平台走：它协商短信正文里的 app hash，不选择投递通道
     allow_app_hash = profile_allows_app_hash(profile)
     allow_firebase = bool(getattr(config, "code_settings_allow_firebase", True)) and allow_app_hash
-    unknown_number = bool(getattr(config, "code_settings_unknown_number", True))
+    unknown_number = bool(getattr(config, "code_settings_unknown_number", False))
     allow_flashcall = bool(getattr(config, "code_settings_allow_flashcall", False))
     allow_missed_call = bool(getattr(config, "code_settings_allow_missed_call", False))
 
@@ -350,7 +351,18 @@ def resolve_code_delivery_plan(
             f"iOS CodeSettings call_flags={call_mode}："
             f"unknown_number=否 flashcall={'是' if allow_flashcall else '否'} "
             f"missed={'是' if allow_missed_call else '否'}"
-            "（unknown 固定否；闪信/漏接可 A/B，不改 Android）"
+            "（unknown 固定否；闪信/漏接可 A/B）"
+        )
+    elif profile_looks_android(profile) and (
+        official_emu
+        or predicted_api_id in {4, 6, 21724}
+        or template_api_id in {4, 6, 21724}
+    ):
+        # 对齐 iOS PT 10/10：官方 Android 不再把接码号标成 unknown_number。
+        # 配置开关只留给自建 api_id 的非官方 Android。
+        unknown_number = False
+        notes.append(
+            "Android: unknown_number=否（对齐 iOS 成功合同；官方客户端不谎称接码号未知）"
         )
 
     return CodeDeliveryPlan(
