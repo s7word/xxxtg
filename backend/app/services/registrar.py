@@ -1906,6 +1906,7 @@ class RegistrationOrchestrator:
         unknown_number: bool = False,
         allow_flashcall: bool = False,
         allow_missed_call: bool = False,
+        current_number: bool = False,
         app_sandbox: Optional[bool] = None,
         profile: Optional[Dict[str, Any]] = None,
     ) -> types.CodeSettings:
@@ -1937,8 +1938,7 @@ class RegistrationOrchestrator:
             sandbox = None
         return types.CodeSettings(
             allow_flashcall=bool(allow_flashcall) or None,
-            # 官方有 SIM 但输入号不是本机卡：current_number 必须 false。
-            current_number=False,
+            current_number=bool(current_number) or None,
             allow_app_hash=allow_app_hash,
             allow_missed_call=bool(allow_missed_call) or None,
             allow_firebase=bool(allow_firebase) or None,
@@ -1994,6 +1994,8 @@ class RegistrationOrchestrator:
             f"unknown={'是' if getattr(code_settings, 'unknown_number', None) else '否'} "
             f"flashcall={'是' if getattr(code_settings, 'allow_flashcall', None) else '否'} "
             f"missed={'是' if getattr(code_settings, 'allow_missed_call', None) else '否'} "
+            f"current={'是' if getattr(code_settings, 'current_number', None) else '否'} "
+            f"allow_app_hash={'是' if getattr(code_settings, 'allow_app_hash', None) else '否'} "
             f"app_sandbox={getattr(code_settings, 'app_sandbox', None)} "
             f"{cls._log_push_token_slot(push_token, plan, profile)}"
         )
@@ -2029,6 +2031,7 @@ class RegistrationOrchestrator:
             unknown_number=bool(getattr(plan, "unknown_number", False)),
             allow_flashcall=bool(getattr(plan, "allow_flashcall", False)),
             allow_missed_call=bool(getattr(plan, "allow_missed_call", False)),
+            current_number=bool(getattr(plan, "current_number", False)),
             app_sandbox=getattr(plan, "app_sandbox", None),
             profile=profile,
         )

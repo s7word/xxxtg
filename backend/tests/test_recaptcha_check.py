@@ -19,6 +19,10 @@ os.chdir(REPO_ROOT)
 from backend.app.services.attestation_gateway import AttestationGatewayService  # noqa: E402
 from backend.app.services.recaptcha_check import (  # noqa: E402
     RecaptchaChallengeError,
+    official_android_cert_data,
+    official_android_installer,
+    official_android_package_id,
+    official_android_perf_cat,
     parse_recaptcha_check,
     recaptcha_app_device,
     recaptcha_app_name,
@@ -223,6 +227,27 @@ class TestGatewayRecaptchaUsesReghelpOnly(unittest.TestCase):
             self.assertIn("reghelp_api_key", str(ctx.exception))
         finally:
             asyncio.run(gw.close())
+
+
+class TestOfficialAndroidInitExtras(unittest.TestCase):
+    def test_play_store_defaults(self):
+        android = {"api_id": 6, "lang_pack": "android"}
+        self.assertEqual(official_android_package_id(android), "org.telegram.messenger")
+        self.assertEqual(official_android_installer(android), "com.android.vending")
+        self.assertEqual(
+            official_android_cert_data(android),
+            "49c1522548ebacd46ce322b6fd47f6092bb745d0f88082145caf35e14dcc38e1",
+        )
+        self.assertEqual(official_android_perf_cat({}), 2)
+        self.assertEqual(official_android_perf_cat({"perf_cat": 3}), 3)
+
+    def test_telegram_x_uses_x_package_and_cert(self):
+        x = {"api_id": 21724, "lang_pack": "android_x"}
+        self.assertEqual(official_android_package_id(x), "org.thunderdog.challegram")
+        self.assertEqual(
+            official_android_cert_data(x),
+            "eb801a303294ba02a84d030ebb1216c438ac985ad4b89208e32d7a7190dcdd33",
+        )
 
 
 if __name__ == "__main__":

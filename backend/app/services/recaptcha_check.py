@@ -24,6 +24,14 @@ RECAPTCHA_CHECK_RE = re.compile(
 TELEGRAM_ANDROID_PACKAGE = "org.telegram.messenger"
 TELEGRAM_X_PACKAGE = "org.thunderdog.challegram"
 TELEGRAM_IOS_PACKAGE = "ph.telegra.Telegraph"
+# 官方 Play 安装来源。ConnectionsManager 无安装来源时写空串，Play 包几乎总是这个。
+PLAY_STORE_INSTALLER = "com.android.vending"
+# AndroidUtilities.getCertificateSHA256Fingerprint：SHA-256(X509.getEncoded()) 小写 hex。
+# Play 商店官方签名，不是随机编的。
+OFFICIAL_ANDROID_CERT_SHA256 = {
+    TELEGRAM_ANDROID_PACKAGE: "49c1522548ebacd46ce322b6fd47f6092bb745d0f88082145caf35e14dcc38e1",
+    TELEGRAM_X_PACKAGE: "eb801a303294ba02a84d030ebb1216c438ac985ad4b89208e32d7a7190dcdd33",
+}
 
 
 class RecaptchaChallengeError(Exception):
@@ -68,6 +76,40 @@ def official_android_package_id(profile: Optional[dict] = None) -> str:
     if lang_pack == "android_x" or app_type == "telegram_x" or api_id == 21724:
         return TELEGRAM_X_PACKAGE
     return TELEGRAM_ANDROID_PACKAGE
+
+
+def official_android_installer(profile: Optional[dict] = None) -> str:
+    """InitConnection.params.installer。profile 可覆盖；默认 Play 商店。"""
+    raw = str((profile or {}).get("installer") or "").strip()
+    if raw:
+        return raw
+    return PLAY_STORE_INSTALLER
+
+
+def official_android_cert_data(profile: Optional[dict] = None) -> str:
+    """InitConnection.params.data = 官方 APK 证书 SHA-256。没有已知签名就不写。"""
+    profile = profile or {}
+    override = str(profile.get("cert_data") or profile.get("cert_fingerprint") or "").strip()
+    if override:
+        return override.replace(":", "").replace(" ", "").lower()
+    package_id = official_android_package_id(profile)
+    return OFFICIAL_ANDROID_CERT_SHA256.get(package_id, "")
+
+
+def official_android_perf_cat(profile: Optional[dict] = None) -> Optional[int]:
+    """InitConnection.params.perf_cat。官方值为 performanceClass+1（1/2/3）。"""
+    raw = (profile or {}).get("perf_cat")
+    if raw is None or raw == "":
+        return 2
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return 2
+    if value in {1, 2, 3}:
+        return value
+    if value == 0:
+        return 1
+    return 2
 
 
 def recaptcha_app_name(profile: Optional[dict] = None) -> str:

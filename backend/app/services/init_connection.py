@@ -7,8 +7,10 @@ initConnection 都要求 ``lang_pack=android``，并可带 ``params.tz_offset``�
 公开 ``initConnection.params`` 文档只写 ``tz_offset``。官方 iOS
 ``BuildConfig.bundleData`` 还会写入 App Store ``bundleId``。iOS 握手提交
 这两键；APNS 走 ``CodeSettings.token``，不伪造签名、不把 ``device_token``
-再塞进 params。禁止混入 Android ``safety_net`` / ``cert_fingerprint`` /
-``device`` / ``signature`` / ``perf_cat``。
+再塞进 params。禁止混入 Android ``safety_net`` / 错名 ``cert_fingerprint`` /
+``device`` / ``signature``。官方 Android wrapInLayer 顺序是
+``device_token`` / ``data`` / ``installer`` / ``package_id`` / ``tz_offset`` /
+``perf_cat``；``data`` 只写已知 Play 签名 SHA-256。
 
 必须在 ``client.connect()`` **之前**调用 ``apply_init_connection_overrides``，
 否则握手已发出，事后改 ``_init_request`` 无效。
@@ -29,11 +31,23 @@ from backend.app.services.ios_protocol import (
     ALLOWED_IOS_INIT_PARAM_KEYS,
     TELEGRAM_IOS_BUNDLE_ID,
 )
-from backend.app.services.recaptcha_check import official_android_package_id
+from backend.app.services.recaptcha_check import (
+    official_android_cert_data,
+    official_android_installer,
+    official_android_package_id,
+    official_android_perf_cat,
+)
 from telethon.tl import types
 
-# Android 独有：package_id + FCM device_token。禁止混入 iOS bundleId。
-ALLOWED_ANDROID_INIT_PARAM_KEYS = frozenset({"tz_offset", "package_id", "device_token"})
+# 官方 wrapInLayer 键。禁止混入 iOS bundleId / safety_net / 错名 cert_fingerprint。
+ALLOWED_ANDROID_INIT_PARAM_KEYS = frozenset({
+    "device_token",
+    "data",
+    "installer",
+    "package_id",
+    "tz_offset",
+    "perf_cat",
+})
 ANDROID_FCM_TOKEN_KINDS = frozenset({"fcm_legacy", "fcm_colon"})
 
 
@@ -90,6 +104,14 @@ def _keep_init_keys(values: List[Any], allowed: frozenset) -> List[Any]:
     return kept
 
 
+def _json_string(key: str, value: str) -> types.JsonObjectValue:
+    return types.JsonObjectValue(key=key, value=types.JsonString(value=value))
+
+
+def _json_number(key: str, value: float) -> types.JsonObjectValue:
+    return types.JsonObjectValue(key=key, value=types.JsonNumber(value=float(value)))
+
+
 def _android_fcm_for_init(push_token: Optional[str]) -> str:
     """Android InitConnection.params.device_token 只收 FCM，拒绝 APNS hex。"""
     raw = str(push_token or "").strip()
@@ -112,24 +134,16 @@ def build_init_connection_params(
     iOS 独有：``bundleId=ph.telegra.Telegraph``。APNS 只走 CodeSettings.token，
     **禁止**把同名 ``device_token`` 写进 params（官方 iOS 源码里那是 APNS base64，
     本仓合同不提交；Android 同名键是 FCM，更不能混）。
-    Android 独有：``package_id``；有 FCM 时写 ``device_token``。
-    不伪造 cert / installer / perf_cat，也不写 iOS ``bundleId``。
+    Android 独有，顺序对齐官方 wrapInLayer：
+    ``device_token``（有 FCM）/ ``data``（已知 Play 签名）/ ``installer`` /
+    ``package_id`` / ``tz_offset`` / ``perf_cat``。
+    不写 iOS ``bundleId``，不编未知证书。
     """
-    values: List[Any] = [
-        types.JsonObjectValue(
-            key="tz_offset",
-            value=types.JsonNumber(value=float(int(tz_offset))),
-        )
-    ]
     if profile_looks_ios(profile):
+        values: List[Any] = [_json_number("tz_offset", int(tz_offset))]
         bundle_id = str((profile or {}).get("bundle_id") or TELEGRAM_IOS_BUNDLE_ID).strip()
         if bundle_id:
-            values.append(
-                types.JsonObjectValue(
-                    key="bundleId",
-                    value=types.JsonString(value=bundle_id),
-                )
-            )
+            values.append(_json_string("bundleId", bundle_id))
         return types.JsonObject(value=_keep_init_keys(values, ALLOWED_IOS_INIT_PARAM_KEYS))
 
     try:
@@ -137,24 +151,24 @@ def build_init_connection_params(
     except (TypeError, ValueError):
         android_api = 0
     if profile_looks_android(profile) or android_api in {4, 6, 21724}:
-        package_id = str((profile or {}).get("package_id") or official_android_package_id(profile)).strip()
-        if package_id:
-            values.append(
-                types.JsonObjectValue(
-                    key="package_id",
-                    value=types.JsonString(value=package_id),
-                )
-            )
+        values = []
         fcm = _android_fcm_for_init(push_token)
         if fcm:
-            values.append(
-                types.JsonObjectValue(
-                    key="device_token",
-                    value=types.JsonString(value=fcm),
-                )
-            )
+            values.append(_json_string("device_token", fcm))
+        cert = official_android_cert_data(profile)
+        if cert:
+            values.append(_json_string("data", cert))
+        values.append(_json_string("installer", official_android_installer(profile)))
+        package_id = str((profile or {}).get("package_id") or official_android_package_id(profile)).strip()
+        values.append(_json_string("package_id", package_id or official_android_package_id(profile)))
+        values.append(_json_number("tz_offset", int(tz_offset)))
+        perf_cat = official_android_perf_cat(profile)
+        if perf_cat is not None:
+            values.append(_json_number("perf_cat", perf_cat))
         return types.JsonObject(value=_keep_init_keys(values, ALLOWED_ANDROID_INIT_PARAM_KEYS))
-    return types.JsonObject(value=_keep_init_keys(values, frozenset({"tz_offset"})))
+    return types.JsonObject(
+        value=_keep_init_keys([_json_number("tz_offset", int(tz_offset))], frozenset({"tz_offset"}))
+    )
 
 
 def describe_init_connection(client: Any) -> str:

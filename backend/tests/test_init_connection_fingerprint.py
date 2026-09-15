@@ -96,7 +96,7 @@ class TestInitConnectionOverrides(unittest.TestCase):
         self.assertIn("tz_offset=19800", describe_init_connection(client))
         self.assertEqual(
             inspect_init_param_keys(client._init_request.params),
-            ["tz_offset", "package_id"],
+            ["data", "installer", "package_id", "tz_offset", "perf_cat"],
         )
 
     def test_android_writes_package_id_and_device_token_not_codesettings_slot(self):
@@ -117,16 +117,25 @@ class TestInitConnectionOverrides(unittest.TestCase):
             push_token="dGVzdA:APA91" + ("x" * 140),
         )
         keys = inspect_init_param_keys(client._init_request.params)
-        self.assertEqual(keys, ["tz_offset", "package_id", "device_token"])
+        self.assertEqual(
+            keys,
+            ["device_token", "data", "installer", "package_id", "tz_offset", "perf_cat"],
+        )
         values = {
             item.key: getattr(item.value, "value", None)
             for item in client._init_request.params.value
         }
         self.assertEqual(values["package_id"], "org.telegram.messenger")
         self.assertTrue(str(values["device_token"]).startswith("dGVzdA:APA91"))
+        self.assertEqual(values["installer"], "com.android.vending")
+        self.assertEqual(
+            values["data"],
+            "49c1522548ebacd46ce322b6fd47f6092bb745d0f88082145caf35e14dcc38e1",
+        )
+        self.assertEqual(int(values["perf_cat"]), 2)
         self.assertNotIn("bundleId", keys)
-        self.assertNotIn("perf_cat", keys)
-        self.assertNotIn("installer", keys)
+        self.assertNotIn("cert_fingerprint", keys)
+        self.assertNotIn("safety_net", keys)
 
     def test_android_line_rejects_apns_and_never_writes_bundle_id(self):
         from backend.app.services.device_profile import DEFAULT_PROFILES
@@ -144,13 +153,20 @@ class TestInitConnectionOverrides(unittest.TestCase):
         with_fcm = build_init_connection_params(0, android, fcm)
         keys = inspect_init_param_keys(with_fcm)
         values = {item.key: getattr(item.value, "value", None) for item in with_fcm.value}
-        self.assertEqual(keys, ["tz_offset", "package_id", "device_token"])
+        self.assertEqual(
+            keys,
+            ["device_token", "data", "installer", "package_id", "tz_offset", "perf_cat"],
+        )
         self.assertEqual(values["package_id"], "org.telegram.messenger")
         self.assertEqual(values["device_token"], fcm)
+        self.assertEqual(values["installer"], "com.android.vending")
         self.assertNotIn("bundleId", keys)
         with_apns = build_init_connection_params(0, android, apns)
         apns_keys = inspect_init_param_keys(with_apns)
-        self.assertEqual(apns_keys, ["tz_offset", "package_id"])
+        self.assertEqual(
+            apns_keys,
+            ["data", "installer", "package_id", "tz_offset", "perf_cat"],
+        )
         self.assertNotIn("device_token", apns_keys)
         self.assertNotIn("bundleId", apns_keys)
         cs = RegistrationOrchestrator._build_code_settings(
