@@ -207,17 +207,16 @@ def main() -> int:
     path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"wrote {path}", flush=True)
     summary = report.get("summary") or {}
+    uniq = report.get("unique_ips") or {}
     print(
-        uniq = report.get("unique_ips") or {}
-        print(
-            f"RESULT success={summary.get('success')} SMS={summary.get('sms')} "
-            f"App={summary.get('app')} samples={summary.get('sendcode_samples')} "
-            f"statuses={summary.get('statuses')} "
-            f"unique_ips={uniq.get('egress_ip_count')} "
-            f"unique_ports={uniq.get('proxy_port_count')} "
-            f"ip_reused={uniq.get('ip_reused')} port_reused={uniq.get('port_reused')}",
-            flush=True,
-        )
+        f"RESULT success={summary.get('success')} SMS={summary.get('sms')} "
+        f"App={summary.get('app')} samples={summary.get('sendcode_samples')} "
+        f"statuses={summary.get('statuses')} "
+        f"unique_ips={uniq.get('egress_ip_count')} "
+        f"unique_ports={uniq.get('proxy_port_count')} "
+        f"ip_reused={uniq.get('ip_reused')} port_reused={uniq.get('port_reused')}",
+        flush=True,
+    )
     return 0
 
 
