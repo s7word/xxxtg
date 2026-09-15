@@ -74,6 +74,7 @@ ANDROID_GENERATE_PRESETS = {
         "pin_version": True,
         "app_version": TELEGRAM_X_RELEASE.app_version,
         "app_version_pure": TELEGRAM_X_RELEASE.app_version_pure,
+        "app_build": TELEGRAM_X_RELEASE.app_build,
         "apk_version_code": TELEGRAM_X_RELEASE.apk_version_code,
         "label": "Telegram X / TDLib",
     },
@@ -85,6 +86,7 @@ ANDROID_GENERATE_PRESETS = {
         "pin_version": True,
         "app_version": TELEGRAM_9_RELEASE.app_version,
         "app_version_pure": TELEGRAM_9_RELEASE.app_version_pure,
+        "app_build": TELEGRAM_9_RELEASE.app_build,
         "apk_version_code": TELEGRAM_9_RELEASE.apk_version_code,
         "label": "Telegram 9 Legacy",
     },
@@ -816,7 +818,12 @@ def synthesize_rows(
         if preset.get("pin_version"):
             app_version = str(preset["app_version"])
             pure = str(preset["app_version_pure"])
-            app_build = app_version.split("(")[-1].rstrip(")") if "(" in app_version else str(preset.get("app_build") or "")
+            if "(" in app_version:
+                app_build = app_version.split("(")[-1].rstrip(")")
+            else:
+                app_build = str(preset.get("app_build") or "")
+                if not app_build and app_version.count(".") >= 3:
+                    app_build = app_version.rsplit(".", 1)[-1]
             apk_version_code = int(preset.get("apk_version_code") or 0)
             if not apk_version_code:
                 apk_version_code = int(attach_apk_version_code({
