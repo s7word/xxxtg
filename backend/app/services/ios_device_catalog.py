@@ -1,7 +1,7 @@
-"""菲律宾 iOS 备用机型库：只给 telegram_ios 抽，不进 Android 调度。
+"""iOS 备用机型库：只给 telegram_ios 抽，不进 Android 调度。
 
 机型用官方客户端常见的营销名（与当前模板 ``iPhone 15 Pro`` 同一写法），
-系统版本落在本仓已在用的 iOS 18.x。先覆盖 PH，其它国家测试过了再说。
+系统版本落在本仓已在用的 iOS 18.x。语言/时区跟出口国 overlay，不抄 Android 包。
 """
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ from backend.app.services.ios_protocol import (
 )
 
 IOS_APP_VERSION = "12.9.3"
-IOS_SEED_COUNTRIES = frozenset({"ph"})
+IOS_SEED_COUNTRIES = frozenset({"ph", "tr"})
 IOS_PH_PACK_COUNT = 48
 
 
