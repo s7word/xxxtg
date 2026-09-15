@@ -21,6 +21,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from backend.app.config import DATA_DIR, DEVICE_DBS_DIR
 from backend.app.services.device_profile import COUNTRY_LANG_MAP
+from backend.app.services.telegram_android_releases import attach_apk_version_code
 
 logger = logging.getLogger("DeviceDbCatalog")
 
@@ -71,6 +72,7 @@ COUNTRY_NAME_MAP = {
     "pe": "Peru",
     "ph": "Philippines",
     "pk": "Pakistan",
+    "pt": "Portugal",
     "ru": "Russia",
     "sa": "Saudi Arabia",
     "sg": "Singapore",
@@ -112,6 +114,7 @@ COUNTRY_NAME_ZH_MAP = {
     "pe": "秘鲁",
     "ph": "菲律宾",
     "pk": "巴基斯坦",
+    "pt": "葡萄牙",
     "ru": "俄罗斯",
     "sa": "沙特",
     "sg": "新加坡",
@@ -153,6 +156,8 @@ COUNTRY_ALIAS_TOKENS = {
     "peru": "pe",
     "colombia": "co",
     "philippines": "ph",
+    "portugal": "pt",
+    "portuguese": "pt",
     "vietnam": "vn",
     "thailand": "th",
     "malaysia": "my",
@@ -196,7 +201,7 @@ TZ_COUNTRY_HINTS = {
     -18000: ("us", "ca", "mx", "pe", "co"),
     -14400: ("cl", "ca", "us"),
     -10800: ("br", "ar", "cl"),
-    0: ("gb",),
+    0: ("gb", "pt"),
     3600: ("de", "fr", "ng"),
     7200: ("eg", "za", "ua"),
     10800: ("ru", "tr", "ke", "sa"),
@@ -227,6 +232,7 @@ LOCALE_COUNTRY_HINTS = {
     "en-ca": "ca",
     "fr-ca": "ca",
     "pt-br": "br",
+    "pt-pt": "pt",
     "ru-ru": "ru",
     "ru-kz": "kz",
     "kk-kz": "kz",
@@ -275,6 +281,8 @@ BRAND_PREFIXES = (
     ("nokia", "nokia"),
     ("sony", "sony"),
     ("lg", "lg"),
+    ("iphone", "apple"),
+    ("ipad", "apple"),
 )
 
 _LOCK = threading.RLock()
@@ -472,7 +480,7 @@ def parse_app_version(raw: Any) -> Tuple[str, str, str]:
     return text, text, "69792"
 
 
-def row_to_profile(row: Tuple[Any, ...]) -> Dict[str, Any]:
+def row_to_profile(row: Tuple[Any, ...], apk_version_code: Any = None) -> Dict[str, Any]:
     app_version, pure_ver, build_code = parse_app_version(row[4])
     try:
         tz_offset = int(row[8])
@@ -486,7 +494,7 @@ def row_to_profile(row: Tuple[Any, ...]) -> Dict[str, Any]:
         api_id = int(row[0])
     except (TypeError, ValueError):
         api_id = 6
-    return {
+    profile = {
         "api_id": api_id,
         "api_hash": str(row[1] or ""),
         "system_version": str(row[2] or "SDK 33"),
@@ -500,6 +508,9 @@ def row_to_profile(row: Tuple[Any, ...]) -> Dict[str, Any]:
         "tz_offset": tz_offset,
         "perf_cat": perf_cat,
     }
+    if apk_version_code not in (None, "", 0, "0"):
+        profile["apk_version_code"] = apk_version_code
+    return attach_apk_version_code(profile)
 
 
 def _table_columns(conn: sqlite3.Connection, table: str = "REGISTRATOR") -> List[str]:
@@ -531,12 +542,18 @@ def parse_registrator_db(db_path: Path) -> List[Dict[str, Any]]:
         missing = [col for col in REGISTRATOR_COLUMNS if col not in columns]
         if missing:
             raise ValueError(f"REGISTRATOR 缺少必要列: {', '.join(missing)}")
-        cursor = conn.execute(
+        has_apk_code = "APK_VERSION_CODE" in columns
+        select_sql = (
             "SELECT APP_ID, APP_HASH, SDK, DEVICE, APP_VERSION, "
-            "LANG_CODE, SYSTEM_LANG_CODE, LANG_PACK, TZ_OFFSET, PERF_CAT "
-            "FROM REGISTRATOR"
+            "LANG_CODE, SYSTEM_LANG_CODE, LANG_PACK, TZ_OFFSET, PERF_CAT"
+            + (", APK_VERSION_CODE" if has_apk_code else "")
+            + " FROM REGISTRATOR"
         )
-        return [row_to_profile(row) for row in cursor.fetchall()]
+        rows = []
+        for raw in conn.execute(select_sql):
+            apk_code = raw[10] if has_apk_code and len(raw) > 10 else None
+            rows.append(row_to_profile(raw[:10], apk_code))
+        return rows
     finally:
         conn.close()
 
@@ -552,6 +569,7 @@ def compute_stats(rows: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
     tzs: Counter = Counter()
     perfs: Counter = Counter()
     versions: Counter = Counter()
+    api_ids: Counter = Counter()
     for row in items:
         model = str(row.get("device_model") or "")
         models[model] += 1
@@ -563,6 +581,7 @@ def compute_stats(rows: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
         tzs[str(row.get("tz_offset"))] += 1
         perfs[str(row.get("perf_cat"))] += 1
         versions[str(row.get("app_version") or "")] += 1
+        api_ids[str(row.get("api_id") or "")] += 1
 
     def _top(counter: Counter, limit: int = 12) -> Dict[str, int]:
         return {key: int(val) for key, val in counter.most_common(limit) if key}
@@ -583,11 +602,36 @@ def compute_stats(rows: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
         "tz_offsets": _top(tzs),
         "perf_cats": _top(perfs),
         "app_versions": _top(versions),
+        "api_ids": _top(api_ids),
         "sample_models": [name for name, _ in models.most_common(10) if name],
     }
 
 
-def assess_quality(stats: Dict[str, Any], country: Optional[str] = None) -> Dict[str, Any]:
+def pack_android_app_type(item: Optional[Dict[str, Any]] = None) -> str:
+    item = item or {}
+    raw = str(item.get("app_type") or "").strip()
+    if raw:
+        return raw
+    return "telegram_android"
+
+
+def infer_pack_platform(item: Optional[Dict[str, Any]] = None) -> str:
+    item = item or {}
+    raw = str(item.get("platform") or "").strip().lower()
+    if raw in {"ios", "android"}:
+        return raw
+    packs = (item.get("stats") or {}).get("lang_packs") or {}
+    keys = {str(key).lower() for key in packs if key}
+    if keys and keys <= {"ios"}:
+        return "ios"
+    return "android"
+
+
+def assess_quality(
+    stats: Dict[str, Any],
+    country: Optional[str] = None,
+    platform: Optional[str] = None,
+) -> Dict[str, Any]:
     flags: List[str] = []
     score = 100
     total = int(stats.get("total") or 0)
@@ -601,11 +645,14 @@ def assess_quality(stats: Dict[str, Any], country: Optional[str] = None) -> Dict
         flags.append("low_diversity")
         score -= 12
     brands = stats.get("brands") or {}
-    if brands and max(brands.values()) / max(total, 1) > 0.85:
+    ios_pack = str(platform or "").lower() == "ios"
+    if brands and (not ios_pack) and max(brands.values()) / max(total, 1) > 0.85:
         flags.append("brand_monoculture")
         score -= 8
     lang_packs = stats.get("lang_packs") or {}
-    if lang_packs and "android" not in {k.lower() for k in lang_packs}:
+    pack_keys = {str(key).lower() for key in lang_packs if key}
+    expected_pack = "ios" if str(platform or "").lower() == "ios" else "android"
+    if pack_keys and expected_pack not in pack_keys:
         flags.append("unexpected_lang_pack")
         score -= 20
     if country:
@@ -709,6 +756,7 @@ class DeviceDbManager:
             "kz": "哈萨克",
             "br": "巴西",
             "tr": "土耳其",
+            "pt": "葡萄牙",
             "us": "美国",
             "gb": "英国",
         }.get(country or "", label)
@@ -724,16 +772,20 @@ class DeviceDbManager:
         source: str,
         stats: Dict[str, Any],
         enabled: bool = True,
+        platform: str = "android",
+        app_type: Optional[str] = None,
     ) -> Dict[str, Any]:
         now = _utc_now()
-        quality = assess_quality(stats, country)
-        return {
+        resolved_platform = str(platform or infer_pack_platform({"stats": stats}) or "android")
+        quality = assess_quality(stats, country, platform=resolved_platform)
+        item = {
             "id": uuid.uuid4().hex,
             "origin_name": origin_name,
             "stored_name": stored_name,
             "alias": alias or origin_name,
             "country": country,
             "country_name": country_display_name(country),
+            "platform": resolved_platform,
             "enabled": bool(enabled),
             "source": source,
             "sample_count": int(stats.get("total") or 0),
@@ -742,6 +794,9 @@ class DeviceDbManager:
             "created_at": now,
             "updated_at": now,
         }
+        if resolved_platform != "ios" and app_type:
+            item["app_type"] = str(app_type).strip()
+        return item
 
     @classmethod
     def list_packs(cls, root: Optional[Path] = None) -> List[Dict[str, Any]]:
@@ -837,6 +892,8 @@ class DeviceDbManager:
         stats: Dict[str, Any],
         enabled: bool = True,
         root: Optional[Path] = None,
+        platform: str = "android",
+        app_type: Optional[str] = None,
     ) -> Dict[str, Any]:
         stored = Path(db_path).name
         item = cls._new_item(
@@ -847,6 +904,8 @@ class DeviceDbManager:
             source="generated",
             stats=stats,
             enabled=enabled,
+            platform=platform,
+            app_type=app_type,
         )
         with _LOCK:
             catalog = cls.ensure_ready(root)
@@ -909,6 +968,20 @@ class DeviceDbManager:
         return target
 
     @classmethod
+    def delete_android_packs(cls, root: Optional[Path] = None) -> List[Dict[str, Any]]:
+        """清掉全部 Android / 未标平台的旧包，只留 iOS。磁盘 .db 一并删。"""
+        packs = cls.list_packs(root)
+        removed: List[Dict[str, Any]] = []
+        for item in packs:
+            if infer_pack_platform(item) == "ios":
+                continue
+            try:
+                removed.append(cls.delete_pack(str(item["id"]), root=root))
+            except KeyError:
+                continue
+        return removed
+
+    @classmethod
     def refresh_stats(cls, pack_id: str, root: Optional[Path] = None) -> Dict[str, Any]:
         pack = cls.get_pack(pack_id, root)
         if not pack:
@@ -933,16 +1006,33 @@ class DeviceDbManager:
         return pack
 
     @classmethod
-    def enabled_packs(cls, country: Optional[str] = None, root: Optional[Path] = None) -> List[Dict[str, Any]]:
+    def enabled_packs(
+        cls,
+        country: Optional[str] = None,
+        root: Optional[Path] = None,
+        platform: str = "android",
+        app_type: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
         code = normalize_country(country) if country else None
-        packs = [item for item in cls.list_packs(root) if item.get("enabled")]
+        want = str(platform or "android").strip().lower() or "android"
+        packs = [
+            item for item in cls.list_packs(root)
+            if item.get("enabled") and infer_pack_platform(item) == want
+        ]
         if code:
-            matched = [item for item in packs if item.get("country") == code]
-            return matched
+            packs = [item for item in packs if item.get("country") == code]
+        want_type = str(app_type or "").strip()
+        if want == "android" and want_type:
+            return [item for item in packs if pack_android_app_type(item) == want_type]
         return packs
 
     @classmethod
-    def select_pack(cls, country: Optional[str], root: Optional[Path] = None) -> Tuple[Optional[Dict[str, Any]], str]:
+    def select_pack(
+        cls,
+        country: Optional[str],
+        root: Optional[Path] = None,
+        platform: str = "android",
+    ) -> Tuple[Optional[Dict[str, Any]], str]:
         """按目标国家挑选已激活指纹包（不合成）。
 
         返回 (pack, match_mode)：
@@ -952,11 +1042,11 @@ class DeviceDbManager:
         """
         import random
 
-        matched = cls.enabled_packs(country, root)
+        matched = cls.enabled_packs(country, root, platform=platform)
         if matched:
             weights = [max(1, int(item.get("sample_count") or 1)) for item in matched]
             return random.choices(matched, weights=weights, k=1)[0], "country"
-        any_enabled = cls.enabled_packs(None, root)
+        any_enabled = cls.enabled_packs(None, root, platform=platform)
         if any_enabled:
             weights = [max(1, int(item.get("sample_count") or 1)) for item in any_enabled]
             return random.choices(any_enabled, weights=weights, k=1)[0], "fallback"
@@ -968,6 +1058,7 @@ class DeviceDbManager:
         country: Optional[str],
         root: Optional[Path] = None,
         count: int = AUTO_ADAPT_SAMPLE_COUNT,
+        app_type: Optional[str] = None,
     ) -> Tuple[Optional[Dict[str, Any]], str, bool]:
         """确保目标国有已激活指纹包；没有则按该国规则即时合成。
 
@@ -982,12 +1073,13 @@ class DeviceDbManager:
         import random
 
         code = normalize_country(country)
+        resolved_type = str(app_type or "telegram_android").strip() or "telegram_android"
         if not code:
             pack, match = cls.select_pack(country, root)
             return pack, match, False
 
-        with _country_ensure_lock(code):
-            matched = cls.enabled_packs(code, root)
+        with _country_ensure_lock(f"{code}:{resolved_type}"):
+            matched = cls.enabled_packs(code, root, platform="android", app_type=resolved_type)
             if matched:
                 weights = [max(1, int(item.get("sample_count") or 1)) for item in matched]
                 return random.choices(matched, weights=weights, k=1)[0], "country", False
@@ -1003,6 +1095,7 @@ class DeviceDbManager:
                     alias=alias,
                     enabled=True,
                     root=root,
+                    app_type=resolved_type,
                 )
                 logger.info("已自动适配合成硬件指纹包 %s (%s, %s 条)", alias, code, pack.get("sample_count"))
                 return pack, "auto", True
@@ -1012,19 +1105,64 @@ class DeviceDbManager:
                 return pack, match, False
 
     @classmethod
+    def ensure_ios_country_pack(
+        cls,
+        country: Optional[str],
+        root: Optional[Path] = None,
+        count: int = 48,
+    ) -> Tuple[Optional[Dict[str, Any]], str, bool]:
+        """iOS 备用包：指定国家即时合成，绝不走 Android 合成器。"""
+        import random
+
+        code = normalize_country(country)
+        if not code:
+            pack, match = cls.select_pack(country, root, platform="ios")
+            return pack, match, False
+        with _country_ensure_lock(f"ios:{code}"):
+            matched = cls.enabled_packs(code, root, platform="ios")
+            if matched:
+                weights = [max(1, int(item.get("sample_count") or 1)) for item in matched]
+                return random.choices(matched, weights=weights, k=1)[0], "country", False
+            try:
+                from backend.app.services.ios_device_catalog import generate_ios_country_db
+
+                zh = COUNTRY_NAME_ZH_MAP.get(code, code.upper())
+                alias = f"iOS 备用 {zh} {code.upper()} · {int(count)}.db"
+                pack = generate_ios_country_db(
+                    country=code,
+                    count=max(8, int(count or 48)),
+                    alias=alias,
+                    enabled=True,
+                    root=root,
+                )
+                logger.info("已写入 iOS 备用指纹包 %s (%s 条)", alias, pack.get("sample_count"))
+                return pack, "auto", True
+            except Exception as exc:
+                logger.warning("生成 iOS 备用指纹包失败: %s", exc)
+                pack, match = cls.select_pack(country, root, platform="ios")
+                return pack, match, False
+
+    @classmethod
     def select_sample(
         cls,
         country: Optional[str],
         root: Optional[Path] = None,
         auto_adapt: bool = True,
+        platform: str = "android",
+        app_type: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         import random
 
         created = False
-        if auto_adapt:
-            pack, match, created = cls.ensure_country_pack(country, root=root)
+        want = str(platform or "android").strip().lower() or "android"
+        if want == "ios" and auto_adapt:
+            pack, match, created = cls.ensure_ios_country_pack(country, root=root)
+        elif auto_adapt:
+            pack, match, created = cls.ensure_country_pack(
+                country, root=root, app_type=app_type
+            )
         else:
-            pack, match = cls.select_pack(country, root)
+            pack, match = cls.select_pack(country, root, platform=want)
         if not pack:
             return None
         rows = cls.load_rows(str(pack["id"]), root)
@@ -1049,5 +1187,7 @@ class DeviceDbManager:
             "enabled_packs": len(enabled),
             "disabled_packs": len(packs) - len(enabled),
             "active_countries": countries,
+            "ios_pack_count": sum(1 for item in packs if infer_pack_platform(item) == "ios"),
+            "android_pack_count": sum(1 for item in packs if infer_pack_platform(item) != "ios"),
             "packs": packs,
         }

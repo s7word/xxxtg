@@ -12,6 +12,9 @@ VAULT_STRICT_API_ID = 4
 VAULT_STRICT_LANG_PACK = "android"
 # 官方 Android / Telegram X 握手必须带 lang_pack；仅钉 api_id=4 会漏掉 6 与 21724。
 OFFICIAL_ANDROID_INIT_API_IDS = frozenset({4, 6, 21724})
+OFFICIAL_IOS_API_ID = 8
+OFFICIAL_IOS_LANG_PACK = "ios"
+OFFICIAL_INIT_API_IDS = frozenset({4, 6, 8, 21724})
 OFFICIAL_TELEGRAM_X_API_ID = 21724
 OFFICIAL_TELEGRAM_X_LANG_PACK = "android_x"
 
@@ -43,6 +46,9 @@ EMU_DEVICE_MARKERS = (
 # 本仓实际塞的是 Android REGHelp FCM（api_id=4 过 published 闸的历史做法）。
 # 日志用 android_fcm_in_ios_doc_slot，避免被误读成「在跑 iOS 客户端」。
 PUSH_SLOT_ANDROID_FCM_IN_IOS_DOC = "CodeSettings.token(android_fcm_in_ios_doc_slot)"
+# 官方 iOS 客户端：CodeSettings.token 文档槽位就是 APNS
+PUSH_SLOT_IOS_APNS = "CodeSettings.token(ios_apns)"
+PUSH_SLOT_IOS_NON_APNS = "CodeSettings.token(ios_slot_non_apns)"
 # 旧日志关键字，仅兼容历史报告检索
 PUSH_SLOT_IOS_CODESETTINGS = PUSH_SLOT_ANDROID_FCM_IN_IOS_DOC
 PUSH_SLOT_NONE = "none"
@@ -88,13 +94,15 @@ def is_strict_alignment(config: Any) -> bool:
 
 
 def official_lang_pack_for_api_id(api_id: Any) -> str:
-    """官方客户端 InitConnection.lang_pack：Android=android，Telegram X=android_x。"""
+    """官方客户端 InitConnection.lang_pack：Android=android，iOS=ios，Telegram X=android_x。"""
     try:
         aid = int(api_id or 0)
     except (TypeError, ValueError):
         aid = 0
     if aid == OFFICIAL_TELEGRAM_X_API_ID:
         return OFFICIAL_TELEGRAM_X_LANG_PACK
+    if aid == OFFICIAL_IOS_API_ID:
+        return OFFICIAL_IOS_LANG_PACK
     return VAULT_STRICT_LANG_PACK
 
 
@@ -116,7 +124,7 @@ def init_connection_should_patch_official_fingerprint(
         return True
     if bool(getattr(config, "official_client_emulation", False)):
         return True
-    return _profile_api_id(profile) in OFFICIAL_ANDROID_INIT_API_IDS
+    return _profile_api_id(profile) in OFFICIAL_INIT_API_IDS
 
 
 def init_connection_should_set_lang_pack(config: Any, profile: Optional[Dict[str, Any]] = None) -> bool:
@@ -144,8 +152,15 @@ def is_emulator_device(profile: Optional[Dict[str, Any]]) -> bool:
     return any(marker in blob for marker in EMU_DEVICE_MARKERS)
 
 
-def classify_push_token(token: Optional[str]) -> Dict[str, Any]:
-    """REGHelp FCM 形态启发式。不把 token 原文写入返回值。"""
+def classify_push_token(
+    token: Optional[str],
+    profile: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Push Token 形态启发式。不把 token 原文写入返回值。
+
+    Android 路径把 APNS hex 标可疑（FCM 错槽）。iOS 官方槽位就是 APNS，
+    64 位 hex 是合法形态，不能再当异常。
+    """
     raw = str(token or "").strip()
     length = len(raw)
     if not raw:
@@ -160,7 +175,13 @@ def classify_push_token(token: Optional[str]) -> Dict[str, Any]:
     elif length >= 100:
         kind = "long_opaque"
     ok = length >= 32
-    suspicious = (not ok) or kind == "apns_hex" or length < 48
+    ios = profile_looks_ios(profile)
+    if ios and kind == "apns_hex":
+        suspicious = False
+    elif ios and kind in {"fcm_legacy", "fcm_colon"}:
+        suspicious = True
+    else:
+        suspicious = (not ok) or kind == "apns_hex" or length < 48
     return {
         "ok": ok,
         "kind": kind,
@@ -169,8 +190,17 @@ def classify_push_token(token: Optional[str]) -> Dict[str, Any]:
     }
 
 
-def describe_push_slot(attached: bool) -> str:
-    return PUSH_SLOT_ANDROID_FCM_IN_IOS_DOC if attached else PUSH_SLOT_NONE
+def describe_push_slot(
+    attached: bool,
+    profile: Optional[Dict[str, Any]] = None,
+    token: Optional[str] = None,
+) -> str:
+    if not attached:
+        return PUSH_SLOT_NONE
+    if profile_looks_ios(profile):
+        kind = str(classify_push_token(token, profile).get("kind") or "")
+        return PUSH_SLOT_IOS_APNS if kind == "apns_hex" else PUSH_SLOT_IOS_NON_APNS
+    return PUSH_SLOT_ANDROID_FCM_IN_IOS_DOC
 
 
 def profile_platform_markers(profile: Optional[Dict[str, Any]]) -> str:
@@ -202,7 +232,7 @@ def detect_push_slot_conflicts(
     """发现指纹/Token/文档槽位自相矛盾。返回人类可读冲突列表（可为空）。"""
     if not attached or not push_token:
         return []
-    info = classify_push_token(push_token)
+    info = classify_push_token(push_token, profile)
     conflicts: List[str] = []
     android = profile_looks_android(profile)
     ios = profile_looks_ios(profile)

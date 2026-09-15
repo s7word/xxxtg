@@ -161,6 +161,27 @@
           接码源仍用全局 {{ smsProviderLabel(config.sms_provider) }}，不跟随上游平台切换。
         </div>
       </div>
+      <div class="stack">
+        <label class="ce-label">一键测试 · 注册途径</label>
+        <div class="ce-seg">
+          <button
+            v-for="opt in APP_TYPE_SHORTCUTS"
+            :key="opt.value"
+            type="button"
+            :class="{ 'is-on': trialAppType === opt.value }"
+            @click="setTrialAppType(opt.value)"
+          >{{ opt.label }}</button>
+        </div>
+        <select v-model="trialAppType" class="ce-select" @change="setTrialAppType(trialAppType)">
+          <option v-for="opt in APP_TYPE_OPTIONS" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+        </select>
+        <div v-if="isIosAppType(trialAppType)" class="ce-alert is-ok">
+          官方 iOS：固定 <code>api_id=8</code>，REGHelp <code>tgiOS</code> + <code>appDevice=iOS</code>，
+          不走 AID / Play Integrity。语言时区跟出口国 overlay，DC 跟 <code>GetNearestDc</code>。
+          葡萄牙基线 10/10 走这条途径。
+        </div>
+        <p v-else class="ce-tiny">Android / TDLib 仍吃全局 custom App ID 与 AntiSafety AID。全自动/狙击保存后仍用全局 <code>active_app_type</code>；一键测试以这里选的途径为准。</p>
+      </div>
       <div class="grid-2">
         <div>
           <label class="ce-label">一键测试 · 任务数</label>
@@ -171,7 +192,7 @@
           <input v-model.number="trialConcurrency" type="number" min="1" max="10" class="ce-input mono" />
         </div>
       </div>
-      <div class="ce-tiny">当前接码源 {{ smsProviderLabel(config.sms_provider) }} · 改完开关请点右上角保存 · 通知 {{ smsallEventCount }} 条</div>
+      <div class="ce-tiny">当前接码源 {{ smsProviderLabel(config.sms_provider) }} · 途径 {{ trialAppTypeLabel }} · 改完开关请点右上角保存 · 通知 {{ smsallEventCount }} 条</div>
       <div v-if="smsallEvents.length" class="stack">
         <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
           <button class="ce-btn-danger ce-btn-sm" :disabled="!selectedEventIds.length || deleteBusy" @click="deleteSelected">
@@ -227,7 +248,7 @@
                       :disabled="!ev.country || trialBusy[ev.id]"
                       @click="trialRegister(ev)"
                     >
-                      {{ trialBusy[ev.id] ? '提交中...' : '一键测试注册' }}
+                      {{ trialBusy[ev.id] ? '提交中...' : (isIosAppType(trialAppType) ? '一键测试 iOS' : '一键测试注册') }}
                     </button>
                     <button class="ce-btn-ghost ce-btn-sm" :disabled="!ev.country" @click="openInConsole(ev)">
                       去控制台
@@ -282,6 +303,7 @@
         <div class="ce-tiny">
           对接 REGHelp Key API（<a href="https://reghelp.net" target="_blank">reghelp.net</a>）：
           GET <code>/push/getToken</code> → 轮询 <code>/push/getStatus</code>，appName/appDevice 与内置端点模板对齐。
+          Integrity 的 <code>appVersionCode</code> 走指纹里单独存的 APK versionCode（查 APKMirror），不要用显示 build。
         </div>
         <div class="ce-alert is-info">
           RecaptchaMobile 通道与 REGHelp Key 绑定：引导过程遇到 RECAPTCHA_CHECK 时自动解题，无需额外 AID。
@@ -452,6 +474,8 @@
         <div class="ce-tiny">
           协议与 SMS-Activate / Grizzly 兼容，Telegram 服务码 <code>tg</code>。
           将上方「当前接码提供源」切到 SMS Bower 后生效。失败路径自动 <code>setStatus=8</code> 退款。
+          同一 API Key 也提供 Telegram 用 Google 邮箱（<code>/api/mail</code>，domain=gmail.com），
+          供官方模拟 <code>SetUpEmailRequired</code> 使用。
         </div>
         <div v-if="testResults.smsbower" class="ce-alert" :class="testResults.smsbower.success ? 'is-ok' : 'is-danger'">
           <div>{{ testResults.smsbower.message }}</div>
@@ -563,13 +587,27 @@
           <code>telegram_android</code>=6，<code>telegram_android_public</code>=4，
           <code>telegram_x</code>=21724）、push_required，并在
           <code>connect()</code> 前写入 InitConnection（<code>lang_pack=android</code> /
-          <code>android_x</code> + 号国 tz）。处理 SetUpEmailRequired（REGHelp Email）、
+          <code>android_x</code> + 号国 tz）。处理 SetUpEmailRequired
+          （默认 SMS Bower Google 邮箱，REGHelp 候补）、
           FirebaseSms（Play Integrity）、PaymentRequired（标记需官方 App 内购并快退）。
           猎号连续 App 强制 SMS 在此模式下关闭。
           Push attach 仍把 Android FCM 塞进文档标为 iOS 的 <code>CodeSettings.token</code>
           （错槽兼容，<strong>不是</strong> iOS 客户端）。
           <strong>vault 严格对齐开启时会钉死 api_id=4</strong>，不会漂到 6（Payment 路径）。
         </p>
+        <div>
+          <label class="ce-label">Email 临时邮箱调度策略</label>
+          <select v-model="config.email_provider_mode" class="ce-select">
+            <option value="smsbower_primary">smsbower_primary（SMS Bower Google 优先，REGHelp 备选）</option>
+            <option value="smsbower_only">smsbower_only（仅 SMS Bower Google 邮箱）</option>
+            <option value="reghelp_primary">reghelp_primary（REGHelp 优先，SMS Bower 备选）</option>
+            <option value="reghelp_only">reghelp_only（仅 REGHelp）</option>
+          </select>
+        </div>
+        <label class="ce-check">
+          <input type="checkbox" v-model="config.email_smsbower_fallback_enabled" />
+          Email 主源失败时自动切换候补提供源
+        </label>
         <label class="ce-check">
           <input
             type="checkbox"
@@ -645,7 +683,7 @@
           <label class="ce-label">API 凭证选择策略</label>
           <select v-model="config.api_credential_mode" class="ce-select">
             <option value="auto">auto（先按官方 ID 申请 Push；未拿到且已泄露时回退自建凭证并重算通道）</option>
-            <option value="custom">custom（始终强制使用自建开发者凭证）</option>
+            <option value="custom">custom（不再覆盖 Android / iOS 的 App ID 与设备参数）</option>
             <option value="official">official（始终使用官方内置凭证，依赖 Push Token）</option>
           </select>
         </div>
@@ -662,6 +700,7 @@
         <div class="ce-alert is-warn">
           官方内置 api_id（如 4 / 6 / 21724）已被公开泄露。未附带合法 Push Token 时几乎必然返回
           <code>API_ID_PUBLISHED_FLOOD</code>。REGHelp 与 AntiSafety 密钥/网关不能交叉混用。
+          custom 模式不再改 Android / iOS 的设备参数和 App ID；合成菜单按 AntiSafety 模板写入官方配对。
         </div>
       </div>
 
@@ -728,7 +767,7 @@
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useConfig, smsProviderLabel } from '../../composables/useConfig'
 import { useProbes } from '../../composables/useProbes'
-import { countryFlag } from '../../composables/useShared'
+import { APP_TYPE_OPTIONS, APP_TYPE_SHORTCUTS, countryFlag, isIosAppType } from '../../composables/useShared'
 import { applyIncomingBatch, fetchTasks } from '../../composables/useTasks'
 import { goTab, pushToast } from '../../composables/useUi'
 import LiveStockCountryPicker from '../console/LiveStockCountryPicker.vue'
@@ -758,7 +797,16 @@ const selectedEventIds = ref([])
 const deleteBusy = ref(false)
 const trialCount = ref(1)
 const trialConcurrency = ref(1)
+const trialAppType = ref('telegram_ios')
 const trialBusy = reactive({})
+const trialAppTypeLabel = computed(() => {
+  const hit = APP_TYPE_OPTIONS.find((opt) => opt.value === trialAppType.value)
+  return hit?.label || trialAppType.value
+})
+const setTrialAppType = (value) => {
+  trialAppType.value = value
+  form.app_type = value
+}
 const smsallWebhookUrl = computed(() => `${window.location.origin}/hooks/smsall`)
 let smsallPoll = null
 
@@ -933,12 +981,14 @@ const trialRegister = async (ev) => {
         event_id: ev.id || null,
         country,
         count,
-        concurrency
+        concurrency,
+        app_type: trialAppType.value
       })
     })
     const data = await res.json()
     if (!res.ok) throw new Error(data.detail || data.message || '提交失败')
     form.country = country
+    form.app_type = trialAppType.value
     applyIncomingBatch(data)
     pushToast('ok', data.message || `${country.toUpperCase()} 测试已提交`)
     await Promise.all([refreshSmsallStatus(), fetchTasks()])
@@ -953,6 +1003,7 @@ const trialRegister = async (ev) => {
 const openInConsole = (ev) => {
   const country = String(ev?.country || '').toLowerCase()
   if (country) form.country = country
+  form.app_type = trialAppType.value
   goTab('console')
 }
 

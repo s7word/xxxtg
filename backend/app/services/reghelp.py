@@ -11,6 +11,7 @@ from backend.app.services.attestation_urls import (
     is_auth_error_payload,
     sanitize_provider_urls,
 )
+from backend.app.services.ios_protocol import reghelp_email_app_name, reghelp_push_app_name
 from backend.app.services.net_utils import create_httpx_client
 
 logger = logging.getLogger("RegHelpService")
@@ -121,6 +122,9 @@ class RegHelpService:
 
         GET /integrity/getToken   {apiKey, appName, appDevice, nonce,
                                     appVersionCode, [type=std|classic], [ref], [webHook]}
+            appVersionCode 是签名 APK 的 versionCode（查 APKMirror / aapt），
+            不是 InitConnection 的显示 build。Telegram X 显示 1692，
+            arm64 APK versionCode 是 1692020。文档举例 85101930 是旧版 Telegram。
         GET /integrity/getStatus  {apiKey, id}
 
         GET /RecaptchaMobile/getToken
@@ -129,9 +133,10 @@ class RegHelpService:
         GET /RecaptchaMobile/getStatus  {apiKey, id}
 
     与 `AntiSafetyService` 保持一致的多候选网关容灾风格，但使用 REGHelp 独立的 API Key 与
-    协议字段 —— 无需 `aid`，`appName`/`appDevice` 与项目内置的 `DeviceProfileManager` 模板
-    天然对齐 (telegram_android/telegram_9 -> appName=tg, telegram_x -> appName=tg_x)。
-    RecaptchaMobile 对 Telegram Android 使用 appName=org.telegram.messenger。
+    协议字段 —— **REGHelp 没有 AID**。官方 Push 表：
+        Android ``appName=tg`` / ``tg_x`` + ``appDevice=Android``
+        iOS ``appName=tgiOS`` + ``appDevice=iOS``（bundle ``ph.telegra.Telegraph``）
+    RecaptchaMobile：Android ``org.telegram.messenger``，iOS ``ph.telegra.Telegraph``。
 
     注：REGHelp 官方接口目前未提供与 AntiSafety `/check` 等价的号码历史安全审计能力，
     该职责仍由 `AttestationGatewayService` 路由至 AntiSafety 处理。
@@ -238,7 +243,7 @@ class RegHelpService:
         app_device = self._normalize_device(profile.get("app_device", "Android"))
         params = {
             "apiKey": self.api_key,
-            "appName": profile.get("app_name", "tg"),
+            "appName": reghelp_push_app_name(profile),
             "appDevice": app_device,
             "appVersion": profile.get("app_version_pure"),
             "appBuild": profile.get("app_build"),
@@ -491,7 +496,7 @@ class RegHelpService:
             e164 = f"+{e164}"
         params = {
             "apiKey": self.api_key,
-            "appName": profile.get("app_name", "tg"),
+            "appName": reghelp_email_app_name(profile),
             "appDevice": app_device,
             "phone": e164,
             "type": normalized_type,

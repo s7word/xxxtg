@@ -1,0 +1,16 @@
+[Unit]
+Description=Forward Proxy-Seller residential ports through WARP SOCKS
+After=warp-proxy-mode.service
+Requires=warp-proxy-mode.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/xxxtg/backend/scripts/warp_ps_hop.py --auto-bind --start-port 10000 --count 1000 --warp 127.0.0.1:41080 --upstream res.proxy-seller.com
+Restart=always
+RestartSec=2
+LimitNOFILE=65535
+# Do not inherit a public bind via unexpected env.
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

@@ -86,6 +86,16 @@ class TestSmsallVerifyAndDecide(unittest.TestCase):
         mod.reset_state()
         self.mod = mod
 
+    def test_resolve_batch_app_type_prefers_request(self):
+        from backend.app.api.smsall_hooks import resolve_batch_app_type
+
+        cfg = _cfg(active_app_type="telegram_android")
+        self.assertEqual(resolve_batch_app_type("telegram_ios", cfg), "telegram_ios")
+        self.assertEqual(resolve_batch_app_type(None, cfg), "telegram_android")
+        self.assertEqual(resolve_batch_app_type("", cfg), "telegram_android")
+        with self.assertRaises(ValueError):
+            resolve_batch_app_type("telegram_desktop", cfg)
+
     def test_hmac_and_bearer(self):
         raw = b'{"schema":"smsall.alert.v1"}'
         secret = "unit-hook-secret"
@@ -651,6 +661,44 @@ class TestSmsallHttp(unittest.TestCase):
         stored = self.mod.get_event("evt-co-1")
         self.assertEqual(stored["action"], "trial")
         self.assertEqual(stored["batch_id"], body["batch_id"])
+
+    def test_trial_accepts_ios_app_type(self):
+        self.mod.remember_events([{
+            "id": "evt-pt-ios",
+            "action": "received",
+            "country": "pt",
+            "country_name": "Portugal",
+            "price_usd": 0.75,
+            "type": "restock",
+        }])
+        cfg = _cfg(active_app_type="telegram_android")
+        with patch("backend.app.api.routes.ConfigManager") as mgr, \
+             patch("backend.app.api.smsall_hooks.RegistrationOrchestrator.run_batch", new_callable=AsyncMock) as run_batch:
+            mgr.get_instance.return_value.config = cfg
+            res = self.client.post("/api/smsall/trial", json={
+                "event_id": "evt-pt-ios",
+                "country": "PT",
+                "count": 1,
+                "concurrency": 1,
+                "app_type": "telegram_ios",
+            })
+        self.assertEqual(res.status_code, 200)
+        body = res.json()
+        self.assertEqual(body.get("app_type"), "telegram_ios")
+        self.assertIn("telegram_ios", body.get("message") or "")
+        self.assertEqual(run_batch.call_args.kwargs.get("app_type"), "telegram_ios")
+
+    def test_trial_rejects_unknown_app_type(self):
+        cfg = _cfg()
+        with patch("backend.app.api.routes.ConfigManager") as mgr:
+            mgr.get_instance.return_value.config = cfg
+            res = self.client.post("/api/smsall/trial", json={
+                "country": "pt",
+                "count": 1,
+                "concurrency": 1,
+                "app_type": "telegram_desktop",
+            })
+        self.assertEqual(res.status_code, 400)
 
     def test_hooks_path_is_public_when_auth_enabled(self):
         from backend.app.services.auth import path_requires_auth

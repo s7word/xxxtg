@@ -181,6 +181,8 @@ class TestAttestationGatewayPreference(unittest.TestCase):
             self.assertEqual(gw.antisafety.api_bases, ["https://api.antisafety.net"])
             order = gw._provider_order()
             self.assertEqual([name for name, _ in order], ["reghelp", "antisafety"])
+            ios_order = gw._provider_order({"app_device": "iOS", "lang_pack": "ios", "app_name": "tgiOS"})
+            self.assertEqual([name for name, _ in ios_order], ["reghelp"])
         finally:
             asyncio.run(gw.close())
 
@@ -289,7 +291,7 @@ class TestPublishedCustomCredentials(unittest.TestCase):
             custom_api_hash="014b35b6184100b085b0d0572f9b5103",
         )
         resolved = DeviceProfileManager.resolve_effective_credentials(profile, config, has_push_token=False)
-        self.assertEqual(resolved["api_id"], 4)
+        self.assertEqual(resolved["api_id"], 6)
         self.assertTrue(resolved["is_published_api_id"])
         self.assertEqual(resolved["credential_risk"], "published_id_without_push_token")
 

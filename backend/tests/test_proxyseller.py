@@ -168,6 +168,9 @@ class TestCountryMatching(unittest.TestCase):
         self.assertEqual(resolve_iso2_country("ma"), "MA")
         self.assertEqual(resolve_iso2_country("MAR"), "MA")
         self.assertEqual(resolve_iso2_country("Morocco"), "MA")
+        self.assertEqual(resolve_iso2_country("pt"), "PT")
+        self.assertEqual(resolve_iso2_country("PRT"), "PT")
+        self.assertEqual(resolve_iso2_country("Portugal"), "PT")
         self.assertEqual(country_alpha3("ma"), "MAR")
         aliases = expand_country_aliases("ma")
         self.assertIn("ma", aliases)
@@ -768,6 +771,14 @@ class TestResidentTgLists(unittest.IsolatedAsyncioTestCase):
         self.assertIn("s_tgcl10000", pinned[0]["username"])
         self.assertEqual(pinned[0]["password"], "tools_secret")
         self.assertNotIn("dead_list_login", pinned[0]["username"])
+
+        from backend.app.services.proxyseller import apply_resident_session_tag
+
+        rotated = apply_resident_session_tag(pinned[0], "r123456")
+        self.assertIn("s_tgcl10000r123456", rotated["username"])
+        self.assertEqual(rotated["session_tag"], "r123456")
+        self.assertEqual(rotated["port"], pinned[0]["port"])
+        self.assertNotEqual(rotated["username"], pinned[0]["username"])
 
     async def test_bot_api_lists_are_never_candidates(self):
         svc = ProxySellerService("test-key", include_static=False)

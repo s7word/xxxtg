@@ -3,16 +3,20 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from backend.app.models.schemas import normalize_proxy_mode
 from backend.app.services.proxyseller import (
     ProxySellerService,
+    apply_resident_session_tag,
     format_proxy_endpoint,
     is_custom_proxy,
     is_resident_tg,
     is_static_residential,
     match_proxy_country,
+    mint_resident_session_tag,
     proxy_identity,
 )
 
@@ -44,6 +48,7 @@ class ProxyLeaseRegistry:
 
     def __init__(self) -> None:
         self._leases: Dict[str, str] = {}
+        self._retired: set[str] = set()
         self._lock = asyncio.Lock()
 
     @classmethod
@@ -60,7 +65,12 @@ class ProxyLeaseRegistry:
 
     def is_leased(self, proxy: Dict[str, Any]) -> bool:
         ident = proxy_identity(proxy)
-        return ident in self._leases
+        return ident in self._leases or ident in self._retired
+
+    async def retire(self, proxy: Dict[str, Any]) -> None:
+        ident = proxy_identity(proxy)
+        async with self._lock:
+            self._retired.add(ident)
 
     async def try_lease(self, proxy: Dict[str, Any], owner: str) -> bool:
         ident = proxy_identity(proxy)
@@ -78,11 +88,22 @@ class ProxyLeaseRegistry:
 
 
 class BatchProxySlotPool:
-    """大小为并发度的可复用代理队列；活跃任务与出口 1:1，任务结束归还槽位。"""
+    """大小为并发度的代理队列；活跃任务与出口 1:1。
 
-    def __init__(self, country: str, proxies: List[Dict[str, Any]], batch_id: str) -> None:
+    ``consume_once=True`` 时任务结束后不归还，跨批次也不再发同一条单线。
+    """
+
+    def __init__(
+        self,
+        country: str,
+        proxies: List[Dict[str, Any]],
+        batch_id: str,
+        *,
+        consume_once: bool = False,
+    ) -> None:
         self.country = (country or "").lower()
         self.batch_id = batch_id
+        self.consume_once = bool(consume_once)
         self._capacity = len(proxies)
         self._queue: asyncio.Queue[Dict[str, Any]] = asyncio.Queue()
         for item in proxies:
@@ -107,6 +128,9 @@ class BatchProxySlotPool:
         registry = await ProxyLeaseRegistry.get_instance()
         owner = f"{self.batch_id}:{task_id}"
         await registry.release(proxy, owner)
+        if self.consume_once:
+            await registry.retire(proxy)
+            return
         await self._queue.put(dict(proxy))
 
 
@@ -176,6 +200,18 @@ async def _allocate_from_proxy_seller(
         if not regional:
             return []
 
+        session_tag = mint_resident_session_tag()
+        regional = [
+            apply_resident_session_tag(item, session_tag) if is_resident_tg(item) else dict(item)
+            for item in regional
+        ]
+        logger.info(
+            "批次住宅 session 已轮换 country=%s tag=%s nodes=%s",
+            country,
+            session_tag,
+            sum(1 for item in regional if is_resident_tg(item)),
+        )
+
         candidates = svc._sort_candidates(regional)  # type: ignore[attr-defined]
         rotated = svc._rotate(country, candidates)  # type: ignore[attr-defined]
         seen: set[str] = set()
@@ -209,6 +245,19 @@ async def prepare_batch_proxy_pool(
     mode = normalize_proxy_mode(proxy_mode)
     need = max(1, int(slots or 1))
     target = (country or "").lower()
+    unique = bool(getattr(config, "proxy_unique_ip_per_task", False))
+    if not unique:
+        unique = os.environ.get("EDGENODE_UNIQUE_PROXY_IP", "").strip().lower() in {
+            "1", "true", "yes", "on",
+        }
+    if not unique:
+        for flag in (
+            Path("/app/data/.unique_proxy_ip"),
+            Path("data/.unique_proxy_ip"),
+        ):
+            if flag.exists():
+                unique = True
+                break
     logs: List[str] = []
     registry = await ProxyLeaseRegistry.get_instance()
 
@@ -223,11 +272,12 @@ async def prepare_batch_proxy_pool(
     if len(picked) < need and mode in {"auto", "custom_pool"}:
         api_key = str(getattr(config, "proxy_seller_key", "") or "").strip()
         if api_key:
-            api_picked = await _allocate_from_proxy_seller(target, need, api_key, registry)
+            want = need + len(getattr(registry, "_retired", set()) or [])
+            api_picked = await _allocate_from_proxy_seller(target, max(need, want), api_key, registry)
             seen = {proxy_identity(p) for p in picked}
             for item in api_picked:
                 ident = proxy_identity(item)
-                if ident in seen:
+                if ident in seen or registry.is_leased(item):
                     continue
                 seen.add(ident)
                 picked.append(item)
@@ -237,7 +287,7 @@ async def prepare_batch_proxy_pool(
     if mode == "auto" and not picked:
         msg = (
             f"[代理槽位] 批次 {batch_id}: 目标区域 {target.upper()} 无法预分配任何同国代理，"
-            "已禁止跨区 fallback；请补充 ZA 住宅列表/自建池或降低并发。"
+            f"已禁止跨区 fallback；请补充 {target.upper()} 住宅列表/自建池或降低并发。"
         )
         logs.append(msg)
         return None, 0, logs
@@ -248,10 +298,21 @@ async def prepare_batch_proxy_pool(
     effective = min(need, len(picked))
     pool_proxies = picked[:effective]
     origins = sorted({_proxy_origin_label(p) for p in pool_proxies})
+    bind_note = "单线消耗不复用" if unique else "活跃任务与出口 1:1 绑定"
+    session_tags = sorted({
+        str(item.get("session_tag") or "")
+        for item in pool_proxies
+        if item.get("session_tag")
+    })
     logs.append(
         f"[代理槽位] 批次 {batch_id}: 预分配 {effective}/{need} 条 {target.upper()} 同国代理"
-        f"（来源: {' / '.join(origins)}），活跃任务与出口 1:1 绑定"
+        f"（来源: {' / '.join(origins)}），{bind_note}"
     )
+    if session_tags:
+        logs.append(
+            f"[代理槽位] 住宅 session 已轮换 tag={','.join(session_tags)}"
+            "（同口换新出口，不复用上一轮 ttl_24h 粘性 IP）"
+        )
     for idx, proxy in enumerate(pool_proxies, start=1):
         logs.append(
             f"[代理槽位] 槽 {idx}/{effective}: {_proxy_origin_label(proxy)} "
@@ -262,7 +323,7 @@ async def prepare_batch_proxy_pool(
             f"[代理槽位] ⚠️ 同国代理仅 {effective} 条，批次并发由 {need} 降为 {effective}"
         )
 
-    return BatchProxySlotPool(target, pool_proxies, batch_id), effective, logs
+    return BatchProxySlotPool(target, pool_proxies, batch_id, consume_once=unique), effective, logs
 
 
 async def fail_batch_tasks_no_proxy(

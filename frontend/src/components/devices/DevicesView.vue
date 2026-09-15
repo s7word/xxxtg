@@ -4,14 +4,22 @@
       <div>
         <h2>📱 硬件指纹 & 拓扑库</h2>
         <p>
-          多国家 REGISTRATOR 指纹包持久化在 <code>data/device_dbs/</code>。
-          注册调度按目标国家精确抽取；若该国还没有已激活库，会按语言/时区/品牌规则自动合成一包再配对。
-          也可手动上传或一键合成。
+          iOS 与 Android 两套包分开调度。注册按目标国家抽对应平台；缺包时按该国语言/时区即时合成。
+          当前基线是官方 iOS（<code>api_id=8</code> / <code>lang_pack=ios</code>），按指定国家生成。
         </p>
       </div>
-      <button class="ce-btn-ghost" :disabled="deviceLoading" @click="fetchDeviceCatalog">
-        {{ deviceLoading ? '刷新中...' : '刷新目录' }}
-      </button>
+      <div class="row-wrap">
+        <button class="ce-btn-ghost" :disabled="deviceLoading" @click="fetchDeviceCatalog">
+          {{ deviceLoading ? '刷新中...' : '刷新目录' }}
+        </button>
+        <button
+          class="ce-btn-ghost"
+          :disabled="purgeBusy || !deviceCatalogMeta.android_pack_count"
+          @click="purgeAndroidPacks"
+        >
+          {{ purgeBusy ? '清理中...' : `清空 Android（${deviceCatalogMeta.android_pack_count || 0}）` }}
+        </button>
+      </div>
     </div>
 
     <div class="ce-panel is-glow between">
@@ -21,13 +29,12 @@
           <div class="row-wrap">
             <h3>调度池</h3>
             <span class="ce-badge is-success">{{ deviceCatalogMeta.enabled_packs }} 套已激活</span>
-            <span class="ce-badge is-info">{{ deviceCatalogMeta.total_count }} 条样本</span>
-            <span v-if="deviceCatalogMeta.disabled_packs" class="ce-badge is-warn">
-              {{ deviceCatalogMeta.disabled_packs }} 套停用
-            </span>
+            <span class="ce-badge is-info">iOS {{ deviceCatalogMeta.ios_pack_count || 0 }}</span>
+            <span class="ce-badge is-warn">Android {{ deviceCatalogMeta.android_pack_count || 0 }}</span>
+            <span class="ce-badge">{{ deviceCatalogMeta.total_count }} 条样本</span>
           </div>
           <p class="ce-tiny" style="margin-top:4px">
-            国家精确匹配优先。缺包时按目标国规则自动合成（哥伦比亚、拉脱维亚等任意 ISO-2 同一套方法），不再拿智利包打进别国任务。
+            指定国家生成 iOS 会写入官方 api_id=8。Android 按下方 AntiSafety 模板选 App ID（4 / 6 / 21724），custom 模式不再盖这些值。
           </p>
           <div v-if="deviceCatalogMeta.active_countries.length" class="row-wrap" style="margin-top:8px">
             <span v-for="code in deviceCatalogMeta.active_countries" :key="code" class="ce-badge is-info">
@@ -51,8 +58,8 @@
           <div>
             <h3>📤 上传国家指纹库</h3>
             <p class="ce-tiny" style="margin-top:6px">
-              接受 <code>2026-08-23_14-49-28_ Indonesia.db</code> 这类固定表结构 SQLite。
-              系统自动解析机型 / SDK / 语言包 / 时区，并从文件名推断国家。
+              接受 REGISTRATOR 结构 SQLite。系统解析机型 / SDK / 语言包 / 时区，并从文件名推断国家。
+              上传包若带别人的 APP_ID，调度时仍按平台合同纠偏（iOS 钉 8）。
             </p>
           </div>
           <label class="ce-btn" style="cursor:pointer">
@@ -81,14 +88,26 @@
 
       <div class="ce-panel stack">
         <div class="ce-panel-head">
-          <h3>🧬 参数化合成</h3>
-          <span class="ce-badge is-info">真机 SKU 规则库</span>
+          <h3>🧬 指定国家合成</h3>
+          <span class="ce-badge is-info">{{ generateBadge }}</span>
         </div>
         <p class="ce-tiny">
-          不是盲目随机机型名。按 Samsung / Xiaomi / Huawei / Motorola / Realme / Vivo / OPPO
-          真实货号、出厂 SDK 区间、Telegram Android 版本矩阵和国家语言/时区联合分布生成。
+          iOS：16/17 系机型、iOS 18.x、App 12.9.3、<code>lang_pack=ios</code>，语言/时区跟出口国 overlay。
+          Android：真机 SKU + 国别 locale，主版版本只抽 APKMirror 真实矩阵。
+          REGHelp Integrity 单独传 APK <code>versionCode</code>，不是 Settings 显示 build。
         </p>
         <div class="grid-2">
+          <div>
+            <label class="ce-label">平台</label>
+            <select
+              class="ce-select"
+              :value="generateForm.platform"
+              @change="setGeneratePlatform($event.target.value)"
+            >
+              <option value="ios">iOS 官方（api_id=8）</option>
+              <option value="android">Android（AntiSafety 模板）</option>
+            </select>
+          </div>
           <div>
             <label class="ce-label">目标国家</label>
             <select v-model="generateForm.country" class="ce-select">
@@ -99,13 +118,27 @@
               </optgroup>
             </select>
           </div>
+          <div v-if="generateForm.platform === 'android'" style="grid-column:1 / -1">
+            <label class="ce-label">Android App ID / AntiSafety 模板</label>
+            <select v-model="generateForm.app_type" class="ce-select">
+              <option v-for="opt in ANDROID_GENERATE_OPTIONS" :key="opt.value" :value="opt.value">
+                {{ opt.label }} · {{ opt.version }}
+              </option>
+            </select>
+            <p class="ce-tiny" style="margin-top:6px">
+              写入官方 <code>api_id={{ selectedAndroidGenerate.apiId }}</code>，
+              版本 {{ selectedAndroidGenerate.version }}。
+              AntiSafety AID（{{ selectedAndroidGenerate.aidKey }}）：
+              <span class="mono">{{ selectedAndroidAid || '未配置' }}</span>
+            </p>
+          </div>
           <div>
             <label class="ce-label">样本条数</label>
-            <input v-model.number="generateForm.count" type="number" min="10" max="5000" class="ce-input mono" />
+            <input v-model.number="generateForm.count" type="number" min="8" max="5000" class="ce-input mono" />
           </div>
-          <div class="span-2">
+          <div>
             <label class="ce-label">别名（可选）</label>
-            <input v-model="generateForm.alias" type="text" class="ce-input" placeholder="例如：印尼安装300.db" />
+            <input v-model="generateForm.alias" type="text" class="ce-input" placeholder="例如：iOS 备用 葡萄牙 PT" />
           </div>
         </div>
         <label class="ce-label" style="display:flex;align-items:center;gap:8px">
@@ -113,18 +146,24 @@
           生成后立即投入调度
         </label>
         <button class="ce-btn" :disabled="generateBusy" @click="generateDevicePack">
-          {{ generateBusy ? '正在按规则库合成...' : '一键合成该国家指纹库' }}
+          {{ generateBusy ? '正在合成...' : `合成 ${generateForm.platform === 'ios' ? 'iOS' : 'Android'} · ${(generateForm.country || '').toUpperCase()}` }}
         </button>
       </div>
     </div>
 
-    <div v-if="!devicePacks.length" class="ce-panel">
-      <p class="ce-tiny">目录为空。上传现有 Base.db / Indonesia.db，或先合成一套目标国家样本。</p>
+    <div class="row-wrap" style="margin:8px 0">
+      <button class="ce-btn-ghost" :class="{ 'is-glow': packFilter === 'ios' }" @click="packFilter = 'ios'">iOS 包</button>
+      <button class="ce-btn-ghost" :class="{ 'is-glow': packFilter === 'android' }" @click="packFilter = 'android'">Android 包</button>
+      <button class="ce-btn-ghost" :class="{ 'is-glow': packFilter === 'all' }" @click="packFilter = 'all'">全部</button>
+    </div>
+
+    <div v-if="!visiblePacks.length" class="ce-panel">
+      <p class="ce-tiny">这一栏是空的。选国家后点「合成」，或清空 Android 后只看 iOS。</p>
     </div>
 
     <div class="grid-cards">
       <div
-        v-for="pack in devicePacks"
+        v-for="pack in visiblePacks"
         :key="pack.id"
         class="ce-panel stack"
         :class="{ 'is-glow': selectedPackId === pack.id }"
@@ -136,9 +175,11 @@
           <span :class="pack.enabled ? 'ce-badge is-success' : 'ce-badge is-warn'">
             {{ pack.enabled ? '调度中' : '已停用' }}
           </span>
+          <span class="ce-badge is-info">{{ pack.platform === 'ios' ? 'iOS' : (pack.app_type || 'Android') }}</span>
         </div>
         <div class="ce-stat"><span>国家</span><span>{{ (pack.country || '—').toUpperCase() }} · {{ pack.country_name || '未标注' }}</span></div>
         <div class="ce-stat"><span>样本</span><span>{{ pack.sample_count }}</span></div>
+        <div class="ce-stat"><span>包内 App ID</span><span class="mono">{{ formatPackApiIds(pack) }}</span></div>
         <div class="ce-stat"><span>来源</span><span>{{ sourceLabel(pack.source) }}</span></div>
         <div class="ce-stat"><span>质量</span><span>{{ pack.quality?.score ?? '—' }} / 100</span></div>
         <div class="row-wrap">
@@ -158,7 +199,7 @@
               v-model="countryDrafts[pack.id]"
               type="text"
               class="ce-input w-sm mono"
-              placeholder="ca / cl / id"
+              placeholder="ca / cl / pt"
               style="max-width:88px"
             />
             <button
@@ -184,19 +225,20 @@
       </div>
       <p class="ce-tiny">
         原始文件 {{ selectedPack.origin_name }} ·
+        平台 {{ selectedPack.platform === 'ios' ? 'iOS' : 'Android' }} ·
         质量 {{ selectedPack.quality?.score ?? '—' }} ·
         {{ selectedPack.quality?.notes || '已完成 REGISTRATOR 解析' }}
       </p>
       <div class="grid-2">
         <div class="stack">
-          <strong class="ce-tiny">品牌分布</strong>
-          <div v-for="(count, name) in selectedPack.stats?.brands || {}" :key="'b'+name" class="stack" style="gap:4px">
+          <strong class="ce-tiny">{{ selectedPack.platform === 'ios' ? '机型分布' : '品牌分布' }}</strong>
+          <div v-for="(count, name) in (selectedPack.platform === 'ios' ? selectedPack.stats?.models : selectedPack.stats?.brands) || {}" :key="'b'+name" class="stack" style="gap:4px">
             <div class="between ce-tiny"><span>{{ name }}</span><span class="mono">{{ count }}</span></div>
             <div class="ce-progress"><i :style="{ width: percentOf(count, selectedPack.sample_count) + '%' }"></i></div>
           </div>
         </div>
         <div class="stack">
-          <strong class="ce-tiny">SDK 分布</strong>
+          <strong class="ce-tiny">{{ selectedPack.platform === 'ios' ? '系统版本' : 'SDK 分布' }}</strong>
           <div v-for="(count, name) in selectedPack.stats?.sdks || {}" :key="'s'+name" class="stack" style="gap:4px">
             <div class="between ce-tiny"><span>{{ name }}</span><span class="mono">{{ count }}</span></div>
             <div class="ce-progress"><i :style="{ width: percentOf(count, selectedPack.sample_count) + '%' }"></i></div>
@@ -214,13 +256,13 @@
           </div>
         </div>
         <div class="stack">
-          <strong class="ce-tiny">时区偏置 / 性能档</strong>
+          <strong class="ce-tiny">时区 / App ID</strong>
           <div class="row-wrap">
             <span v-for="(count, name) in selectedPack.stats?.tz_offsets || {}" :key="'tz'+name" class="ce-badge is-warn">
               tz {{ name }} · {{ count }}
             </span>
-            <span v-for="(count, name) in selectedPack.stats?.perf_cats || {}" :key="'pf'+name" class="ce-badge">
-              perf {{ name }} · {{ count }}
+            <span v-for="(count, name) in selectedPack.stats?.api_ids || {}" :key="'api'+name" class="ce-badge">
+              api_id {{ name }} · {{ count }}
             </span>
           </div>
         </div>
@@ -233,15 +275,28 @@
           <h3>{{ p.name }}</h3>
           <span class="ce-badge is-info">{{ p.app_name }}</span>
         </div>
-        <span v-if="p.is_published_api_id" class="ce-badge is-warn">官方公开泄露 ID（需 Push Token）</span>
-        <span v-else class="ce-badge is-success">自建开发者凭证</span>
-        <div class="ce-stat"><span>API ID / Hash</span><span>{{ p.api_id }} / {{ (p.api_hash || '').substring(0, 8) }}...</span></div>
+        <span v-if="p.is_ios" class="ce-badge is-success">官方 iOS 模板（不被 custom 覆盖）</span>
+        <span v-else-if="p.custom_overlay" class="ce-badge is-warn">Android 被全局 custom 覆盖</span>
+        <span v-else-if="p.is_published_api_id" class="ce-badge is-warn">官方公开泄露 ID（需 Push Token）</span>
+        <span v-else class="ce-badge is-success">模板官方凭证</span>
+        <div class="ce-stat">
+          <span>模板 App ID</span>
+          <span class="mono">{{ p.template_api_id || p.api_id }}</span>
+        </div>
+        <div v-if="p.custom_overlay" class="ce-stat">
+          <span>全局 custom（仅 Android）</span>
+          <span class="mono">{{ p.api_id }}</span>
+        </div>
+        <div v-else class="ce-stat">
+          <span>生效 App ID</span>
+          <span class="mono">{{ p.api_id }}</span>
+        </div>
         <div class="ce-stat"><span>设备硬件型号</span><span>{{ p.device_model }}</span></div>
         <div class="ce-stat"><span>操作系统版本</span><span>{{ p.system_version }}</span></div>
         <div class="ce-stat"><span>端点版本号</span><span>{{ p.app_version }}</span></div>
-        <div class="ce-stat"><span>构建编号</span><span>{{ p.app_build }}</span></div>
         <div class="ce-stat"><span>协议语言包</span><span>{{ p.lang_pack }}</span></div>
-        <div class="ce-aid">Attestation AID: {{ p.aid }}</div>
+        <div v-if="!p.is_ios" class="ce-aid">Attestation AID: {{ p.aid || '—' }}</div>
+        <div v-else class="ce-tiny">iOS 不使用 AntiSafety AID</div>
       </div>
     </div>
   </section>
@@ -249,8 +304,11 @@
 
 <script setup>
 import { computed } from 'vue'
-import { COUNTRY_CATALOG, COUNTRY_GROUP_META, formatCountryLabel } from '../../composables/useShared'
+import { ANDROID_GENERATE_OPTIONS, COUNTRY_CATALOG, COUNTRY_GROUP_META, formatCountryLabel } from '../../composables/useShared'
+import { useConfig } from '../../composables/useConfig'
 import { useDevices } from '../../composables/useDevices'
+
+const { config } = useConfig()
 
 const {
   deviceProfiles,
@@ -266,6 +324,8 @@ const {
   deviceFileInput,
   generateForm,
   generateBusy,
+  packFilter,
+  purgeBusy,
   renameDrafts,
   countryDrafts,
   busyPackId,
@@ -275,38 +335,31 @@ const {
   updateDevicePack,
   toggleDevicePack,
   deleteDevicePack,
+  setGeneratePlatform,
   generateDevicePack,
+  purgeAndroidPacks,
   percentOf,
   countryFlag
 } = useDevices()
 
 const countryGroups = computed(() => {
-  const listed = deviceCatalogMeta.value.supported_countries || []
   const catalogByCode = Object.fromEntries(COUNTRY_CATALOG.map((item) => [item.value, item]))
-  const items = (listed.length ? listed : COUNTRY_CATALOG).map((item) => {
-    const code = item.code || item.value
-    const extra = catalogByCode[code] || {}
-    const merged = {
-      ...extra,
-      ...item,
-      value: code,
-      code,
-      name_zh: item.name_zh || extra.name_zh,
-      name_en: extra.name_en || item.name,
-      dial: item.dial ? (String(item.dial).startsWith('+') ? item.dial : `+${item.dial}`) : extra.dial
-    }
-    return { ...merged, label: formatCountryLabel(merged) }
+  const items = COUNTRY_CATALOG.map((item) => {
+    const code = item.value
+    return { ...item, code, label: formatCountryLabel(item) }
   })
   const groups = COUNTRY_GROUP_META.map((group) => ({
     ...group,
-    options: items.filter((item) => (item.group || catalogByCode[item.code]?.group || 'other') === group.id)
+    options: items.filter((item) => (item.group || catalogByCode[item.code]?.group) === group.id)
   })).filter((group) => group.options.length)
-  const groupedCodes = new Set(groups.flatMap((group) => group.options.map((item) => item.code)))
-  const leftover = items.filter((item) => !groupedCodes.has(item.code))
-  if (leftover.length) {
-    groups.push({ id: 'other', label: '其它 · Other', options: leftover })
-  }
   return groups
+})
+
+const visiblePacks = computed(() => {
+  const rows = devicePacks.value || []
+  if (packFilter.value === 'ios') return rows.filter((item) => item.platform === 'ios')
+  if (packFilter.value === 'android') return rows.filter((item) => item.platform !== 'ios')
+  return rows
 })
 
 const sourceLabel = (source) => ({
@@ -314,4 +367,22 @@ const sourceLabel = (source) => ({
   generated: '参数化合成',
   imported: '遗留导入'
 }[source] || source || '未知')
+
+const selectedAndroidGenerate = computed(() => (
+  ANDROID_GENERATE_OPTIONS.find((item) => item.value === generateForm.value.app_type) || ANDROID_GENERATE_OPTIONS[0]
+))
+const selectedAndroidAid = computed(() => (
+  config.antisafety_aids?.[selectedAndroidGenerate.value.aidKey] || ''
+))
+const generateBadge = computed(() => {
+  if (generateForm.value.platform === 'ios') return '官方 iOS api_id=8'
+  return `Android api_id=${selectedAndroidGenerate.value.apiId}`
+})
+
+const formatPackApiIds = (pack) => {
+  const ids = pack?.stats?.api_ids || {}
+  const keys = Object.keys(ids)
+  if (!keys.length) return pack?.platform === 'ios' ? '8（合成合同）' : '—'
+  return keys.map((id) => `${id}×${ids[id]}`).join(' · ')
+}
 </script>

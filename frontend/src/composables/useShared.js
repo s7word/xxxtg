@@ -13,6 +13,7 @@ export const COUNTRY_CATALOG = [
   { value: 'gb', name_zh: '英国', name_en: 'United Kingdom', dial: '+44', group: 'eu' },
   { value: 'de', name_zh: '德国', name_en: 'Germany', dial: '+49', group: 'eu' },
   { value: 'fr', name_zh: '法国', name_en: 'France', dial: '+33', group: 'eu' },
+  { value: 'pt', name_zh: '葡萄牙', name_en: 'Portugal', dial: '+351', group: 'eu' },
   { value: 'ru', name_zh: '俄罗斯', name_en: 'Russia', dial: '+7', group: 'cis' },
   { value: 'ua', name_zh: '乌克兰', name_en: 'Ukraine', dial: '+380', group: 'cis' },
   { value: 'kz', name_zh: '哈萨克斯坦', name_en: 'Kazakhstan', dial: '+7', group: 'cis' },
@@ -73,11 +74,50 @@ export const COUNTRY_GROUPS = COUNTRY_GROUP_META.map((group) => ({
 export const COUNTRY_OPTIONS = COUNTRY_GROUPS.flatMap((group) => group.options)
 
 export const APP_TYPE_OPTIONS = [
+  { value: 'telegram_ios', label: '📱 官方 iOS 注册（api_id=8 / tgiOS / 无 AID）' },
   { value: 'telegram_android', label: '📱 MTProto Android (官方主版 SDK 33 / AID: 308a...)' },
   { value: 'telegram_android_public', label: '📱 MTProto Android Public api_id=4（vault/严格对齐）' },
   { value: 'telegram_x', label: '⚡ MTProto TDLib (官方极速版 / AID: 47f7...)' },
   { value: 'telegram_9', label: '🕰️ MTProto Legacy (经典稳定版 SDK 32 / AID: 59e5...)' }
 ]
+
+export const APP_TYPE_SHORTCUTS = [
+  { value: 'telegram_ios', label: '官方 iOS' },
+  { value: 'telegram_android', label: 'Android 主版' }
+]
+
+export const ANDROID_GENERATE_OPTIONS = [
+  {
+    value: 'telegram_android',
+    label: 'Android 主版 · api_id=6',
+    apiId: 6,
+    aidKey: 'telegram_android',
+    version: 'APKMirror 10.14–12.10 真实矩阵'
+  },
+  {
+    value: 'telegram_android_public',
+    label: 'Android Public / vault · api_id=4',
+    apiId: 4,
+    aidKey: 'telegram_android',
+    version: '12.7.3 (67509)'
+  },
+  {
+    value: 'telegram_x',
+    label: 'Telegram X / TDLib · api_id=21724',
+    apiId: 21724,
+    aidKey: 'telegram_x',
+    version: '0.26.5.1692 / Integrity 1692020'
+  },
+  {
+    value: 'telegram_9',
+    label: 'Telegram 9 Legacy · api_id=6',
+    apiId: 6,
+    aidKey: 'telegram_9',
+    version: '9.6.7 (33632)'
+  }
+]
+
+export const isIosAppType = (appType) => String(appType || '').trim() === 'telegram_ios'
 
 export const maskHash = (hash) => {
   if (!hash) return '未配置'

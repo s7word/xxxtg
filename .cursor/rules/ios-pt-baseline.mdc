@@ -1,0 +1,26 @@
+---
+description: 葡萄牙官方 iOS 10/10 黄金基线，禁止拆合同
+globs: backend/app/services/ios_*.py,backend/app/services/device_profile.py,backend/app/services/init_connection.py,backend/app/services/code_delivery.py,backend/app/services/registrar.py
+alwaysApply: true
+---
+
+# 官方 iOS 基线（PT 2026-09-15 10/10）
+
+先读 `docs/IOS_PT_BASELINE.md` 和冻结日志 `docs/baselines/pt-ios-20260915/`。
+回退标签：`baseline/pt-ios-10-20260915`。
+
+批次 `1e213443` 是本仓第一份官方 iOS **10/10 注册成功**对照。改 iOS / locale / CodeSettings / InitConnection / REGHelp / 代理前，对照该合同。
+
+## 不许改坏的合同
+
+- iOS：`api_id=8`、`lang_pack=ios`、REGHelp `tgiOS`+`iOS`、无 AID / AntiSafety
+- InitConnection.params 只有 `tz_offset` + `bundleId=ph.telegra.Telegraph`
+- iOS 禁止 `perf_cat` / `safety_net` / `cert_fingerprint` / params 里塞 `device_token`
+- `unknown_number=false`；闪信/漏接默认 grammers。PH 的 Call **不是** flashcall 造成的
+- `GetNearestDc` 再切 DC，禁止写死 DC5（PT 实测 DC4）
+- 出口国 locale：PT=`pt`/`pt-PT`/`tz=0`（`0` 合法，禁止 `or 28800`）
+- 不做夏令时；不要把 PT 改成 `pt-BR` 或巴西姓名
+- 非官方 api_id（94575 等）不启用
+- 批量上限 10，未点名不开 30 路
+
+说错就指出，不要盲改。改坏了用标签回退，不要凭记忆重写。
