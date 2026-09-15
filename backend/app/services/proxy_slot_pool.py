@@ -10,11 +10,13 @@ from typing import Any, Dict, List, Optional, Tuple
 from backend.app.models.schemas import normalize_proxy_mode
 from backend.app.services.proxyseller import (
     ProxySellerService,
+    apply_resident_session_tag,
     format_proxy_endpoint,
     is_custom_proxy,
     is_resident_tg,
     is_static_residential,
     match_proxy_country,
+    mint_resident_session_tag,
     proxy_identity,
 )
 
@@ -198,6 +200,18 @@ async def _allocate_from_proxy_seller(
         if not regional:
             return []
 
+        session_tag = mint_resident_session_tag()
+        regional = [
+            apply_resident_session_tag(item, session_tag) if is_resident_tg(item) else dict(item)
+            for item in regional
+        ]
+        logger.info(
+            "批次住宅 session 已轮换 country=%s tag=%s nodes=%s",
+            country,
+            session_tag,
+            sum(1 for item in regional if is_resident_tg(item)),
+        )
+
         candidates = svc._sort_candidates(regional)  # type: ignore[attr-defined]
         rotated = svc._rotate(country, candidates)  # type: ignore[attr-defined]
         seen: set[str] = set()
@@ -285,10 +299,20 @@ async def prepare_batch_proxy_pool(
     pool_proxies = picked[:effective]
     origins = sorted({_proxy_origin_label(p) for p in pool_proxies})
     bind_note = "单线消耗不复用" if unique else "活跃任务与出口 1:1 绑定"
+    session_tags = sorted({
+        str(item.get("session_tag") or "")
+        for item in pool_proxies
+        if item.get("session_tag")
+    })
     logs.append(
         f"[代理槽位] 批次 {batch_id}: 预分配 {effective}/{need} 条 {target.upper()} 同国代理"
         f"（来源: {' / '.join(origins)}），{bind_note}"
     )
+    if session_tags:
+        logs.append(
+            f"[代理槽位] 住宅 session 已轮换 tag={','.join(session_tags)}"
+            "（同口换新出口，不复用上一轮 ttl_24h 粘性 IP）"
+        )
     for idx, proxy in enumerate(pool_proxies, start=1):
         logs.append(
             f"[代理槽位] 槽 {idx}/{effective}: {_proxy_origin_label(proxy)} "

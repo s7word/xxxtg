@@ -620,13 +620,27 @@ def tools_auth_from_lists(lists: Iterable[Dict[str, Any]]) -> Tuple[Optional[str
     return login, password
 
 
+def mint_resident_session_tag() -> str:
+    """每批次一个新 sticky session，避免 ttl_24h 把洪水出口粘住。"""
+    return f"r{int(time.time()) % 1_000_000:06d}"
+
+
+def sanitize_session_tag(tag: Optional[str]) -> str:
+    raw = "".join(ch for ch in str(tag or "") if ch.isalnum())
+    return raw[:12]
+
+
 def build_resident_tg_username(
     base_login: str,
     *,
     country: Optional[str] = None,
     port: Optional[int] = None,
+    session_tag: Optional[str] = None,
 ) -> str:
-    """login_c_CL_s_tg10000_ttl_24h — 用 Api-Tools 账密按国家钉死出口。"""
+    """login_c_CL_s_tg10000_ttl_24h — 用 Api-Tools 账密按国家钉死出口。
+
+    ``session_tag`` 会拼进 ``s_``，同一端口也能换到新出口 IP。
+    """
     base = (base_login or "").strip()
     if not base:
         return ""
@@ -636,9 +650,41 @@ def build_resident_tg_username(
         parts.append(f"c_{cc}")
     if port:
         sid = f"tg{(cc or 'xx').lower()}{int(port)}"
+        tag = sanitize_session_tag(session_tag)
+        if tag:
+            sid = f"{sid}{tag}"
         parts.append(f"s_{sid[:48]}")
         parts.append("ttl_24h")
     return "_".join(parts)
+
+
+def apply_resident_session_tag(proxy: Dict[str, Any], tag: str) -> Dict[str, Any]:
+    """给已导出的 {CC}_tg 节点换新 session，端口不变、出口 IP 变。"""
+    if not is_resident_tg(proxy):
+        return proxy
+    user = str(proxy.get("username") or proxy.get("login") or "")
+    if "_c_" in user:
+        base = user.split("_c_", 1)[0]
+    elif "_s_" in user:
+        base = user.split("_s_", 1)[0]
+    else:
+        base = user
+    country = proxy.get("country_code") or proxy.get("region")
+    port = proxy.get("port")
+    try:
+        port_i = int(port) if port is not None else None
+    except (TypeError, ValueError):
+        port_i = None
+    new_user = build_resident_tg_username(
+        base, country=country, port=port_i, session_tag=tag
+    )
+    if not new_user:
+        return proxy
+    out = dict(proxy)
+    out["username"] = new_user
+    out["login"] = new_user
+    out["session_tag"] = sanitize_session_tag(tag)
+    return out
 
 
 def resolve_iso2_country(query: Optional[str]) -> Optional[str]:

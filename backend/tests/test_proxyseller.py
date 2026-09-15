@@ -772,6 +772,14 @@ class TestResidentTgLists(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(pinned[0]["password"], "tools_secret")
         self.assertNotIn("dead_list_login", pinned[0]["username"])
 
+        from backend.app.services.proxyseller import apply_resident_session_tag
+
+        rotated = apply_resident_session_tag(pinned[0], "r123456")
+        self.assertIn("s_tgcl10000r123456", rotated["username"])
+        self.assertEqual(rotated["session_tag"], "r123456")
+        self.assertEqual(rotated["port"], pinned[0]["port"])
+        self.assertNotEqual(rotated["username"], pinned[0]["username"])
+
     async def test_bot_api_lists_are_never_candidates(self):
         svc = ProxySellerService("test-key", include_static=False)
         self._install_router(
