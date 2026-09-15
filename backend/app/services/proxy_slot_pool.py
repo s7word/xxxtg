@@ -3,12 +3,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from backend.app.models.schemas import normalize_proxy_mode
 from backend.app.services.proxyseller import (
+    RESIDENT_TG_PORT_CAP,
     ProxySellerService,
     apply_resident_session_tag,
     format_proxy_endpoint,
@@ -87,9 +89,90 @@ class ProxyLeaseRegistry:
                 del self._leases[ident]
 
 
-class BatchProxySlotPool:
-    """大小为并发度的代理队列；活跃任务与出口 1:1。
+def unique_proxy_ip_enabled(config: Any) -> bool:
+    """读取单线不复用开关（config / 环境变量 / 标志文件）。"""
+    if bool(getattr(config, "proxy_unique_ip_per_task", False)):
+        return True
+    if os.environ.get("EDGENODE_UNIQUE_PROXY_IP", "").strip().lower() in {
+        "1", "true", "yes", "on",
+    }:
+        return True
+    for flag in (Path("/app/data/.unique_proxy_ip"), Path("data/.unique_proxy_ip")):
+        if flag.exists():
+            return True
+    return False
 
+
+def compute_batch_proxy_demand(
+    *,
+    task_count: int,
+    concurrency: int,
+    planned_leases: int,
+    attempts_per_task: int,
+    proxy_max_uses: int,
+    unique_ip: bool = False,
+    port_cap: int = RESIDENT_TG_PORT_CAP,
+) -> Dict[str, Any]:
+    """按计划租号量预计算同国代理条数，再交给住宅列表按量导出。
+
+    200 次租号 ≠ 200 条独立出口。``{CC}_tg`` 住宅列表最多展开
+    ``RESIDENT_TG_PORT_CAP``（40）个 session 口。公式：
+
+    - 活跃绑定 = 并发度（unique_ip 时至少等于任务数）
+    - 猎号轮换 = max(活跃绑定, ceil(计划租号 / 每出口 sendCode 上限),
+      并发 × ceil(每任务取号 / 每出口上限))
+    - 实际请求 = min(住宅口上限, 猎号轮换需求)
+
+    非猎号（每任务只租 1 次）退化为旧语义：只要并发条数。
+    """
+    live = max(1, int(concurrency or 1))
+    tasks = max(1, int(task_count or 1))
+    leases = max(0, int(planned_leases or 0))
+    attempts = max(1, int(attempts_per_task or 1))
+    uses = max(1, int(proxy_max_uses or 1))
+    cap = max(1, int(port_cap or RESIDENT_TG_PORT_CAP))
+    cap = min(cap, RESIDENT_TG_PORT_CAP)
+
+    live_need = max(live, tasks) if unique_ip else live
+    if attempts <= 1:
+        hunt_need = live_need
+    else:
+        per_task = max(1, math.ceil(attempts / uses))
+        lease_need = max(1, math.ceil(leases / uses)) if leases else per_task * live
+        isolated_need = per_task * (tasks if unique_ip else live)
+        hunt_need = max(live_need, lease_need, isolated_need)
+
+    requested = min(cap, hunt_need)
+    capped = hunt_need > cap
+    rotation_spare = max(0, requested - live_need)
+    message = (
+        f"计划租号 {leases} 次（{tasks} 路 × {attempts} 次），"
+        f"每出口最多 {uses} 次 sendCode，活跃绑定 {live_need} 条"
+        f"{'（单线不复用）' if unique_ip else ''} → 请求 {requested} 条同国代理"
+    )
+    if capped:
+        message += f"（住宅列表上限 {cap}，理论需求 {hunt_need}，无法按租号数 1:1 配独立 IP）"
+    elif attempts > 1:
+        message += f"，猎号轮换余量 {rotation_spare} 条"
+    return {
+        "live_slots": live_need,
+        "hunt_need": hunt_need,
+        "requested": requested,
+        "port_cap": cap,
+        "capped": capped,
+        "rotation_spare": rotation_spare,
+        "planned_leases": leases,
+        "attempts_per_task": attempts,
+        "proxy_max_uses": uses,
+        "unique_ip": bool(unique_ip),
+        "message": message,
+    }
+
+
+class BatchProxySlotPool:
+    """批次预分配的同国代理队列；活跃任务与出口 1:1。
+
+    池容量可以大于并发度：多出来的线留给猎号 ``try_rotate``。
     ``consume_once=True`` 时任务结束后不归还，跨批次也不再发同一条单线。
     """
 
@@ -105,6 +188,7 @@ class BatchProxySlotPool:
         self.batch_id = batch_id
         self.consume_once = bool(consume_once)
         self._capacity = len(proxies)
+        self._held: Dict[str, Dict[str, Any]] = {}
         self._queue: asyncio.Queue[Dict[str, Any]] = asyncio.Queue()
         for item in proxies:
             self._queue.put_nowait(dict(item))
@@ -112,6 +196,13 @@ class BatchProxySlotPool:
     @property
     def size(self) -> int:
         return self._capacity
+
+    def available(self) -> int:
+        return self._queue.qsize()
+
+    def held_proxy(self, task_id: str) -> Optional[Dict[str, Any]]:
+        held = self._held.get(task_id)
+        return dict(held) if held else None
 
     async def acquire(self, task_id: str) -> Dict[str, Any]:
         proxy = await self._queue.get()
@@ -122,16 +213,51 @@ class BatchProxySlotPool:
             raise RuntimeError(
                 f"代理 {format_proxy_endpoint(proxy)} 已被其它任务占用，1:1 槽位冲突"
             )
+        self._held[task_id] = proxy
         return proxy
 
-    async def release(self, proxy: Dict[str, Any], task_id: str) -> None:
+    async def try_rotate(self, task_id: str) -> Optional[Dict[str, Any]]:
+        """把当前持有的线换成池里另一条空闲同国出口；没有余量则返回 None。"""
+        current = self._held.get(task_id)
+        if current is None:
+            return None
         registry = await ProxyLeaseRegistry.get_instance()
         owner = f"{self.batch_id}:{task_id}"
-        await registry.release(proxy, owner)
+        skipped: List[Dict[str, Any]] = []
+        nxt: Optional[Dict[str, Any]] = None
+        while True:
+            try:
+                cand = self._queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            if registry.is_leased(cand):
+                skipped.append(cand)
+                continue
+            if await registry.try_lease(cand, owner):
+                nxt = cand
+                break
+            skipped.append(cand)
+        for item in skipped:
+            self._queue.put_nowait(item)
+        if nxt is None:
+            return None
+        await registry.release(current, owner)
         if self.consume_once:
-            await registry.retire(proxy)
+            await registry.retire(current)
+        else:
+            self._queue.put_nowait(dict(current))
+        self._held[task_id] = nxt
+        return nxt
+
+    async def release(self, proxy: Dict[str, Any], task_id: str) -> None:
+        current = self._held.pop(task_id, None) or proxy
+        registry = await ProxyLeaseRegistry.get_instance()
+        owner = f"{self.batch_id}:{task_id}"
+        await registry.release(current, owner)
+        if self.consume_once:
+            await registry.retire(current)
             return
-        await self._queue.put(dict(proxy))
+        await self._queue.put(dict(current))
 
 
 async def _allocate_from_custom_pool(
@@ -188,7 +314,7 @@ async def _allocate_from_proxy_seller(
         ensure_fn = getattr(svc, "ensure_tg_resident_list", None)
         if callable(ensure_fn):
             try:
-                ensured = await ensure_fn(country, create=True)
+                ensured = await ensure_fn(country, create=True, ports=need)
                 if ensured.get("created") or ensured.get("proxies"):
                     invalidate = getattr(svc, "invalidate_cache", None)
                     if callable(invalidate):
@@ -237,32 +363,27 @@ async def prepare_batch_proxy_pool(
     slots: int,
     config: Any,
     proxy_mode: str,
+    concurrency: Optional[int] = None,
+    demand: Optional[Dict[str, Any]] = None,
 ) -> Tuple[Optional[BatchProxySlotPool], int, List[str]]:
-    """
-    为批次预拉 ``slots`` 条同国代理（等于并发度，非任务总数）。
+    """为批次预拉 ``slots`` 条同国代理（按租号需求计算，可大于并发度）。
+
+    ``concurrency`` 是活跃 1:1 绑定条数；池容量可以更大，多出来的留给猎号轮换。
     返回 (池, 有效并发度, 日志行)。池为 None 表示沿用任务级旧逻辑。
     """
     mode = normalize_proxy_mode(proxy_mode)
     need = max(1, int(slots or 1))
+    live = max(1, int(concurrency if concurrency is not None else need))
     target = (country or "").lower()
-    unique = bool(getattr(config, "proxy_unique_ip_per_task", False))
-    if not unique:
-        unique = os.environ.get("EDGENODE_UNIQUE_PROXY_IP", "").strip().lower() in {
-            "1", "true", "yes", "on",
-        }
-    if not unique:
-        for flag in (
-            Path("/app/data/.unique_proxy_ip"),
-            Path("data/.unique_proxy_ip"),
-        ):
-            if flag.exists():
-                unique = True
-                break
+    unique = unique_proxy_ip_enabled(config)
     logs: List[str] = []
     registry = await ProxyLeaseRegistry.get_instance()
 
     if mode == "fallback":
-        return None, need, logs
+        return None, live, logs
+
+    if demand and demand.get("message"):
+        logs.append(f"[代理需求] {demand['message']}")
 
     picked: List[Dict[str, Any]] = []
 
@@ -293,20 +414,23 @@ async def prepare_batch_proxy_pool(
         return None, 0, logs
 
     if not picked and mode == "custom_pool":
-        return None, need, logs
+        return None, live, logs
 
-    effective = min(need, len(picked))
-    pool_proxies = picked[:effective]
+    allocated = min(need, len(picked))
+    pool_proxies = picked[:allocated]
+    effective = min(live, allocated)
     origins = sorted({_proxy_origin_label(p) for p in pool_proxies})
     bind_note = "单线消耗不复用" if unique else "活跃任务与出口 1:1 绑定"
+    spare = max(0, allocated - effective)
     session_tags = sorted({
         str(item.get("session_tag") or "")
         for item in pool_proxies
         if item.get("session_tag")
     })
     logs.append(
-        f"[代理槽位] 批次 {batch_id}: 预分配 {effective}/{need} 条 {target.upper()} 同国代理"
+        f"[代理槽位] 批次 {batch_id}: 预分配 {allocated}/{need} 条 {target.upper()} 同国代理"
         f"（来源: {' / '.join(origins)}），{bind_note}"
+        f"，活跃并发 {effective}，猎号轮换余量 {spare}"
     )
     if session_tags:
         logs.append(
@@ -315,12 +439,20 @@ async def prepare_batch_proxy_pool(
         )
     for idx, proxy in enumerate(pool_proxies, start=1):
         logs.append(
-            f"[代理槽位] 槽 {idx}/{effective}: {_proxy_origin_label(proxy)} "
+            f"[代理槽位] 槽 {idx}/{allocated}: {_proxy_origin_label(proxy)} "
             f"{format_proxy_endpoint(proxy)}"
         )
-    if effective < need:
+    if allocated < need:
         logs.append(
-            f"[代理槽位] ⚠️ 同国代理仅 {effective} 条，批次并发由 {need} 降为 {effective}"
+            f"[代理槽位] ⚠️ 同国代理仅 {allocated} 条（请求 {need}）"
+        )
+    if effective < live:
+        logs.append(
+            f"[代理槽位] ⚠️ 批次并发由 {live} 降为 {effective}"
+        )
+    if allocated <= effective and need > live:
+        logs.append(
+            f"[代理槽位] ⚠️ 猎号轮换余量为 0，达 sendCode 上限后无法换出口"
         )
 
     return BatchProxySlotPool(target, pool_proxies, batch_id, consume_once=unique), effective, logs

@@ -517,7 +517,10 @@ class AppConfigModel(BaseModel):
         default=5,
         ge=1,
         le=50,
-        description="同一出口代理在猎号任务内最多用于 auth.sendCode 的次数，达到后轮换代理（保留设备与 Push）",
+        description=(
+            "同一出口代理在猎号任务内最多用于 auth.sendCode 的次数，达到后从批次预分配池换同国线"
+            "（保留设备与 Push）。启动前按 ceil(计划租号/本值) 预拉对应国家代理，受住宅列表 40 口上限约束。"
+        ),
     )
     proxy_require_country_match: bool = Field(
         default=True,
