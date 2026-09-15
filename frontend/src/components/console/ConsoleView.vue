@@ -16,7 +16,26 @@
           </button>
         </div>
 
-        <LiveStockCountryPicker v-if="launchMode === 'auto'" v-model="form.country" :provider="form.sms_provider" />
+        <div v-if="launchMode === 'auto'" class="stack">
+          <div>
+            <label class="ce-label">指定测试国家（合成目录，不依赖库存列表）</label>
+            <select v-model="form.country" class="ce-select">
+              <optgroup v-for="group in COUNTRY_GROUPS" :key="group.id" :label="group.label">
+                <option v-for="opt in group.options" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+              </optgroup>
+            </select>
+            <p class="ce-tiny">
+              委内瑞拉 / 伊拉克已在目录里。点启动后走同一套状态机：语言时区跟号国 overlay，缺指纹包会按该国参数自动合成。
+            </p>
+          </div>
+          <LiveStockCountryPicker v-model="form.country" :provider="form.sms_provider" />
+          <div class="ce-alert" :class="isIosPath ? 'is-ok' : 'is-info'">
+            <strong>本次启动合同</strong>
+            <p class="ce-tiny" style="margin-top:6px">{{ launchContract.countryLine }}</p>
+            <p class="ce-tiny">{{ launchContract.protocolLine }}</p>
+            <p class="ce-tiny">{{ launchContract.packLine }}</p>
+          </div>
+        </div>
 
         <div v-if="launchMode === 'manual'" class="stack">
           <div>
@@ -70,7 +89,7 @@
             </p>
           </div>
           <p v-else class="ce-tiny" style="margin-top:6px">
-            Android / TDLib 走 Attestation 与 AID。要复现葡萄牙 10/10 基线，切到「官方 iOS」。
+            Android / TDLib 走 Attestation 与 AID。控制台启动和验证批次是同一条 <code>RegistrationOrchestrator</code>，不会走另一套参数。要复现葡萄牙 10/10 基线，切到「官方 iOS」。
           </p>
         </div>
 
@@ -626,15 +645,17 @@
 
 <script setup>
 import { computed } from 'vue'
-import { APP_TYPE_OPTIONS, APP_TYPE_SHORTCUTS, COUNTRY_GROUPS, countryFlag, classifyLogLine, getStatusBadgeClass, formatDuration, formatTime, isIosAppType } from '../../composables/useShared'
+import { APP_TYPE_OPTIONS, APP_TYPE_SHORTCUTS, COUNTRY_CATALOG, COUNTRY_GROUPS, COUNTRY_LOCALE_HINTS, countryFlag, classifyLogLine, formatCountryLabel, getStatusBadgeClass, formatDuration, formatTime, isIosAppType } from '../../composables/useShared'
 import LiveStockCountryPicker from './LiveStockCountryPicker.vue'
 import { useConfig } from '../../composables/useConfig'
 import { useProxy } from '../../composables/useProxy'
 import { useTasks } from '../../composables/useTasks'
 import { useUi } from '../../composables/useUi'
 import { useManualRegister } from '../../composables/useManualRegister'
+import { useDevices } from '../../composables/useDevices'
 
 const { config, form, smsProviderLabel } = useConfig()
+const { devicePacks } = useDevices()
 const {
   matchedProxy, proxyPool, customProxiesForCountry, customProxySummaryText,
   registrationProxies, roleLabel, testing: proxyTesting, refreshProxyPool, previewAutoSelect
@@ -663,6 +684,36 @@ const {
 } = useManualRegister()
 
 const isIosPath = computed(() => isIosAppType(form.app_type))
+
+const launchContract = computed(() => {
+  const code = String(form.country || '').toLowerCase()
+  const catalog = COUNTRY_CATALOG.find((item) => item.value === code)
+  const locale = COUNTRY_LOCALE_HINTS[code] || {}
+  const countryLabel = catalog ? formatCountryLabel(catalog) : `${countryFlag(code)} ${(code || '?').toUpperCase()}`
+  const localeBits = [
+    locale.lang ? `lang=${locale.lang}` : '',
+    locale.system ? `system=${locale.system}` : '',
+    locale.tz != null ? `tz=${locale.tz}` : ''
+  ].filter(Boolean)
+  const countryLine = localeBits.length
+    ? `${countryLabel} · ${localeBits.join(' / ')}`
+    : `${countryLabel} · 语言时区跟号国 overlay`
+  const protocolLine = isIosPath.value
+    ? '官方 iOS：api_id=8，InitConnection 只带 tz_offset + bundleId；CodeSettings 不写 Android 槽。'
+    : '官方 Android：有 SIM 合同（flashcall/missed/current=是），FCM 走 InitConnection.params.device_token，并补齐 installer/data/perf_cat。'
+  const platform = isIosPath.value ? 'ios' : 'android'
+  const packs = (devicePacks.value || []).filter((item) => {
+    const sameCountry = String(item.country || '').toLowerCase() === code
+    const samePlatform = isIosPath.value
+      ? item.platform === 'ios'
+      : item.platform !== 'ios'
+    return sameCountry && samePlatform && item.enabled !== false
+  })
+  const packLine = packs.length
+    ? `已有 ${packs.length} 套${platform === 'ios' ? ' iOS' : ' Android'} 指纹包，启动时按号国抽样。`
+    : `当前没有 ${code.toUpperCase()} 的${platform === 'ios' ? ' iOS' : ' Android'} 包，启动时会按该国参数自动合成。`
+  return { countryLine, protocolLine, packLine }
+})
 
 const effectiveMaxPrice = computed(() => {
   const taskBid = Number(form.max_price)

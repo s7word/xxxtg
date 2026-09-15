@@ -31,7 +31,7 @@
     </select>
 
     <p class="ce-tiny">
-      默认按 Telegram 库存量从多到少排序。
+      默认按 Telegram 库存量从多到少排序。目录国家（如委内瑞拉 / 伊拉克）即使没货也会出现，可直接指定。
       <span v-if="smsStock.updated_at">
         更新于 {{ formatUpdated(smsStock.updated_at) }}
         <span v-if="smsStock.cached"> · 缓存 {{ Math.round(smsStock.cache_age_seconds || 0) }}s</span>

@@ -20,6 +20,7 @@ COUNTRY_LANG_MAP = {
     "co": {"lang_code": "es", "system_lang_code": "es-co", "tz_offset": -18000, "dial": "57"},
     "pe": {"lang_code": "es", "system_lang_code": "es-pe", "tz_offset": -18000, "dial": "51"},
     "ar": {"lang_code": "es", "system_lang_code": "es-ar", "tz_offset": -10800, "dial": "54"},
+    "ve": {"lang_code": "es", "system_lang_code": "es-ve", "tz_offset": -14400, "dial": "58"},
     # 西欧
     "gb": {"lang_code": "en", "system_lang_code": "en-gb", "tz_offset": 0, "dial": "44"},
     "de": {"lang_code": "de", "system_lang_code": "de-de", "tz_offset": 3600, "dial": "49"},

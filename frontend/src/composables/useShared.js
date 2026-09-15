@@ -10,6 +10,7 @@ export const COUNTRY_CATALOG = [
   { value: 'co', name_zh: '哥伦比亚', name_en: 'Colombia', dial: '+57', group: 'sa' },
   { value: 'pe', name_zh: '秘鲁', name_en: 'Peru', dial: '+51', group: 'sa' },
   { value: 'ar', name_zh: '阿根廷', name_en: 'Argentina', dial: '+54', group: 'sa' },
+  { value: 've', name_zh: '委内瑞拉', name_en: 'Venezuela', dial: '+58', group: 'sa' },
   { value: 'gb', name_zh: '英国', name_en: 'United Kingdom', dial: '+44', group: 'eu' },
   { value: 'de', name_zh: '德国', name_en: 'Germany', dial: '+49', group: 'eu' },
   { value: 'fr', name_zh: '法国', name_en: 'France', dial: '+33', group: 'eu' },
@@ -22,6 +23,7 @@ export const COUNTRY_CATALOG = [
   { value: 'ae', name_zh: '阿联酋', name_en: 'UAE', dial: '+971', group: 'me' },
   { value: 'sa', name_zh: '沙特', name_en: 'Saudi Arabia', dial: '+966', group: 'me' },
   { value: 'eg', name_zh: '埃及', name_en: 'Egypt', dial: '+20', group: 'me' },
+  { value: 'iq', name_zh: '伊拉克', name_en: 'Iraq', dial: '+964', group: 'me' },
   { value: 'af', name_zh: '阿富汗', name_en: 'Afghanistan', dial: '+93', group: 'me' },
   { value: 'za', name_zh: '南非', name_en: 'South Africa', dial: '+27', group: 'af' },
   { value: 'ng', name_zh: '尼日利亚', name_en: 'Nigeria', dial: '+234', group: 'af' },
@@ -35,6 +37,46 @@ export const COUNTRY_CATALOG = [
   { value: 'ph', name_zh: '菲律宾', name_en: 'Philippines', dial: '+63', group: 'apac' },
   { value: 'au', name_zh: '澳大利亚', name_en: 'Australia', dial: '+61', group: 'apac' }
 ]
+
+/** 与后端 COUNTRY_LANG_MAP 对齐，供控制台启动合同预览。 */
+export const COUNTRY_LOCALE_HINTS = {
+  ca: { lang: 'en', system: 'en-ca', tz: -18000 },
+  us: { lang: 'en', system: 'en-us', tz: -18000 },
+  mx: { lang: 'es', system: 'es-mx', tz: -21600 },
+  cl: { lang: 'es', system: 'es-cl', tz: -14400 },
+  br: { lang: 'pt', system: 'pt-br', tz: -10800 },
+  co: { lang: 'es', system: 'es-co', tz: -18000 },
+  pe: { lang: 'es', system: 'es-pe', tz: -18000 },
+  ar: { lang: 'es', system: 'es-ar', tz: -10800 },
+  ve: { lang: 'es', system: 'es-ve', tz: -14400 },
+  gb: { lang: 'en', system: 'en-gb', tz: 0 },
+  de: { lang: 'de', system: 'de-de', tz: 3600 },
+  fr: { lang: 'fr', system: 'fr-fr', tz: 3600 },
+  pt: { lang: 'pt', system: 'pt-pt', tz: 0 },
+  ru: { lang: 'ru', system: 'ru-ru', tz: 10800 },
+  ua: { lang: 'uk', system: 'uk-ua', tz: 7200 },
+  kz: { lang: 'ru', system: 'ru-kz', tz: 18000 },
+  uz: { lang: 'uz', system: 'uz-uz', tz: 18000 },
+  tr: { lang: 'tr', system: 'tr-tr', tz: 10800 },
+  ae: { lang: 'ar', system: 'ar-ae', tz: 14400 },
+  sa: { lang: 'ar', system: 'ar-sa', tz: 10800 },
+  eg: { lang: 'ar', system: 'ar-eg', tz: 7200 },
+  iq: { lang: 'ar', system: 'ar-iq', tz: 10800 },
+  af: { lang: 'en', system: 'en-af', tz: 16200 },
+  za: { lang: 'en', system: 'en-za', tz: 7200 },
+  ng: { lang: 'en', system: 'en-ng', tz: 3600 },
+  ke: { lang: 'en', system: 'en-ke', tz: 10800 },
+  in: { lang: 'en', system: 'en-in', tz: 19800 },
+  id: { lang: 'id', system: 'id-id', tz: 25200 },
+  jp: { lang: 'ja', system: 'ja-jp', tz: 32400 },
+  kr: { lang: 'ko', system: 'ko-kr', tz: 32400 },
+  th: { lang: 'th', system: 'th-th', tz: 25200 },
+  vn: { lang: 'vi', system: 'vi-vn', tz: 25200 },
+  ph: { lang: 'en', system: 'en-ph', tz: 28800 },
+  au: { lang: 'en', system: 'en-au', tz: 36000 }
+}
+
+export const catalogCountryCodes = () => new Set(COUNTRY_CATALOG.map((item) => item.value))
 
 export const COUNTRY_GROUP_META = [
   { id: 'na', label: '北美 · North America' },

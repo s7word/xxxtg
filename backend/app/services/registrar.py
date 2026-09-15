@@ -232,6 +232,14 @@ SYNTHETIC_IDENTITY_POOLS = {
         "first": ["Ahmad", "Omar", "Fatima", "Zahra", "Hassan", "Maryam", "Karim", "Laila", "Farid", "Soraya"],
         "last": ["Ahmadi", "Rahimi", "Mohammadi", "Karimi", "Hosseini", "Nazari", "Sadat", "Stanikzai"]
     },
+    "ve": {
+        "first": ["José", "María", "Carlos", "Ana", "Luis", "Carmen", "Andrés", "Valentina", "Pedro", "Isabella"],
+        "last": ["González", "Rodríguez", "Pérez", "Hernández", "García", "Martínez", "López", "Sánchez", "Ramírez", "Díaz"]
+    },
+    "iq": {
+        "first": ["Ali", "Mohammed", "Hussein", "Fatima", "Ahmed", "Zahra", "Omar", "Noor", "Mustafa", "Amina"],
+        "last": ["Al-Maliki", "Al-Saadi", "Al-Obaidi", "Hussein", "Abbas", "Kadhim", "Jassim", "Al-Dulaimi", "Hassan", "Ibrahim"]
+    },
     "default": {
         "first": ["James", "Alex", "David", "Elena", "Marcus", "Lucas", "Sophie", "Michael", "Daniel"],
         "last": ["Smith", "Brown", "Wilson", "Taylor", "Anderson", "White", "Miller", "Davis"]

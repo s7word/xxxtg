@@ -1,5 +1,5 @@
 import { computed, reactive, ref } from 'vue'
-import { isCrossProviderUrl, parseLines, PUBLISHED_API_IDS } from './useShared'
+import { COUNTRY_CATALOG, catalogCountryCodes, countryFlag, isCrossProviderUrl, parseLines, PUBLISHED_API_IDS } from './useShared'
 import { pushToast } from './useUi'
 
 const config = reactive({
@@ -137,22 +137,46 @@ export const formatStockOption = (item) => {
   if (!item) return ''
   const flag = item.flag || ''
   const zh = item.name_zh || item.name || ''
-  const en = item.name || ''
+  const en = item.name || item.name_en || ''
   const title = zh && en && zh !== en ? `${zh} (${en})` : (zh || en || String(item.code || '').toUpperCase())
   const dial = item.dial ? ` (+${String(item.dial).replace(/^\+/, '')})` : ''
+  if (item.catalog_only) {
+    return `${flag} ${title}${dial} · 目录可指定（库存未列出）`
+  }
   const stock = formatStockCount(item.stock)
   const cost = item.cost != null && Number(item.cost) > 0 ? ` · ${Number(item.cost).toFixed(2)}₽` : ''
   return `${flag} ${title}${dial} · ⚡ ${stock} 货${cost}`
 }
 
+const mergeCatalogIntoStock = (stockItems) => {
+  const stock = Array.isArray(stockItems) ? stockItems : []
+  const stockCodes = new Set(stock.map((item) => String(item.code || '').toLowerCase()))
+  const extras = COUNTRY_CATALOG
+    .filter((item) => !stockCodes.has(item.value))
+    .map((item) => ({
+      code: item.value,
+      name: item.name_en,
+      name_en: item.name_en,
+      name_zh: item.name_zh,
+      dial: String(item.dial || '').replace(/^\+/, ''),
+      flag: countryFlag(item.value),
+      stock: 0,
+      cost: null,
+      provider: smsStock.provider,
+      catalog_only: true
+    }))
+  return [...stock, ...extras]
+}
+
 export const filteredStockCountries = computed(() => {
   const q = String(countrySearch.value || '').trim().toLowerCase()
-  const items = smsStock.items || []
+  const items = mergeCatalogIntoStock(smsStock.items)
   if (!q) return items
   return items.filter((item) => {
     const hay = [
-      item.code, item.name, item.name_zh, item.dial,
-      item.dial ? `+${item.dial}` : '', item.provider_country_id
+      item.code, item.name, item.name_en, item.name_zh, item.dial,
+      item.dial ? `+${item.dial}` : '', item.provider_country_id,
+      item.catalog_only ? '目录 指定' : ''
     ].join(' ').toLowerCase()
     return hay.includes(q)
   })
@@ -178,13 +202,14 @@ export const fetchAvailableCountries = async (opts = {}) => {
     smsStock.cache_age_seconds = data.cache_age_seconds || 0
     smsStock.message = data.message || ''
     const codes = new Set(smsStock.items.map((item) => String(item.code || '').toLowerCase()))
+    const catalog = catalogCountryCodes()
     if (smsStock.items.length) {
       const current = String(form.country || '').toLowerCase()
-      if (!codes.has(current)) {
+      if (!codes.has(current) && !catalog.has(current)) {
         form.country = smsStock.items[0].code
       }
       const cfgCurrent = String(config.target_country || '').toLowerCase()
-      if (!codes.has(cfgCurrent)) {
+      if (!codes.has(cfgCurrent) && !catalog.has(cfgCurrent)) {
         config.target_country = smsStock.items[0].code
       }
     }

@@ -50,6 +50,7 @@ REQUIRED_COUNTRIES = (
     "ca", "gb", "de", "fr", "au", "jp", "kr", "th", "vn", "ph",
     "mx", "co", "pe", "ar", "eg", "za", "ng", "ke", "ua", "uz",
     "ae", "sa", "tr", "pt", "br", "us", "kz", "ru", "af", "cl", "in", "id",
+    "ve", "iq",
 )
 
 
@@ -113,6 +114,8 @@ class TestPhoneDialIntelligence(unittest.TestCase):
             "90": "tr",
             "351": "pt",
             "55": "br",
+            "58": "ve",
+            "964": "iq",
         }
         for prefix, iso2 in expected.items():
             self.assertEqual(PHONE_DIAL_TO_ISO2.get(prefix), iso2, prefix)
@@ -147,6 +150,8 @@ class TestPhoneDialIntelligence(unittest.TestCase):
         self.assertEqual(infer_country_from_phone("+971501234567"), "ae")
         self.assertEqual(infer_country_from_phone("+966501234567"), "sa")
         self.assertEqual(infer_country_from_phone("+351912345678"), "pt")
+        self.assertEqual(infer_country_from_phone("+584121234567"), "ve")
+        self.assertEqual(infer_country_from_phone("+9647701234567"), "iq")
 
     def test_canada_proxy_aliases(self):
         aliases = expand_country_aliases("ca")
@@ -236,6 +241,51 @@ class TestDeviceFingerprintSynth(unittest.TestCase):
         self.assertEqual(country_display_name_zh("pt"), "葡萄牙")
         self.assertEqual(country_dial_code("pt"), "351")
         self.assertEqual(normalize_country("Portugal"), "pt")
+
+    def test_venezuela_and_iraq_synth_params(self):
+        ve = COUNTRY_LANG_MAP["ve"]
+        self.assertEqual(ve["lang_code"], "es")
+        self.assertEqual(ve["system_lang_code"], "es-ve")
+        self.assertEqual(ve["tz_offset"], -14400)
+        self.assertEqual(ve["dial"], "58")
+        iq = COUNTRY_LANG_MAP["iq"]
+        self.assertEqual(iq["lang_code"], "ar")
+        self.assertEqual(iq["system_lang_code"], "ar-iq")
+        self.assertEqual(iq["tz_offset"], 10800)
+        self.assertEqual(iq["dial"], "964")
+
+        ve_rows = synthesize_rows("ve", 40, seed=11)
+        self.assertEqual(len(ve_rows), 40)
+        self.assertTrue(any(row["system_lang_code"] == "es-ve" for row in ve_rows))
+        for row in ve_rows:
+            self.assertTrue(sku_sdk_consistent(row["device_model"], row["system_version"]))
+            self.assertTrue(locale_matches_country(row["lang_code"], row["system_lang_code"], "ve"))
+            self.assertTrue(tz_matches_country(row["tz_offset"], "ve"))
+            self.assertEqual(row["tz_offset"], -14400)
+
+        iq_rows = synthesize_rows("iq", 40, seed=17)
+        self.assertEqual(len(iq_rows), 40)
+        self.assertTrue(any(row["system_lang_code"] == "ar-iq" for row in iq_rows))
+        for row in iq_rows:
+            self.assertTrue(sku_sdk_consistent(row["device_model"], row["system_version"]))
+            self.assertTrue(locale_matches_country(row["lang_code"], row["system_lang_code"], "iq"))
+            self.assertTrue(tz_matches_country(row["tz_offset"], "iq"))
+            self.assertEqual(row["tz_offset"], 10800)
+
+        first, last = RegistrationOrchestrator._get_random_name("ve")
+        self.assertIn(first, SYNTHETIC_IDENTITY_POOLS["ve"]["first"])
+        self.assertIn(last, SYNTHETIC_IDENTITY_POOLS["ve"]["last"])
+        first, last = RegistrationOrchestrator._get_random_name("iq")
+        self.assertIn(first, SYNTHETIC_IDENTITY_POOLS["iq"]["first"])
+        self.assertIn(last, SYNTHETIC_IDENTITY_POOLS["iq"]["last"])
+        self.assertEqual(country_display_name("ve"), "Venezuela")
+        self.assertEqual(country_display_name_zh("ve"), "委内瑞拉")
+        self.assertEqual(country_dial_code("ve"), "58")
+        self.assertEqual(country_display_name("iq"), "Iraq")
+        self.assertEqual(country_display_name_zh("iq"), "伊拉克")
+        self.assertEqual(country_dial_code("iq"), "964")
+        self.assertEqual(normalize_country("Venezuela"), "ve")
+        self.assertEqual(normalize_country("Iraq"), "iq")
 
 
 class TestCatalogHelpers(unittest.TestCase):

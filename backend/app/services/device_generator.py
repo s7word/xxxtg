@@ -643,6 +643,32 @@ COUNTRY_SYNTH: Dict[str, Dict[str, Any]] = {
             "vivo": 8, "realme": 8, "other": 10, "motorola": 4,
         },
     },
+    "ve": {
+        "name": "Venezuela",
+        "locales": [
+            ("es", "es-ve", 84),
+            ("es", "es", 10),
+            ("en", "en-us", 6),
+        ],
+        "tz_offsets": [(-14400, 100)],
+        "brands": {
+            "samsung": 32, "motorola": 20, "xiaomi": 16, "huawei": 8,
+            "oppo": 6, "vivo": 6, "realme": 6, "other": 6,
+        },
+    },
+    "iq": {
+        "name": "Iraq",
+        "locales": [
+            ("ar", "ar-iq", 74),
+            ("en", "en-us", 16),
+            ("en", "en-gb", 10),
+        ],
+        "tz_offsets": [(10800, 100)],
+        "brands": {
+            "samsung": 30, "xiaomi": 20, "huawei": 14, "oppo": 10,
+            "vivo": 8, "realme": 8, "motorola": 4, "other": 6,
+        },
+    },
 }
 
 
