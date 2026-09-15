@@ -473,14 +473,21 @@ class AppConfigModel(BaseModel):
         default=False,
         description=(
             "CodeSettings.allow_flashcall；接码网关通常收不到闪信，Android 默认关闭。"
-            "iOS 路径强制 true（对齐已验证成功 payload）。"
+            "iOS 是否开启由 ios_code_settings_call_flags 决定。"
         ),
     )
     code_settings_allow_missed_call: bool = Field(
         default=False,
         description=(
             "CodeSettings.allow_missed_call。Android 默认关闭；"
-            "iOS 路径强制 true（对齐已验证成功 payload）。"
+            "iOS 是否开启由 ios_code_settings_call_flags 决定。"
+        ),
+    )
+    ios_code_settings_call_flags: str = Field(
+        default="grammers",
+        description=(
+            "iOS 闪信/漏接：grammers=两者开（对齐已验证成功 payload）；"
+            "off=两者关。unknown_number 仍强制 false。只影响 iOS。"
         ),
     )
     hunt_sms_first_after_app_streak: int = Field(
