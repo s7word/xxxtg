@@ -125,11 +125,13 @@ def _schedule_launches(launches, background_tasks: BackgroundTasks, config) -> N
             sms_provider=item.get("sms_provider"),
             sniper=sniper,
             provider_ids=item.get("supplier_ids") or None,
+            app_type=item.get("app_type"),
         )
         item["batch_id"] = started["batch_id"]
         item["task_ids"] = list(started["task_ids"])
         item["max_number_attempts"] = started["max_number_attempts"]
         item["planned_leases"] = started["planned_leases"]
+        item["app_type"] = started.get("app_type") or item.get("app_type")
         attach_batch(
             event_id=item.get("event_id"),
             country=country,
@@ -192,6 +194,7 @@ async def receive_smsall_alert(
                 "supplier_ids": item.get("supplier_ids") or [],
                 "sms_provider": item.get("sms_provider"),
                 "sniper": bool(item.get("sniper")),
+                "app_type": item.get("app_type"),
                 "max_number_attempts": item.get("max_number_attempts"),
                 "planned_leases": item.get("planned_leases"),
             }

@@ -67,6 +67,7 @@ def _cfg(**overrides):
         smsall_sniper_max_price_usd=None,
         smsall_sniper_price_caps=[],
         smsall_sniper_use_item_price_as_max=True,
+        smsall_sniper_app_type="telegram_android",
         hunt_max_total_leases=200,
         smsall_webhook_secret="unit-hook-secret",
         sms_provider="smsbower",
@@ -228,6 +229,18 @@ class TestSmsallSniper(unittest.TestCase):
         self.assertEqual(launch["max_number_attempts"], 20)
         # 出价 = item 单价上浮 10%
         self.assertAlmostEqual(launch["max_price"], 0.22, places=4)
+        self.assertEqual(launch["app_type"], "telegram_android")
+
+    def test_sniper_app_type_can_be_ios_without_changing_global(self):
+        cfg = _cfg(smsall_sniper_app_type="telegram_ios", active_app_type="telegram_android")
+        launches, records = self._decide(_payload([_sniper_item(sniper=True)]), cfg)
+        self.assertEqual(launches[0]["app_type"], "telegram_ios")
+        self.assertEqual(records[0]["app_type"], "telegram_ios")
+
+    def test_sniper_app_type_falls_back_to_global_when_empty(self):
+        cfg = _cfg(smsall_sniper_app_type="", active_app_type="telegram_ios")
+        launches, _ = self._decide(_payload([_sniper_item(sniper=True)]), cfg)
+        self.assertEqual(launches[0]["app_type"], "telegram_ios")
 
     def test_sniper_disabled_only_records(self):
         cfg = _cfg(smsall_sniper_enabled=False)
@@ -388,6 +401,7 @@ class TestSniperConfigSurface(unittest.TestCase):
         self.assertIsNone(cfg.smsall_sniper_max_price_usd)
         self.assertEqual(cfg.smsall_sniper_price_caps, [])
         self.assertTrue(cfg.smsall_sniper_use_item_price_as_max)
+        self.assertEqual(cfg.smsall_sniper_app_type, "telegram_android")
 
     def test_overrides_survive_serialization_roundtrip(self):
         from backend.app.models.schemas import AppConfigModel
@@ -398,6 +412,7 @@ class TestSniperConfigSurface(unittest.TestCase):
             smsall_sniper_max_number_attempts=50,
             smsall_sniper_max_price_usd=0.4,
             smsall_sniper_use_item_price_as_max=False,
+            smsall_sniper_app_type="telegram_ios",
         )
         again = AppConfigModel(**json.loads(model.model_dump_json()))
         self.assertFalse(again.smsall_sniper_enabled)
@@ -405,6 +420,7 @@ class TestSniperConfigSurface(unittest.TestCase):
         self.assertEqual(again.smsall_sniper_max_number_attempts, 50)
         self.assertEqual(again.smsall_sniper_max_price_usd, 0.4)
         self.assertFalse(again.smsall_sniper_use_item_price_as_max)
+        self.assertEqual(again.smsall_sniper_app_type, "telegram_ios")
 
     def test_frontend_defaults_and_panel_cover_every_field(self):
         # 后端镜像只带 frontend/dist，源码不在容器里；这时跳过而不是假装通过
@@ -526,7 +542,38 @@ class TestSmsallHttp(unittest.TestCase):
         self.assertEqual(len(kwargs["task_ids"]), 10)
         self.assertEqual(kwargs["country"], "co")
         self.assertEqual(kwargs["sms_provider"], "smsbower")
+        self.assertEqual(kwargs["app_type"], "telegram_android")
+        self.assertEqual(kwargs["proxy_mode"], "auto")
         self.assertAlmostEqual(kwargs["max_price"], 0.33, places=4)
+
+    def test_sniper_ios_setting_reaches_run_batch(self):
+        cfg = _cfg(
+            smsall_auto_register=False,
+            smsall_sniper_app_type="telegram_ios",
+            active_app_type="telegram_android",
+        )
+        body = _payload([_sniper_item()])
+        raw = json.dumps(body, separators=(",", ":")).encode("utf-8")
+        digest = hmac.new(b"unit-hook-secret", raw, hashlib.sha256).hexdigest()
+        with patch("backend.app.api.smsall_hooks.ConfigManager") as mgr, \
+             patch("backend.app.api.smsall_hooks.resolve_secret", return_value="unit-hook-secret"), \
+             patch("backend.app.api.smsall_hooks.RegistrationOrchestrator.run_batch", new_callable=AsyncMock) as run_batch, \
+             patch.object(self.mod, "_busy_task_count", return_value=0):
+            mgr.get_instance.return_value.config = cfg
+            res = self.client.post(
+                "/hooks/smsall",
+                content=raw,
+                headers={
+                    "Content-Type": "application/json",
+                    "X-Smsall-Signature": f"sha256={digest}",
+                    "X-Smsall-Sniper": "1",
+                },
+            )
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.json()["launches"][0]["app_type"], "telegram_ios")
+        self.assertEqual(run_batch.call_args.kwargs["app_type"], "telegram_ios")
+        self.assertEqual(run_batch.call_args.kwargs["country"], "co")
+        self.assertEqual(run_batch.call_args.kwargs["proxy_mode"], "auto")
 
     def test_sniper_overrides_global_fivesim_when_smsbower_upstream(self):
         cfg = _cfg(smsall_auto_register=False, sms_provider="fivesim")
@@ -722,3 +769,49 @@ class TestSmsallHttp(unittest.TestCase):
         self.assertEqual(res.status_code, 200)
         self.assertEqual(res.json().get("deleted"), 1)
         self.assertEqual(self.mod.event_count(), 0)
+
+
+class TestSniperKeyParamAlignment(unittest.TestCase):
+    """自动狙击开跑后仍走同一套号国 overlay / 官方 CodeSettings，不能另起一套参数。"""
+
+    def test_locale_overlay_for_sniper_countries(self):
+        from backend.app.services.device_profile import DeviceProfileManager
+
+        idn = DeviceProfileManager.infer_locale("id")
+        self.assertEqual(idn["lang_code"], "id")
+        self.assertEqual(idn["system_lang_code"], "id-id")
+        self.assertEqual(idn["tz_offset"], 25200)
+        self.assertEqual(idn["dial"], "62")
+
+    def test_official_android_and_ios_flags_for_sniper_profiles(self):
+        from backend.app.services.code_delivery import resolve_code_delivery_plan
+
+        cfg = SimpleNamespace(
+            code_delivery_mode="balanced",
+            api_credential_mode="official",
+            official_client_emulation=False,
+            device_alignment_mode="loose",
+            custom_api_id=None,
+            hunt_sms_first_after_app_streak=0,
+        )
+        android = resolve_code_delivery_plan(cfg, {
+            "app_type": "telegram_android",
+            "api_id": 6,
+            "lang_pack": "android",
+            "system_version": "SDK 34",
+        })
+        self.assertTrue(android.allow_flashcall)
+        self.assertTrue(android.allow_missed_call)
+        self.assertTrue(android.current_number)
+        self.assertFalse(android.unknown_number)
+        self.assertFalse(android.attach_push_token)
+
+        ios = resolve_code_delivery_plan(cfg, {
+            "app_type": "telegram_ios",
+            "api_id": 8,
+            "lang_pack": "ios",
+            "device_model": "iPhone 16 Pro",
+        })
+        self.assertEqual(ios.current_number, False)
+        self.assertFalse(ios.unknown_number)
+        self.assertFalse(ios.allow_app_hash)

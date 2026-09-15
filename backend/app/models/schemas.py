@@ -690,6 +690,13 @@ class AppConfigModel(BaseModel):
         default=True,
         description="用推送里的 priceUsd（上浮 10%）作为本批出价；关闭则用全局 sms_max_price"
     )
+    smsall_sniper_app_type: str = Field(
+        default="telegram_android",
+        description=(
+            "自动狙击的注册途径。独立于一键测试和全局 active_app_type："
+            "telegram_ios / telegram_android / telegram_android_public / telegram_x / telegram_9"
+        ),
+    )
 
     @field_validator("antisafety_base_urls", mode="before")
     @classmethod
