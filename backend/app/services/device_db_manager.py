@@ -81,6 +81,8 @@ COUNTRY_NAME_MAP = {
     "ua": "Ukraine",
     "us": "United States",
     "uz": "Uzbekistan",
+    "ve": "Venezuela",
+    "iq": "Iraq",
     "vn": "Vietnam",
     "za": "South Africa",
 }
@@ -123,6 +125,8 @@ COUNTRY_NAME_ZH_MAP = {
     "ua": "乌克兰",
     "us": "美国",
     "uz": "乌兹别克斯坦",
+    "ve": "委内瑞拉",
+    "iq": "伊拉克",
     "vn": "越南",
     "za": "南非",
 }
@@ -191,6 +195,10 @@ COUNTRY_ALIAS_TOKENS = {
     "saudiarabia": "sa",
     "ksa": "sa",
     "southafrica": "za",
+    "venezuela": "ve",
+    "venezuelan": "ve",
+    "iraq": "iq",
+    "iraqi": "iq",
 }
 
 # 时区秒偏置 → 候选国家（用于内容推断，再与语言交叉确认）
@@ -199,12 +207,12 @@ TZ_COUNTRY_HINTS = {
     -25200: ("ca", "us", "mx"),
     -21600: ("mx", "ca", "us"),
     -18000: ("us", "ca", "mx", "pe", "co"),
-    -14400: ("cl", "ca", "us"),
+    -14400: ("cl", "ve", "ca", "us"),
     -10800: ("br", "ar", "cl"),
     0: ("gb", "pt"),
     3600: ("de", "fr", "ng"),
     7200: ("eg", "za", "ua"),
-    10800: ("ru", "tr", "ke", "sa"),
+    10800: ("ru", "tr", "ke", "sa", "iq"),
     14400: ("ae",),
     16200: ("af",),
     18000: ("kz", "uz", "pk"),
@@ -259,6 +267,8 @@ LOCALE_COUNTRY_HINTS = {
     "ru-uz": "uz",
     "ar-ae": "ae",
     "ar-sa": "sa",
+    "es-ve": "ve",
+    "ar-iq": "iq",
 }
 
 BRAND_PREFIXES = (
