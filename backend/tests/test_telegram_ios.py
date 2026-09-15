@@ -6,6 +6,7 @@ import sys
 import unittest
 from types import SimpleNamespace
 from pathlib import Path
+from unittest.mock import patch
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
@@ -245,6 +246,36 @@ class TestTelegramIosProfile(unittest.TestCase):
         self.assertTrue(str(profile["device_model"]).startswith("iPhone"))
         self.assertTrue(ios_locale_aligned_with_country(profile, "tr"))
         self.assertFalse(ios_locale_aligned_with_country(profile, "ph"))
+
+    def test_ios_display_and_resolve_ignore_custom_roommate_id(self):
+        cfg = SimpleNamespace(
+            api_credential_mode="custom",
+            custom_api_id=35337905,
+            custom_api_hash="deadbeef" * 4,
+            official_client_emulation=False,
+            antisafety_aids={},
+        )
+        from backend.app.config import ConfigManager
+
+        mgr = SimpleNamespace(config=cfg)
+        with patch.object(ConfigManager, "get_instance", return_value=mgr):
+            cards = DeviceProfileManager.get_all_profiles()
+        ios = next(item for item in cards if item["key"] == "telegram_ios")
+        android = next(item for item in cards if item["key"] == "telegram_android")
+        self.assertEqual(ios["api_id"], 8)
+        self.assertEqual(ios["template_api_id"], 8)
+        self.assertTrue(ios["is_ios"])
+        self.assertNotEqual(ios["api_id"], 35337905)
+        self.assertEqual(android["api_id"], 35337905)
+        self.assertTrue(android.get("custom_overlay"))
+
+        resolved = DeviceProfileManager.resolve_effective_credentials(
+            dict(DEFAULT_PROFILES["telegram_ios"]),
+            cfg,
+            has_push_token=False,
+        )
+        self.assertEqual(resolved["api_id"], 8)
+        self.assertEqual(resolved["credential_source"], "official")
 
     def test_resolved_ios_profile_follows_portugal(self):
         profile = DeviceProfileManager.get_resolved_profile("telegram_ios", "pt")

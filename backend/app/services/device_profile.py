@@ -335,14 +335,23 @@ class DeviceProfileManager:
                 aid = config.antisafety_aids.get(key, base.get("default_aid") or "")
             item = dict(base)
             item["aid"] = aid
+            item["template_api_id"] = base["api_id"]
+            item["is_ios"] = key == "telegram_ios" or str(base.get("lang_pack") or "") == "ios"
             item["is_published_api_id"] = base["api_id"] in PUBLISHED_API_ID_BLOCKLIST
             item["credential_source"] = "official"
-            # custom 模式下，展示层面直接呈现将真正生效的自建凭证，避免界面与实际引导行为不一致
-            if config.api_credential_mode == "custom" and config.custom_api_id and config.custom_api_hash:
+            # Android custom 只覆盖 Android 模板。iOS 必须显示官方 api_id=8，
+            # 不能把全局 custom（室友/自建栏）盖到 iOS 卡片上。
+            if (
+                (not item["is_ios"])
+                and config.api_credential_mode == "custom"
+                and config.custom_api_id
+                and config.custom_api_hash
+            ):
                 item["api_id"] = config.custom_api_id
                 item["api_hash"] = config.custom_api_hash
                 item["is_published_api_id"] = int(config.custom_api_id) in PUBLISHED_API_ID_BLOCKLIST
                 item["credential_source"] = "custom"
+                item["custom_overlay"] = True
             result.append(item)
         return result
 
@@ -372,6 +381,14 @@ class DeviceProfileManager:
         resolved["is_published_api_id"] = is_published
         resolved["credential_source"] = "official"
         resolved["credential_risk"] = "none"
+        try:
+            current_id = int(resolved.get("api_id") or 0)
+        except (TypeError, ValueError):
+            current_id = 0
+
+        if current_id == 8 or str(resolved.get("lang_pack") or "").strip().lower() == "ios":
+            # 官方 iOS 不吃 custom / auto fallback，避免把室友自建 api_id 写进 iOS sendCode
+            return cls._finalize_credentials(resolved, config)
 
         if mode == "custom":
             if has_custom:

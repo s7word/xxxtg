@@ -837,6 +837,36 @@ def write_registrator_db(rows: Sequence[Dict[str, Any]], dest: Path) -> Path:
     return dest
 
 
+def validate_android_rows(rows: Sequence[Dict[str, Any]], country: str) -> None:
+    """合成后自检：Android 包不能混 iOS、locale/SKU 必须自洽。"""
+    code = normalize_country(country) or str(country or "").strip().lower()
+    if not rows:
+        raise ValueError("Android 合成结果为空")
+    for row in rows:
+        model = str(row.get("device_model") or "")
+        if model.lower().startswith("iphone") or str(row.get("lang_pack") or "").lower() == "ios":
+            raise ValueError("Android 合成混入了 iOS 行")
+        if str(row.get("lang_pack") or "") != "android":
+            raise ValueError(f"Android lang_pack 必须是 android，得到 {row.get('lang_pack')}")
+        try:
+            api_id = int(row.get("api_id") or 0)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Android 行缺少 api_id") from exc
+        expected = OFFICIAL_API_CREDENTIALS.get(api_id)
+        if api_id not in {4, 6} or not expected:
+            raise ValueError(f"Android 合成 api_id={api_id} 不是本仓允许的官方配对（4/6）")
+        if str(row.get("api_hash") or "").strip().lower() != expected:
+            raise ValueError(f"Android api_id={api_id} 与官方 api_hash 不配对")
+        if not sku_sdk_consistent(model, str(row.get("system_version") or "")):
+            raise ValueError(f"机型 {model} 与 SDK {row.get('system_version')} 不在真机区间")
+        if not locale_matches_country(row.get("lang_code"), row.get("system_lang_code"), code):
+            raise ValueError(
+                f"locale {row.get('lang_code')}/{row.get('system_lang_code')} 对不上 {code}"
+            )
+        if not tz_matches_country(int(row.get("tz_offset") or 0), code):
+            raise ValueError(f"tz {row.get('tz_offset')} 对不上 {code}")
+
+
 def generate_country_db(
     country: str,
     count: int = 300,
@@ -848,6 +878,7 @@ def generate_country_db(
 ) -> Dict[str, Any]:
     code = normalize_country(country)
     rows = synthesize_rows(code or country, count, brand_weights=brand_weights, seed=seed)
+    validate_android_rows(rows, code or country)
     stats = compute_stats(rows)
     quality = assess_quality(stats, code)
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H-%M-%S")

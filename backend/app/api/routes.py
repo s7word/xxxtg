@@ -84,6 +84,7 @@ from backend.app.models.schemas import (
 from backend.app.services.device_profile import DeviceProfileManager
 from backend.app.services.device_db_manager import DeviceDbManager, normalize_country
 from backend.app.services.device_generator import generate_country_db, list_supported_countries
+from backend.app.services.ios_device_catalog import generate_ios_country_db
 from backend.app.services.vaksms import VakSmsService
 from backend.app.services.grizzlysms import (
     GrizzlySmsService,
@@ -281,8 +282,6 @@ def _device_db_list_payload(message: str = "") -> DeviceDbListResponse:
 @router.get("/device-dbs", response_model=DeviceDbListResponse, summary="列出已持久化的多国家硬件指纹包")
 async def list_device_dbs():
     DeviceDbManager.ensure_ready()
-    DeviceDbManager.ensure_ios_country_pack("ph")
-    DeviceDbManager.ensure_ios_country_pack("tr")
     return _device_db_list_payload("已载入硬件指纹 & 拓扑库目录")
 
 
@@ -376,23 +375,44 @@ async def delete_device_db(pack_id: str):
 
 @router.post("/device-dbs/generate", response_model=DeviceDbPackResponse, summary="按目标国家参数化合成一套合规硬件指纹库")
 async def generate_device_db(req: DeviceDbGenerateRequest):
+    platform = str(req.platform or "ios").strip().lower()
+    if platform not in {"ios", "android"}:
+        raise HTTPException(status_code=400, detail="platform 只能是 ios 或 android")
     try:
-        pack = generate_country_db(
-            country=req.country,
-            count=req.count,
-            alias=req.alias,
-            enabled=req.enabled,
-            brand_weights=req.brand_weights,
-            seed=req.seed,
-        )
+        if platform == "ios":
+            pack = generate_ios_country_db(
+                country=req.country,
+                count=req.count,
+                alias=req.alias,
+                enabled=req.enabled,
+                seed=req.seed,
+            )
+        else:
+            pack = generate_country_db(
+                country=req.country,
+                count=max(10, int(req.count or 300)),
+                alias=req.alias,
+                enabled=req.enabled,
+                brand_weights=req.brand_weights,
+                seed=req.seed,
+            )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"合成硬件指纹库失败: {exc}") from exc
     return DeviceDbPackResponse(
         success=True,
-        message=f"已合成 {pack.get('alias')}（{pack.get('sample_count')} 条 / {pack.get('country')}）",
+        message=f"已合成 {pack.get('alias')}（{pack.get('platform') or platform} / {pack.get('sample_count')} 条 / {pack.get('country')}）",
         pack=pack,
+    )
+
+
+@router.post("/device-dbs/purge-android", response_model=DeviceDbListResponse, summary="删除全部 Android 指纹包，只保留 iOS")
+async def purge_android_device_dbs():
+    DeviceDbManager.ensure_ready()
+    removed = DeviceDbManager.delete_android_packs()
+    return _device_db_list_payload(
+        f"已删除 {len(removed)} 套 Android / 未标平台旧包，仅保留 iOS"
     )
 
 # ==================== 1b. 接码平台实时有货拓扑 ====================

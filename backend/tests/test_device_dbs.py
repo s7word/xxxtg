@@ -35,6 +35,7 @@ from backend.app.services.device_generator import (  # noqa: E402
     sku_sdk_consistent,
     synthesize_rows,
     tz_matches_country,
+    validate_android_rows,
     write_registrator_db,
 )
 from backend.app.services.device_profile import DeviceProfileManager  # noqa: E402
@@ -343,7 +344,10 @@ class TestDeviceDbHttpApi(unittest.TestCase):
                     "stats": {"total": 40, "brands": {"samsung": 10}},
                     "quality": {"score": 90, "flags": [], "notes": "ok"},
                 }
-                res = self.client.post("/api/device-dbs/generate", json={"country": "id", "count": 40})
+                res = self.client.post(
+                    "/api/device-dbs/generate",
+                    json={"country": "id", "count": 40, "platform": "android"},
+                )
                 self.assertEqual(res.status_code, 200)
                 body = res.json()
                 self.assertTrue(body["success"])
@@ -427,6 +431,36 @@ class TestIosPhReservePack(unittest.TestCase):
         pack = generate_ios_country_db("pt", count=8, root=self.root, seed=5)
         self.assertEqual(pack["country"], "pt")
         self.assertEqual(infer_pack_platform(pack), "ios")
+
+    def test_ios_generate_accepts_specified_country(self):
+        pack = generate_ios_country_db("de", count=8, root=self.root, seed=2)
+        self.assertEqual(pack["country"], "de")
+        self.assertEqual(infer_pack_platform(pack), "ios")
+        rows = synthesize_ios_rows("de", 6, seed=2)
+        self.assertTrue(all(row["api_id"] == 8 for row in rows))
+        self.assertTrue(all(row["lang_code"] == "de" for row in rows))
+        self.assertTrue(all(row["system_lang_code"] == "de-DE" for row in rows))
+        self.assertTrue(all(int(row["tz_offset"]) == 3600 for row in rows))
+
+    def test_android_synth_is_internally_consistent(self):
+        rows = synthesize_rows("pt", 24, seed=11)
+        validate_android_rows(rows, "pt")
+        self.assertTrue(all(row["lang_pack"] == "android" for row in rows))
+        self.assertTrue(all(int(row["api_id"]) in {4, 6} for row in rows))
+        self.assertFalse(any(str(row["device_model"]).startswith("iPhone") for row in rows))
+        bad = list(rows)
+        bad[0] = {**bad[0], "device_model": "iPhone 16 Pro", "lang_pack": "ios"}
+        with self.assertRaises(ValueError):
+            validate_android_rows(bad, "pt")
+
+    def test_purge_android_keeps_ios(self):
+        generate_ios_country_db("pt", count=8, root=self.root, seed=1)
+        generate_country_db("id", count=12, root=self.root, seed=1)
+        removed = DeviceDbManager.delete_android_packs(root=self.root)
+        self.assertTrue(removed)
+        left = DeviceDbManager.list_packs(self.root)
+        self.assertTrue(left)
+        self.assertTrue(all(infer_pack_platform(item) == "ios" for item in left))
 
 
 if __name__ == "__main__":

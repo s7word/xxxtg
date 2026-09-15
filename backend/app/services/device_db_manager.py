@@ -559,6 +559,7 @@ def compute_stats(rows: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
     tzs: Counter = Counter()
     perfs: Counter = Counter()
     versions: Counter = Counter()
+    api_ids: Counter = Counter()
     for row in items:
         model = str(row.get("device_model") or "")
         models[model] += 1
@@ -570,6 +571,7 @@ def compute_stats(rows: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
         tzs[str(row.get("tz_offset"))] += 1
         perfs[str(row.get("perf_cat"))] += 1
         versions[str(row.get("app_version") or "")] += 1
+        api_ids[str(row.get("api_id") or "")] += 1
 
     def _top(counter: Counter, limit: int = 12) -> Dict[str, int]:
         return {key: int(val) for key, val in counter.most_common(limit) if key}
@@ -590,6 +592,7 @@ def compute_stats(rows: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
         "tz_offsets": _top(tzs),
         "perf_cats": _top(perfs),
         "app_versions": _top(versions),
+        "api_ids": _top(api_ids),
         "sample_models": [name for name, _ in models.most_common(10) if name],
     }
 
@@ -624,7 +627,8 @@ def assess_quality(
         flags.append("low_diversity")
         score -= 12
     brands = stats.get("brands") or {}
-    if brands and max(brands.values()) / max(total, 1) > 0.85:
+    ios_pack = str(platform or "").lower() == "ios"
+    if brands and (not ios_pack) and max(brands.values()) / max(total, 1) > 0.85:
         flags.append("brand_monoculture")
         score -= 8
     lang_packs = stats.get("lang_packs") or {}
@@ -940,6 +944,20 @@ class DeviceDbManager:
         return target
 
     @classmethod
+    def delete_android_packs(cls, root: Optional[Path] = None) -> List[Dict[str, Any]]:
+        """清掉全部 Android / 未标平台的旧包，只留 iOS。磁盘 .db 一并删。"""
+        packs = cls.list_packs(root)
+        removed: List[Dict[str, Any]] = []
+        for item in packs:
+            if infer_pack_platform(item) == "ios":
+                continue
+            try:
+                removed.append(cls.delete_pack(str(item["id"]), root=root))
+            except KeyError:
+                continue
+        return removed
+
+    @classmethod
     def refresh_stats(cls, pack_id: str, root: Optional[Path] = None) -> Dict[str, Any]:
         pack = cls.get_pack(pack_id, root)
         if not pack:
@@ -1063,10 +1081,8 @@ class DeviceDbManager:
         root: Optional[Path] = None,
         count: int = 48,
     ) -> Tuple[Optional[Dict[str, Any]], str, bool]:
-        """iOS 备用包：只给开放国家自动生成，绝不走 Android 合成器。"""
+        """iOS 备用包：指定国家即时合成，绝不走 Android 合成器。"""
         import random
-
-        from backend.app.services.ios_device_catalog import IOS_SEED_COUNTRIES
 
         code = normalize_country(country)
         if not code:
@@ -1077,9 +1093,6 @@ class DeviceDbManager:
             if matched:
                 weights = [max(1, int(item.get("sample_count") or 1)) for item in matched]
                 return random.choices(matched, weights=weights, k=1)[0], "country", False
-            if code not in IOS_SEED_COUNTRIES:
-                pack, match = cls.select_pack(country, root, platform="ios")
-                return pack, match, False
             try:
                 from backend.app.services.ios_device_catalog import generate_ios_country_db
 
@@ -1141,5 +1154,7 @@ class DeviceDbManager:
             "enabled_packs": len(enabled),
             "disabled_packs": len(packs) - len(enabled),
             "active_countries": countries,
+            "ios_pack_count": sum(1 for item in packs if infer_pack_platform(item) == "ios"),
+            "android_pack_count": sum(1 for item in packs if infer_pack_platform(item) != "ios"),
             "packs": packs,
         }
