@@ -253,7 +253,7 @@
               等待 OTP 期间可并行验证多个号码。租号后先做白号预检；已注册号直接退订换号，不消耗 Push Token。
               若服务端仍返回 <code>SentCodeTypeApp</code> 会自动探测 <code>ResendCode</code> 并快速换号。
               RECAPTCHA_CHECK 由 REGHelp RecaptchaMobile 自动解题。
-              可与下方「猎号」叠加：每路任务各自试号并复用自己的 Push；每路会被钉死一个代理槽位，猎号期间不轮换出口。
+              可与下方「猎号」叠加：每路任务各自试号并复用自己的 Push；启动前按计划租号量预拉同国代理，活跃任务 1:1 绑线，达 sendCode 上限后从批次余量轮换。
             </p>
           </div>
         </div>

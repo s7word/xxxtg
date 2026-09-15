@@ -1584,22 +1584,51 @@ class RegistrationOrchestrator:
         reason: str,
         proxy_override: Optional[Dict[str, Any]] = None,
         proxy_id: Optional[str] = None,
+        slot_pool: Optional[Any] = None,
     ) -> Tuple[Dict[str, Any], bool]:
         """猎号轮换出口，返回 (生效代理, 是否真的换掉了)。
 
-        代理是 1:1 预分配（批量槽位 proxy_override）或用户显式指定（proxy_id）时不存在
-        「池内换一个」的语义，直接如实记录不轮换，绝不打出假的「已轮换」日志。
+        用户显式指定 ``proxy_id`` 时不存在「池内换一个」的语义。
+        批量槽位预分配了多余同国出口时，从 ``slot_pool`` 换一条；没有余量则如实
+        记录不轮换，绝不打出假的「已轮换」日志。
         换出来的节点身份与原节点相同（池里只有一个候选）时同样返回 False。
         """
         from backend.app.services.proxyseller import format_proxy_endpoint, proxy_identity
 
         current_identity = proxy_identity(current_proxy) if current_proxy else None
-        if proxy_override or proxy_id:
+        if proxy_id:
             await manager.append_log(
                 task_id,
-                f"[猎号] {reason}：当前为"
-                + ("批量槽位 1:1 绑定" if proxy_override else "用户显式指定")
-                + f"出口 {format_proxy_endpoint(current_proxy or {})}，本模式不轮换代理"
+                f"[猎号] {reason}：当前为用户显式指定"
+                f"出口 {format_proxy_endpoint(current_proxy or {})}，本模式不轮换代理"
+            )
+            return (current_proxy or {}), False
+
+        if slot_pool is not None:
+            swapped = None
+            try_rotate = getattr(slot_pool, "try_rotate", None)
+            if callable(try_rotate):
+                swapped = await try_rotate(task_id)
+            new_identity = proxy_identity(swapped) if swapped else None
+            if swapped and new_identity and new_identity != current_identity:
+                await manager.append_log(
+                    task_id,
+                    f"[猎号] {reason}：出口已轮换 {format_proxy_endpoint(current_proxy or {})} → "
+                    f"{format_proxy_endpoint(swapped)}（批次预分配池）"
+                )
+                return swapped, True
+            await manager.append_log(
+                task_id,
+                f"[猎号] {reason}：批次预分配池暂无空闲同国出口，保持 "
+                f"{format_proxy_endpoint(current_proxy or {})}（未轮换）"
+            )
+            return (current_proxy or {}), False
+
+        if proxy_override:
+            await manager.append_log(
+                task_id,
+                f"[猎号] {reason}：当前为批量槽位 1:1 绑定"
+                f"出口 {format_proxy_endpoint(current_proxy or {})}，本模式不轮换代理"
             )
             return (current_proxy or {}), False
 
@@ -3190,6 +3219,7 @@ class RegistrationOrchestrator:
         max_number_attempts: Optional[int] = None,
         no_number_retries: Optional[int] = None,
         provider_ids: Optional[List[str]] = None,
+        slot_pool: Optional[Any] = None,
     ):
         """执行单次边缘虚拟节点引导全流程。
 
@@ -3357,15 +3387,23 @@ class RegistrationOrchestrator:
                 return
 
             if hunt_enabled:
-                # 代理被 1:1 钉死（批量槽位 / 显式指定）时不存在池内轮换语义，如实播报
-                proxy_pinned = bool(proxy_override or proxy_id)
-                proxy_note = (
-                    "出口已 1:1 钉死"
-                    + ("（批量槽位）" if proxy_override else "（用户显式指定）")
-                    + "，全程不轮换代理"
-                    if proxy_pinned
-                    else f"代理每 {hunt_limits['proxy_max_uses']} 次 sendCode 尝试轮换（池内需有其它同国节点）"
-                )
+                pool_size = int(getattr(slot_pool, "size", 0) or 0) if slot_pool is not None else 0
+                if slot_pool is not None and pool_size > 1:
+                    proxy_note = (
+                        f"出口先 1:1 绑定预分配线，每 {hunt_limits['proxy_max_uses']} 次 sendCode "
+                        f"后从批次池轮换（池内 {pool_size} 条同国代理，活跃任务仍 1:1）"
+                    )
+                elif proxy_override or proxy_id:
+                    proxy_note = (
+                        "出口已 1:1 钉死"
+                        + ("（批量槽位）" if proxy_override else "（用户显式指定）")
+                        + "，全程不轮换代理"
+                    )
+                else:
+                    proxy_note = (
+                        f"代理每 {hunt_limits['proxy_max_uses']} 次 sendCode 尝试轮换"
+                        "（池内需有其它同国节点）"
+                    )
                 await manager.append_log(
                     task_id,
                     f"[猎号] 目标：注册成功即停，否则扫号拉黑。"
@@ -3446,6 +3484,7 @@ class RegistrationOrchestrator:
                         ),
                         proxy_override=proxy_override,
                         proxy_id=proxy_id,
+                        slot_pool=slot_pool,
                     )
                     # 换不掉（池内只有一个节点 / 出口被钉死）时同样清零计数：
                     # 否则每轮都会重复评估并重复播报同一条「未轮换」告警
@@ -3799,6 +3838,7 @@ class RegistrationOrchestrator:
                         reason="CONNECT_TIMEOUT 换出口重试",
                         proxy_override=proxy_override,
                         proxy_id=proxy_id,
+                        slot_pool=slot_pool,
                     )
                     bypass_svc = AttestationGatewayService(config, proxy=active_proxy)
                     await manager.append_log(
@@ -4027,6 +4067,7 @@ class RegistrationOrchestrator:
                         reason=f"FLOOD_WAIT {sec}s 强制换出口",
                         proxy_override=proxy_override,
                         proxy_id=proxy_id,
+                        slot_pool=slot_pool,
                     )
                     if not rotated:
                         # 换不到新出口就继续用同一个 IP 撞频控，只会把号和 Token 一起烧掉
@@ -4564,8 +4605,10 @@ class RegistrationOrchestrator:
     ) -> None:
         """使用 Semaphore 异步并行调度一批虚拟节点引导任务。"""
         from backend.app.services.proxy_slot_pool import (
+            compute_batch_proxy_demand,
             fail_batch_tasks_no_proxy,
             prepare_batch_proxy_pool,
+            unique_proxy_ip_enabled,
         )
 
         manager = RegistrationTaskManager.get_instance()
@@ -4575,14 +4618,30 @@ class RegistrationOrchestrator:
 
         slot_pool = None
         if not proxy_override and not proxy_id:
-            unique_ip = bool(getattr(config, "proxy_unique_ip_per_task", False))
-            slot_need = max(limit, len(task_ids)) if unique_ip else limit
+            unique_ip = unique_proxy_ip_enabled(config)
+            budget = cls.resolve_hunt_lease_budget(
+                config,
+                count=len(task_ids),
+                max_number_attempts=max_number_attempts,
+            )
+            hunt_limits = cls._resolve_hunt_limits(config, no_number_retries=no_number_retries)
+            demand = compute_batch_proxy_demand(
+                task_count=len(task_ids),
+                concurrency=limit,
+                planned_leases=int(budget.get("planned_leases") or 0),
+                attempts_per_task=int(budget.get("max_number_attempts") or 1),
+                proxy_max_uses=int(hunt_limits.get("proxy_max_uses") or 1),
+                unique_ip=unique_ip,
+            )
+            slot_need = int(demand["requested"])
             slot_pool, pool_limit, pool_logs = await prepare_batch_proxy_pool(
                 batch_id=batch_id,
                 country=target_country,
                 slots=slot_need,
                 config=config,
                 proxy_mode=proxy_mode,
+                concurrency=limit,
+                demand=demand,
             )
             if pool_logs and slot_pool is None and pool_limit == 0:
                 await fail_batch_tasks_no_proxy(task_ids, manager, pool_logs)
@@ -4657,6 +4716,7 @@ class RegistrationOrchestrator:
                         max_number_attempts=max_number_attempts,
                         no_number_retries=no_number_retries,
                         provider_ids=provider_ids,
+                        slot_pool=slot_pool,
                     )
                 finally:
                     if slot_pool is not None and leased and task_proxy:

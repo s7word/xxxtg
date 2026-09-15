@@ -86,16 +86,18 @@ const huntPlan = computed(() => {
   }
 })
 
-/** 代理是否被 1:1 钉死：批量槽位或显式指定出口时猎号不会轮换代理。 */
+/** 仅显式指定 / fallback 时猎号不换出口；批量槽位会按预分配余量轮换。 */
 const huntProxyPinned = computed(
-  () => batchMode.value || form.proxy_mode === 'explicit' || form.proxy_mode === 'fallback'
+  () => form.proxy_mode === 'explicit' || form.proxy_mode === 'fallback'
 )
 
 const huntProxyNote = computed(() => {
-  if (batchMode.value) return '批量模式下每路任务钉死一个代理槽位，猎号期间不轮换出口，只轮换设备指纹与 Push'
+  const uses = Number(config.hunt_proxy_max_uses) || 5
+  if (batchMode.value) {
+    return `批量启动前按计划租号量预拉同国代理（住宅口上限 40）。每路先 1:1 绑线，每 ${uses} 次 sendCode 从批次余量换出口；余量为 0 时如实记不轮换`
+  }
   if (form.proxy_mode === 'explicit') return '已显式指定出口，猎号期间不轮换代理，只轮换设备指纹与 Push'
   if (form.proxy_mode === 'fallback') return '使用全局后备出口，池内无其它候选时不会轮换代理'
-  const uses = Number(config.hunt_proxy_max_uses) || 5
   return `每 ${uses} 次 sendCode 尝试从注册代理池换一个同国节点；池里没有其它候选时会如实记日志并继续`
 })
 

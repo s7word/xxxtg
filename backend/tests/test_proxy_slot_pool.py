@@ -17,8 +17,10 @@ os.chdir(REPO_ROOT)
 from backend.app.services.proxy_slot_pool import (  # noqa: E402
     BatchProxySlotPool,
     ProxyLeaseRegistry,
+    compute_batch_proxy_demand,
     prepare_batch_proxy_pool,
 )
+from backend.app.services.proxyseller import RESIDENT_TG_PORT_CAP  # noqa: E402
 from backend.app.services.registrar import RegistrationOrchestrator, RegistrationTaskManager  # noqa: E402
 
 
@@ -65,6 +67,98 @@ class TestBatchProxySlotPool(unittest.IsolatedAsyncioTestCase):
         second = await pool.acquire("t2")
         self.assertNotEqual(second["port"], first["port"])
         self.assertTrue((await ProxyLeaseRegistry.get_instance()).is_leased(first))
+
+    async def test_try_rotate_swaps_when_spare_exists(self):
+        pool = BatchProxySlotPool("za", [_proxy(10000), _proxy(10001), _proxy(10002)], "batch1")
+        held = await pool.acquire("t1")
+        swapped = await pool.try_rotate("t1")
+        self.assertIsNotNone(swapped)
+        self.assertNotEqual(swapped["port"], held["port"])
+        self.assertEqual(pool.held_proxy("t1")["port"], swapped["port"])
+        await pool.release(held, "t1")
+
+    async def test_try_rotate_returns_none_without_spare(self):
+        pool = BatchProxySlotPool("za", [_proxy(10000), _proxy(10001)], "batch1")
+        a = await pool.acquire("t1")
+        b = await pool.acquire("t2")
+        self.assertIsNone(await pool.try_rotate("t1"))
+        self.assertEqual(pool.held_proxy("t1")["port"], a["port"])
+        await pool.release(a, "t1")
+        await pool.release(b, "t2")
+
+    async def test_try_rotate_consume_once_retires_old_line(self):
+        pool = BatchProxySlotPool(
+            "za", [_proxy(10000), _proxy(10001)], "batch1", consume_once=True
+        )
+        first = await pool.acquire("t1")
+        swapped = await pool.try_rotate("t1")
+        self.assertIsNotNone(swapped)
+        self.assertNotEqual(swapped["port"], first["port"])
+        registry = await ProxyLeaseRegistry.get_instance()
+        self.assertTrue(registry.is_leased(first))
+        await pool.release(swapped, "t1")
+
+
+class TestComputeBatchProxyDemand(unittest.TestCase):
+    def test_sniper_default_requests_forty_not_two_hundred(self):
+        demand = compute_batch_proxy_demand(
+            task_count=10,
+            concurrency=10,
+            planned_leases=200,
+            attempts_per_task=20,
+            proxy_max_uses=5,
+        )
+        self.assertEqual(demand["requested"], 40)
+        self.assertEqual(demand["live_slots"], 10)
+        self.assertEqual(demand["rotation_spare"], 30)
+        self.assertFalse(demand["capped"])
+        self.assertIn("请求 40 条", demand["message"])
+
+    def test_strict_uses_one_caps_at_resident_port_limit(self):
+        demand = compute_batch_proxy_demand(
+            task_count=10,
+            concurrency=10,
+            planned_leases=200,
+            attempts_per_task=20,
+            proxy_max_uses=1,
+        )
+        self.assertEqual(demand["requested"], RESIDENT_TG_PORT_CAP)
+        self.assertTrue(demand["capped"])
+        self.assertEqual(demand["hunt_need"], 200)
+        self.assertIn("无法按租号数 1:1", demand["message"])
+
+    def test_non_hunt_keeps_concurrency(self):
+        demand = compute_batch_proxy_demand(
+            task_count=10,
+            concurrency=3,
+            planned_leases=10,
+            attempts_per_task=1,
+            proxy_max_uses=5,
+        )
+        self.assertEqual(demand["requested"], 3)
+        self.assertEqual(demand["live_slots"], 3)
+
+    def test_unique_ip_non_hunt_uses_task_count(self):
+        demand = compute_batch_proxy_demand(
+            task_count=8,
+            concurrency=3,
+            planned_leases=8,
+            attempts_per_task=1,
+            proxy_max_uses=5,
+            unique_ip=True,
+        )
+        self.assertEqual(demand["requested"], 8)
+
+    def test_unique_ip_hunt_still_caps_at_port_limit(self):
+        demand = compute_batch_proxy_demand(
+            task_count=10,
+            concurrency=10,
+            planned_leases=200,
+            attempts_per_task=20,
+            proxy_max_uses=5,
+            unique_ip=True,
+        )
+        self.assertEqual(demand["requested"], 40)
 
 
 def proxy_identity(proxy):
@@ -169,6 +263,54 @@ class TestPrepareBatchProxyPool(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(limit, 10)
         alloc.assert_awaited()
 
+    async def test_prepare_keeps_spare_lines_above_concurrency(self):
+        cfg = type("Cfg", (), {"proxy_seller_key": "k"})()
+        proxies = [_proxy(10000 + i) for i in range(40)]
+        with patch(
+            "backend.app.services.proxy_slot_pool._allocate_from_proxy_seller",
+            new=AsyncMock(return_value=proxies),
+        ) as alloc:
+            pool, limit, logs = await prepare_batch_proxy_pool(
+                batch_id="hunt",
+                country="id",
+                slots=40,
+                config=cfg,
+                proxy_mode="auto",
+                concurrency=10,
+            )
+        self.assertEqual(pool.size, 40)
+        self.assertEqual(limit, 10)
+        self.assertTrue(any("猎号轮换余量 30" in line for line in logs))
+        alloc.assert_awaited()
+        self.assertEqual(alloc.await_args.args[1], 40)
+
+    async def test_allocate_asks_resident_list_for_requested_ports(self):
+        from backend.app.services.proxy_slot_pool import _allocate_from_proxy_seller
+
+        cfg_proxies = [_proxy(10000 + i, "id") for i in range(12)]
+        ensure = AsyncMock(return_value={"created": False, "proxies": cfg_proxies})
+        svc = type(
+            "Svc",
+            (),
+            {
+                "ensure_tg_resident_list": ensure,
+                "invalidate_cache": lambda self: None,
+                "get_proxy_list": AsyncMock(return_value=cfg_proxies),
+                "_sort_candidates": lambda self, items: items,
+                "_rotate": lambda self, country, items: items,
+                "close": AsyncMock(),
+            },
+        )()
+        registry = await ProxyLeaseRegistry.get_instance()
+        with patch(
+            "backend.app.services.proxy_slot_pool.ProxySellerService",
+            return_value=svc,
+        ):
+            picked = await _allocate_from_proxy_seller("id", 12, "k", registry)
+        ensure.assert_awaited()
+        self.assertEqual(ensure.await_args.kwargs.get("ports"), 12)
+        self.assertEqual(len(picked), 12)
+
 
 class TestRunBatchWithSlotPool(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
@@ -209,6 +351,96 @@ class TestRunBatchWithSlotPool(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all(port in {10000, 10001} for port in seen))
         logs = "\n".join(self.manager.get_task(task_ids[0])["logs"])
         self.assertIn("[代理槽位]", logs)
+
+    async def test_run_batch_requests_hunt_proxy_demand_not_just_concurrency(self):
+        batch_id, task_ids = self.manager.create_batch(count=10, concurrency=10, country="id")
+        captured = {}
+
+        async def fake_prepare(**kwargs):
+            captured.update(kwargs)
+            proxies = [_proxy(10000 + i, "id") for i in range(int(kwargs["slots"]))]
+            return BatchProxySlotPool("id", proxies, batch_id), 10, ["[代理槽位] ok"]
+
+        async def fake_run(task_id, proxy_override=None, **_kwargs):
+            self.manager.update_task_status(task_id, "success")
+
+        with patch(
+            "backend.app.services.proxy_slot_pool.prepare_batch_proxy_pool",
+            new=AsyncMock(side_effect=fake_prepare),
+        ), patch.object(RegistrationOrchestrator, "run_registration", side_effect=fake_run), patch.object(
+            RegistrationOrchestrator,
+            "_resolve_hunt_limits",
+            return_value={"proxy_max_uses": 5, "no_number_retries": 0, "no_number_delay": 0, "device_max_uses": 1, "app_blacklist_ttl_hours": 24, "app_delivery_fuse": 0},
+        ), patch.object(
+            RegistrationOrchestrator,
+            "resolve_hunt_lease_budget",
+            return_value={
+                "planned_leases": 200,
+                "max_number_attempts": 20,
+                "requested_attempts": 20,
+                "count": 10,
+                "limit": 200,
+                "clamped": False,
+                "rejected": False,
+                "message": "计划最多租号 200 次",
+            },
+        ):
+            await RegistrationOrchestrator.run_batch(
+                batch_id=batch_id,
+                task_ids=task_ids,
+                country="id",
+                concurrency=10,
+                proxy_mode="auto",
+                max_number_attempts=20,
+            )
+
+        self.assertEqual(captured.get("slots"), 40)
+        self.assertEqual(captured.get("concurrency"), 10)
+        self.assertEqual(captured.get("demand", {}).get("requested"), 40)
+        self.assertEqual(captured.get("demand", {}).get("planned_leases"), 200)
+
+    async def test_rotate_hunt_proxy_uses_slot_pool_spare(self):
+        tid = self.manager.create_task()
+        pool = BatchProxySlotPool("id", [_proxy(10000, "id"), _proxy(10001, "id")], "b-rot")
+        current = await pool.acquire(tid)
+        rotated, changed = await RegistrationOrchestrator._rotate_hunt_proxy(
+            config=type("Cfg", (), {})(),
+            target_country="id",
+            task_id=tid,
+            manager=self.manager,
+            current_proxy=current,
+            proxy_mode="auto",
+            reason="单测批次池轮换",
+            proxy_override=current,
+            slot_pool=pool,
+        )
+        self.assertTrue(changed)
+        self.assertNotEqual(rotated["port"], current["port"])
+        logs = "\n".join(self.manager.get_task(tid)["logs"])
+        self.assertIn("出口已轮换", logs)
+        self.assertIn("批次预分配池", logs)
+        await pool.release(rotated, tid)
+
+    async def test_rotate_hunt_proxy_stays_pinned_without_spare(self):
+        tid = self.manager.create_task()
+        pool = BatchProxySlotPool("id", [_proxy(10000, "id")], "b-pin")
+        current = await pool.acquire(tid)
+        rotated, changed = await RegistrationOrchestrator._rotate_hunt_proxy(
+            config=type("Cfg", (), {})(),
+            target_country="id",
+            task_id=tid,
+            manager=self.manager,
+            current_proxy=current,
+            proxy_mode="auto",
+            reason="单测无余量",
+            proxy_override=current,
+            slot_pool=pool,
+        )
+        self.assertFalse(changed)
+        self.assertEqual(rotated["port"], current["port"])
+        logs = "\n".join(self.manager.get_task(tid)["logs"])
+        self.assertIn("暂无空闲同国出口", logs)
+        await pool.release(current, tid)
 
 
 if __name__ == "__main__":

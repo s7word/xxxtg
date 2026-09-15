@@ -763,8 +763,9 @@
             <label class="ce-label">同一出口最多 sendCode 次数</label>
             <input v-model.number="config.hunt_proxy_max_uses" type="number" min="1" max="50" class="ce-input mono w-sm" />
             <p class="ce-tiny ce-muted" style="margin-top:6px">
-              <code>hunt_proxy_max_uses</code>：达到后尝试从注册代理池换同国节点。批量槽位或显式指定出口时不会轮换。
-              严格模式强制为 1（一号一代理）。
+              <code>hunt_proxy_max_uses</code>：达到后从批次预分配的同国代理池换线。
+              启动前按「计划租号 ÷ 本值」预拉对应国家代理（住宅列表最多 40 条 session 口，不是 200 条独立 IP）。
+              显式指定 <code>proxy_id</code> 时不轮换。严格模式强制为 1。
             </p>
           </div>
           <label class="ce-check">
