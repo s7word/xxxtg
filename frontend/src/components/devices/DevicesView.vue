@@ -6,6 +6,7 @@
         <p>
           多国家 REGISTRATOR 指纹包持久化在 <code>data/device_dbs/</code>。
           注册调度按目标国家精确抽取；若该国还没有已激活库，会按语言/时区/品牌规则自动合成一包再配对。
+          iOS 备用包与 Android 包分开调度。目前只预置菲律宾高版本 iPhone，测试过了再说。
           也可手动上传或一键合成。
         </p>
       </div>
@@ -136,6 +137,7 @@
           <span :class="pack.enabled ? 'ce-badge is-success' : 'ce-badge is-warn'">
             {{ pack.enabled ? '调度中' : '已停用' }}
           </span>
+          <span class="ce-badge is-info">{{ pack.platform === 'ios' ? 'iOS' : 'Android' }}</span>
         </div>
         <div class="ce-stat"><span>国家</span><span>{{ (pack.country || '—').toUpperCase() }} · {{ pack.country_name || '未标注' }}</span></div>
         <div class="ce-stat"><span>样本</span><span>{{ pack.sample_count }}</span></div>

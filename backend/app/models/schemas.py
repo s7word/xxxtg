@@ -1797,6 +1797,7 @@ class DeviceDbPack(BaseModel):
     alias: str
     country: Optional[str] = None
     country_name: Optional[str] = None
+    platform: str = Field(default="android", description="android 或 ios；两套调度互不混抽")
     enabled: bool = True
     source: str = Field(default="upload", description="upload / generated / imported")
     sample_count: int = 0

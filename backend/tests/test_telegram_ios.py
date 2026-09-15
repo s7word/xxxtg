@@ -230,6 +230,8 @@ class TestTelegramIosProfile(unittest.TestCase):
         self.assertEqual(profile["lang_pack"], "ios")
         self.assertEqual(profile["api_id"], 8)
         self.assertNotIn("perf_cat", profile)
+        self.assertTrue(str(profile["device_model"]).startswith("iPhone"))
+        self.assertRegex(str(profile["system_version"]), r"^18\.")
         self.assertTrue(ios_locale_aligned_with_country(profile, "ph"))
 
     def test_app_sandbox_is_apns_production_not_process_sandbox(self):

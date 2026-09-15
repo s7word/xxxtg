@@ -18,9 +18,15 @@ from backend.app.services.device_db_manager import (  # noqa: E402
     DeviceDbManager,
     compute_stats,
     infer_country_from_filename,
+    infer_pack_platform,
     parse_registrator_db,
     sanitize_filename,
     validate_sqlite_bytes,
+)
+from backend.app.services.ios_device_catalog import (  # noqa: E402
+    IOS_SKUS,
+    generate_ios_country_db,
+    synthesize_ios_rows,
 )
 from backend.app.services.device_generator import (  # noqa: E402
     DEVICE_SKUS,
@@ -237,7 +243,7 @@ class TestAutoCountryAdapt(unittest.TestCase):
     def test_resolved_profile_auto_adapts_empty_catalog(self):
         stub = type("CatalogStub", (), {
             "select_sample": staticmethod(
-                lambda country: DeviceDbManager.select_sample(country, root=self.root)
+                lambda country, **kwargs: DeviceDbManager.select_sample(country, root=self.root, **kwargs)
             ),
         })()
         with patch.object(DeviceProfileManager, "_manager", return_value=stub):
@@ -272,7 +278,9 @@ class TestResolvedProfileCountryMatch(unittest.TestCase):
             DeviceDbManager.update_pack(chile["id"], enabled=False, root=root)
 
             stub = type("CatalogStub", (), {
-                "select_sample": staticmethod(lambda country: DeviceDbManager.select_sample(country, root=root)),
+                "select_sample": staticmethod(
+                    lambda country, **kwargs: DeviceDbManager.select_sample(country, root=root, **kwargs)
+                ),
             })()
             with patch.object(DeviceProfileManager, "_manager", return_value=stub):
                 profile = DeviceProfileManager.get_resolved_profile("telegram_android", "id")
@@ -298,6 +306,7 @@ class TestDeviceDbHttpApi(unittest.TestCase):
         root = Path(tmp.name)
         try:
             with patch("backend.app.api.routes.DeviceDbManager.ensure_ready", return_value={"items": []}), \
+                 patch("backend.app.api.routes.DeviceDbManager.ensure_ios_country_pack", return_value=(None, "none", False)), \
                  patch("backend.app.api.routes.DeviceDbManager.aggregate_stats") as agg, \
                  patch("backend.app.api.routes.list_supported_countries", return_value=[{"code": "id", "name": "Indonesia"}]):
                 agg.return_value = {
@@ -356,6 +365,48 @@ class TestSkuCatalogCoverage(unittest.TestCase):
         brands = {sku.brand for sku in DEVICE_SKUS}
         for name in ("samsung", "xiaomi", "huawei", "motorola", "realme", "vivo", "oppo"):
             self.assertIn(name, brands)
+
+
+class TestIosPhReservePack(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        DeviceDbManager.invalidate_cache()
+
+    def tearDown(self):
+        DeviceDbManager.invalidate_cache()
+        self.tmp.cleanup()
+
+    def test_ios_ph_pack_stays_out_of_android_pool(self):
+        android = DeviceDbManager.import_bytes(
+            "Philippines.db",
+            write_registrator_db(_build_rows(28800, "en", "en-ph"), self.root / "a.db").read_bytes(),
+            country="ph",
+            root=self.root,
+        )
+        ios = generate_ios_country_db("ph", count=16, root=self.root, seed=7)
+        self.assertEqual(infer_pack_platform(ios), "ios")
+        self.assertEqual(ios["country"], "ph")
+        android_packs = DeviceDbManager.enabled_packs("ph", root=self.root, platform="android")
+        ios_packs = DeviceDbManager.enabled_packs("ph", root=self.root, platform="ios")
+        self.assertEqual([item["id"] for item in android_packs], [android["id"]])
+        self.assertEqual([item["id"] for item in ios_packs], [ios["id"]])
+        sampled = DeviceDbManager.select_sample("ph", root=self.root, platform="ios", auto_adapt=False)
+        self.assertEqual(sampled["pack"]["id"], ios["id"])
+        self.assertTrue(str(sampled["row"]["device_model"]).startswith("iPhone"))
+        self.assertEqual(sampled["row"]["lang_pack"], "ios")
+        android_sampled = DeviceDbManager.select_sample("ph", root=self.root, platform="android", auto_adapt=False)
+        self.assertEqual(android_sampled["pack"]["id"], android["id"])
+        self.assertFalse(str(android_sampled["row"]["device_model"]).startswith("iPhone"))
+
+    def test_ios_rows_are_newer_than_default_15_pro_only(self):
+        models = {sku.model for sku in IOS_SKUS}
+        self.assertIn("iPhone 16 Pro", models)
+        self.assertIn("iPhone 17 Pro", models)
+        rows = synthesize_ios_rows("ph", 24, seed=3)
+        self.assertTrue(all(row["lang_pack"] == "ios" for row in rows))
+        self.assertTrue(all(int(row["tz_offset"]) == 28800 for row in rows))
+        self.assertTrue(any(row["device_model"] != "iPhone 15 Pro" for row in rows))
 
 
 if __name__ == "__main__":

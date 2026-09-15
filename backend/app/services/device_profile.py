@@ -527,8 +527,9 @@ class DeviceProfileManager:
         profile["device_pack_auto"] = False
         profile["device_alignment_mode"] = "strict" if strict else "loose"
 
-        selection = None if app_type == "telegram_ios" else cls._manager().select_sample(country)
-        pin = strict_app_version_pin(config)
+        sample_platform = "ios" if app_type == "telegram_ios" else "android"
+        selection = cls._manager().select_sample(country, platform=sample_platform)
+        pin = "" if app_type == "telegram_ios" else strict_app_version_pin(config)
         if pin and selection:
             ver0 = str((selection.get("row") or {}).get("app_version") or "")
             if pin in ver0:
@@ -536,7 +537,7 @@ class DeviceProfileManager:
             else:
                 matched = None
                 for _ in range(16):
-                    cand = cls._manager().select_sample(country)
+                    cand = cls._manager().select_sample(country, platform=sample_platform)
                     if not cand:
                         break
                     ver = str((cand.get("row") or {}).get("app_version") or "")
@@ -556,7 +557,8 @@ class DeviceProfileManager:
             match = selection.get("match") or "none"
             profile["device_model"] = sampled_dev["device_model"]
             profile["system_version"] = sampled_dev["system_version"]
-            profile["perf_cat"] = sampled_dev.get("perf_cat", 2)
+            if app_type != "telegram_ios":
+                profile["perf_cat"] = sampled_dev.get("perf_cat", 2)
             # 指纹包来自 Android Registrator，lang_pack 几乎总是 android。
             # telegram_x 模板是 android_x，不能被包里的 android 覆盖，否则握手与 api_id=21724 自相矛盾。
             sampled_lp = str(sampled_dev.get("lang_pack") or "").strip()
