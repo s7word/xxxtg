@@ -679,6 +679,20 @@ class DeviceProfileManager:
         if official_id in OFFICIAL_API_CREDENTIALS:
             profile = apply_official_api_id(profile, official_id)
         profile = normalize_official_api_credentials(profile)
+        # 官方模拟时身份跟所选模板走，不被指纹包里的 api_id 带偏。
+        # Public=4、主版=6、X=21724。iOS 不走这条，避免碰到 Android 包。
+        official_emu = bool(getattr(config, "official_client_emulation", False))
+        if official_emu and app_type != "telegram_ios":
+            try:
+                template_id = int(base.get("api_id") or 0)
+            except (TypeError, ValueError):
+                template_id = 0
+            if template_id in OFFICIAL_API_CREDENTIALS:
+                was = profile.get("api_id")
+                profile = apply_official_api_id(profile, template_id)
+                if was != template_id:
+                    profile["api_id_template_pinned"] = True
+                    profile["api_id_was"] = was
         if app_type != "telegram_ios":
             from backend.app.services.telegram_android_releases import attach_apk_version_code
 

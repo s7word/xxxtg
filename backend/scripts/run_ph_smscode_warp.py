@@ -57,7 +57,8 @@ def apply_patch_for(app_type: str) -> Dict[str, Any]:
     patched["active_app_type"] = app_type
     if app_type == "telegram_ios":
         patched["attestation_provider_mode"] = "reghelp_primary"
-    elif app_type == "telegram_android_public":
+    elif app_type in {"telegram_android_public", "telegram_android"}:
+        # api_id=4 / 6 对照共用同一套握手，只换模板身份，不换 AntiSafety。
         patched["attestation_provider_mode"] = "reghelp_primary"
         patched["force_country_locale"] = True
         patched["init_connection_set_lang_pack"] = True
