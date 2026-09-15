@@ -272,6 +272,14 @@ class TestTelegramIosProfile(unittest.TestCase):
                 "allow_missed_call": True,
             },
         )
+        self.assertEqual(
+            resolve_ios_code_settings_number_flags("off"),
+            {
+                "unknown_number": False,
+                "allow_flashcall": False,
+                "allow_missed_call": False,
+            },
+        )
 
     def test_ios_rejects_fcm_in_codesettings_token(self):
         ios = DEFAULT_PROFILES["telegram_ios"]

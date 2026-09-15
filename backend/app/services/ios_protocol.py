@@ -215,21 +215,33 @@ def resolve_ios_allow_firebase(attach_token: bool) -> bool:
     return bool(attach_token)
 
 
-def resolve_ios_code_settings_number_flags() -> Dict[str, bool]:
+IOS_CALL_FLAGS_GRAMMERS = "grammers"
+IOS_CALL_FLAGS_OFF = "off"
+IOS_CALL_FLAGS_MODES = frozenset({IOS_CALL_FLAGS_GRAMMERS, IOS_CALL_FLAGS_OFF})
+
+
+def normalize_ios_call_flags_mode(raw: Any) -> str:
+    mode = str(raw or IOS_CALL_FLAGS_GRAMMERS).strip().lower()
+    if mode in {"0", "false", "no", "off", "disabled"}:
+        return IOS_CALL_FLAGS_OFF
+    if mode in IOS_CALL_FLAGS_MODES:
+        return mode
+    return IOS_CALL_FLAGS_GRAMMERS
+
+
+def resolve_ios_code_settings_number_flags(call_flags: Any = IOS_CALL_FLAGS_GRAMMERS) -> Dict[str, bool]:
     """iOS sendCode 的号码协商位。
 
-    对照的是已验证成功的 PH 注册客户端 ``com.tgios.registerclient``
-    （Windows Tauri + grammers）原文：``unknownNumber=false``、
-    ``allowFlashcall=true``、``allowMissedCall=true``。
-
-    这不是官方 App Store Telegram-iOS 源码；官方 iOS 通常不发闪信/漏接。
-    grammers 本身不值得换栈，但这组已跑通的 flag 值得 iOS 路径对齐。
-    Android 不得套用。
+    ``unknown_number`` 始终 false。闪信/漏接默认对齐已验证成功的 PH
+    客户端 ``com.tgios.registerclient``（``allowFlashcall/allowMissedCall=true``）。
+    ``call_flags=off`` 关闭这两位，供 A/B 看邮箱后走 SMS 还是 Call/付款墙。
+    官方 App Store iOS 通常不发闪信/漏接。Android 不得套用。
     """
+    enabled = normalize_ios_call_flags_mode(call_flags) != IOS_CALL_FLAGS_OFF
     return {
         "unknown_number": False,
-        "allow_flashcall": True,
-        "allow_missed_call": True,
+        "allow_flashcall": enabled,
+        "allow_missed_call": enabled,
     }
 
 

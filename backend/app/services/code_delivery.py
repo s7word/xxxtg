@@ -48,6 +48,7 @@ from backend.app.services.device_alignment import (
 )
 from backend.app.services.device_profile import PUBLISHED_API_ID_BLOCKLIST
 from backend.app.services.ios_protocol import (
+    normalize_ios_call_flags_mode,
     resolve_ios_allow_firebase,
     resolve_ios_app_sandbox,
     resolve_ios_code_settings_number_flags,
@@ -334,7 +335,10 @@ def resolve_code_delivery_plan(
         # 生产/沙盒证书，不是 iOS 进程沙盒。
         allow_firebase = resolve_ios_allow_firebase(attach)
         app_sandbox = resolve_ios_app_sandbox(attach)
-        ios_number_flags = resolve_ios_code_settings_number_flags()
+        call_mode = normalize_ios_call_flags_mode(
+            getattr(config, "ios_code_settings_call_flags", "grammers")
+        )
+        ios_number_flags = resolve_ios_code_settings_number_flags(call_mode)
         unknown_number = bool(ios_number_flags["unknown_number"])
         allow_flashcall = bool(ios_number_flags["allow_flashcall"])
         allow_missed_call = bool(ios_number_flags["allow_missed_call"])
@@ -343,9 +347,10 @@ def resolve_code_delivery_plan(
             "app_sandbox=APNS生产证书(否)，不是进程沙盒"
         )
         notes.append(
-            "iOS CodeSettings 对齐已验证成功 payload："
-            "unknown_number=否 flashcall=是 missed=是"
-            "（grammers 注册客户端，非官方 iOS；不改 Android）"
+            f"iOS CodeSettings call_flags={call_mode}："
+            f"unknown_number=否 flashcall={'是' if allow_flashcall else '否'} "
+            f"missed={'是' if allow_missed_call else '否'}"
+            "（unknown 固定否；闪信/漏接可 A/B，不改 Android）"
         )
 
     return CodeDeliveryPlan(
