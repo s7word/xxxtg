@@ -506,6 +506,13 @@ class AppConfigModel(BaseModel):
             "严格设备对齐开启时同样强制。"
         ),
     )
+    proxy_unique_ip_per_task: bool = Field(
+        default=False,
+        description=(
+            "每个注册任务消耗一条同国住宅单线，任务结束后不归还、跨批次也不复用。"
+            "30 路即需要至少 30 条独立 session 口。"
+        ),
+    )
     hunt_device_max_uses: int = Field(
         default=8,
         ge=1,
@@ -730,6 +737,7 @@ class AppConfigModel(BaseModel):
         "flood_block_new_sends",
         "ignore_published_flood_window",
         "proxy_require_country_match",
+        "proxy_unique_ip_per_task",
         "code_settings_allow_firebase",
         "code_settings_unknown_number",
         "code_settings_allow_flashcall",

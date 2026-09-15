@@ -28,6 +28,7 @@ ALIGN_RE = re.compile(r"出口拓扑对齐: IP=(\S+) 国家=([A-Za-z]{2}|-)")
 ORIGIN_RE = re.compile(r"成功从 (.+?) 自动匹配到")
 API_ID_RE = re.compile(r"api_id=(\d+)")
 PUSH_RE = re.compile(r"Push Token|attach_token=是|跳过 Push")
+SLOT_PORT_RE = re.compile(r"res\.proxy-seller\.com:(\d+)")
 
 # 控制台 /register/batch 的 count/concurrency 上限是 10。
 BATCH_CAP = 10
@@ -35,6 +36,7 @@ BATCH_CAP = 10
 APPLY = {
     "attestation_provider_mode": "antisafety_primary",
     "proxy_require_country_match": True,
+    "proxy_unique_ip_per_task": True,
     "use_proxy_seller_auto": True,
     "code_delivery_mode": "push_required",
     "api_credential_mode": "official",
@@ -61,6 +63,8 @@ def enrich(row: Dict[str, Any], task: Dict[str, Any]) -> Dict[str, Any]:
     api_ids = API_ID_RE.findall(blob)
     out["api_ids"] = sorted({int(x) for x in api_ids}) if api_ids else []
     out["push_mentioned"] = bool(PUSH_RE.search(blob))
+    ports = [int(x) for x in SLOT_PORT_RE.findall(blob)]
+    out["proxy_ports"] = sorted(set(ports))
     return out
 
 
@@ -122,7 +126,9 @@ def main() -> int:
         f"cred={saved.get('api_credential_mode')} "
         f"app={saved.get('active_app_type')} "
         f"emu={saved.get('official_client_emulation')} "
-        f"delivery={saved.get('code_delivery_mode')} @ {utc_now()}",
+        f"delivery={saved.get('code_delivery_mode')} "
+        f"unique_ip={saved.get('proxy_unique_ip_per_task')} "
+        f"email={saved.get('email_provider_mode')} @ {utc_now()}",
         flush=True,
     )
     waves: List[Dict[str, Any]] = []
@@ -172,7 +178,18 @@ def main() -> int:
                 "count_per_wave": args.count,
                 "push": "REGHelp appDevice=iOS" if args.app_type == "telegram_ios" else "antisafety_primary then REGHelp",
                 "email": "SMS Bower Google gmail.com",
+                "proxy_unique_ip_per_task": True,
             },
+        }
+        ips = [r.get("egress_ip") for r in all_rows if r.get("egress_ip")]
+        ports = [p for r in all_rows for p in (r.get("proxy_ports") or [])]
+        report["unique_ips"] = {
+            "egress_ips": sorted(set(ips)),
+            "egress_ip_count": len(set(ips)),
+            "proxy_ports": sorted(set(ports)),
+            "proxy_port_count": len(set(ports)),
+            "ip_reused": len(ips) != len(set(ips)),
+            "port_reused": len(ports) != len(set(ports)),
         }
     finally:
         client.put_config(snapshot)
@@ -191,11 +208,16 @@ def main() -> int:
     print(f"wrote {path}", flush=True)
     summary = report.get("summary") or {}
     print(
-        f"RESULT success={summary.get('success')} SMS={summary.get('sms')} "
-        f"App={summary.get('app')} samples={summary.get('sendcode_samples')} "
-        f"statuses={summary.get('statuses')}",
-        flush=True,
-    )
+        uniq = report.get("unique_ips") or {}
+        print(
+            f"RESULT success={summary.get('success')} SMS={summary.get('sms')} "
+            f"App={summary.get('app')} samples={summary.get('sendcode_samples')} "
+            f"statuses={summary.get('statuses')} "
+            f"unique_ips={uniq.get('egress_ip_count')} "
+            f"unique_ports={uniq.get('proxy_port_count')} "
+            f"ip_reused={uniq.get('ip_reused')} port_reused={uniq.get('port_reused')}",
+            flush=True,
+        )
     return 0
 
 
