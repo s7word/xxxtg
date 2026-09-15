@@ -178,7 +178,7 @@ class TestStrictAlignmentGate(unittest.TestCase):
         ), patch.object(
             DeviceProfileManager,
             "_manager",
-            return_value=SimpleNamespace(select_sample=lambda country: sampled),
+            return_value=SimpleNamespace(select_sample=lambda country, **_kwargs: sampled),
         ):
             profile = DeviceProfileManager.get_resolved_profile("telegram_x", "gb")
         self.assertEqual(profile["api_id"], 21724)
@@ -239,7 +239,7 @@ class TestGetResolvedProfileStrict(unittest.TestCase):
         ), patch.object(
             DeviceProfileManager,
             "_manager",
-            return_value=SimpleNamespace(select_sample=lambda country: None),
+            return_value=SimpleNamespace(select_sample=lambda country, **_kwargs: None),
         ):
             profile = DeviceProfileManager.get_resolved_profile("telegram_android", "vn")
         self.assertEqual(profile["api_id"], 4)

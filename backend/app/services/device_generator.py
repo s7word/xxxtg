@@ -33,10 +33,62 @@ GENERIC_BRAND_WEIGHTS = {
 }
 
 
-# 合成指纹包默认打官方 Android 主流凭证（api_id=6）。vault/严格对齐走 api_id=4，
-# get_resolved_profile 不会把包里的 6 盖到 telegram_android_public 上。
+# 合成指纹包按 AntiSafety 模板选官方 Android 凭证。
+# telegram_android=6、telegram_android_public=4、telegram_x=21724、telegram_9=6。
+# custom 模式不得再盖这些 App ID / 设备参数。
 OFFICIAL_API_ID = 6
 OFFICIAL_API_HASH = OFFICIAL_API_CREDENTIALS[6]
+
+ANDROID_GENERATE_PRESETS = {
+    "telegram_android": {
+        "app_type": "telegram_android",
+        "api_id": 6,
+        "lang_pack": "android",
+        "aid_key": "telegram_android",
+        "pin_version": False,
+        "label": "Android 主版",
+    },
+    "telegram_android_public": {
+        "app_type": "telegram_android_public",
+        "api_id": 4,
+        "lang_pack": "android",
+        "aid_key": "telegram_android",
+        "pin_version": True,
+        "app_version": "12.7.3 (67509)",
+        "app_version_pure": "12.7.3",
+        "label": "Android Public / vault",
+    },
+    "telegram_x": {
+        "app_type": "telegram_x",
+        "api_id": 21724,
+        "lang_pack": "android_x",
+        "aid_key": "telegram_x",
+        "pin_version": True,
+        "app_version": "0.26.5.1692",
+        "app_version_pure": "0.26.5",
+        "label": "Telegram X / TDLib",
+    },
+    "telegram_9": {
+        "app_type": "telegram_9",
+        "api_id": 6,
+        "lang_pack": "android",
+        "aid_key": "telegram_9",
+        "pin_version": True,
+        "app_version": "9.6.7 (33219)",
+        "app_version_pure": "9.6.7",
+        "label": "Telegram 9 Legacy",
+    },
+}
+
+
+def resolve_android_generate_preset(app_type: Optional[str] = None) -> Dict[str, Any]:
+    key = str(app_type or "telegram_android").strip() or "telegram_android"
+    if key not in ANDROID_GENERATE_PRESETS:
+        raise ValueError(
+            "Android 合成 app_type 必须是 telegram_android / telegram_android_public / "
+            "telegram_x / telegram_9（与 AntiSafety AID 模板对齐）"
+        )
+    return dict(ANDROID_GENERATE_PRESETS[key])
 
 # 近年官方 Telegram Android 发布矩阵（版本号 + 构建号）。
 # 只收录公开客户端可见的格式，避免生成不存在的 build。
@@ -751,6 +803,7 @@ def synthesize_rows(
     count: int,
     brand_weights: Optional[Dict[str, int]] = None,
     seed: Optional[int] = None,
+    app_type: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     code = normalize_country(country) or str(country or "").strip().lower()
     if not code:
@@ -767,26 +820,37 @@ def synthesize_rows(
     rng = random.Random(seed)
     locales = [( (lang, sys_lang), weight) for lang, sys_lang, weight in spec["locales"]]
     tzs = [(tz, weight) for tz, weight in spec["tz_offsets"]]
+    preset = resolve_android_generate_preset(app_type)
+    api_id = int(preset["api_id"])
+    api_hash = OFFICIAL_API_CREDENTIALS[api_id]
+    lang_pack = str(preset["lang_pack"])
     rows: List[Dict[str, Any]] = []
     for _ in range(count):
         sku = pick_sku(weights, rng)
         sdk = pick_sdk(sku, rng)
-        app_version, pure = pick_app_version(sdk, rng)
+        if preset.get("pin_version"):
+            app_version = str(preset["app_version"])
+            pure = str(preset["app_version_pure"])
+            app_build = app_version.split("(")[-1].rstrip(")") if "(" in app_version else ""
+        else:
+            app_version, pure = pick_app_version(sdk, rng)
+            app_build = app_version.split("(")[-1].rstrip(")")
         lang_code, system_lang_code = _weighted_choice(locales, rng)
         tz_offset = _weighted_choice(tzs, rng)
         rows.append({
-            "api_id": OFFICIAL_API_ID,
-            "api_hash": OFFICIAL_API_HASH,
+            "api_id": api_id,
+            "api_hash": api_hash,
             "system_version": f"SDK {sdk}",
             "device_model": sku.device_model,
             "app_version": app_version,
             "app_version_pure": pure,
-            "app_build": app_version.split("(")[-1].rstrip(")"),
+            "app_build": app_build,
             "lang_code": lang_code,
             "system_lang_code": system_lang_code,
-            "lang_pack": "android",
+            "lang_pack": lang_pack,
             "tz_offset": int(tz_offset),
             "perf_cat": int(sku.perf_cat),
+            "app_type": preset["app_type"],
         })
     return rows
 
@@ -846,15 +910,20 @@ def validate_android_rows(rows: Sequence[Dict[str, Any]], country: str) -> None:
         model = str(row.get("device_model") or "")
         if model.lower().startswith("iphone") or str(row.get("lang_pack") or "").lower() == "ios":
             raise ValueError("Android 合成混入了 iOS 行")
-        if str(row.get("lang_pack") or "") != "android":
-            raise ValueError(f"Android lang_pack 必须是 android，得到 {row.get('lang_pack')}")
+        lang_pack = str(row.get("lang_pack") or "")
+        if lang_pack not in {"android", "android_x"}:
+            raise ValueError(f"Android lang_pack 必须是 android / android_x，得到 {row.get('lang_pack')}")
         try:
             api_id = int(row.get("api_id") or 0)
         except (TypeError, ValueError) as exc:
             raise ValueError("Android 行缺少 api_id") from exc
         expected = OFFICIAL_API_CREDENTIALS.get(api_id)
-        if api_id not in {4, 6} or not expected:
-            raise ValueError(f"Android 合成 api_id={api_id} 不是本仓允许的官方配对（4/6）")
+        if api_id not in {4, 6, 21724} or not expected:
+            raise ValueError(f"Android 合成 api_id={api_id} 不是本仓允许的官方配对（4/6/21724）")
+        if api_id == 21724 and lang_pack != "android_x":
+            raise ValueError("api_id=21724 必须配 lang_pack=android_x")
+        if api_id in {4, 6} and lang_pack != "android":
+            raise ValueError(f"api_id={api_id} 必须配 lang_pack=android")
         if str(row.get("api_hash") or "").strip().lower() != expected:
             raise ValueError(f"Android api_id={api_id} 与官方 api_hash 不配对")
         if not sku_sdk_consistent(model, str(row.get("system_version") or "")):
@@ -875,9 +944,17 @@ def generate_country_db(
     brand_weights: Optional[Dict[str, int]] = None,
     seed: Optional[int] = None,
     root: Optional[Path] = None,
+    app_type: Optional[str] = None,
 ) -> Dict[str, Any]:
     code = normalize_country(country)
-    rows = synthesize_rows(code or country, count, brand_weights=brand_weights, seed=seed)
+    preset = resolve_android_generate_preset(app_type)
+    rows = synthesize_rows(
+        code or country,
+        count,
+        brand_weights=brand_weights,
+        seed=seed,
+        app_type=preset["app_type"],
+    )
     validate_android_rows(rows, code or country)
     stats = compute_stats(rows)
     quality = assess_quality(stats, code)
@@ -896,6 +973,7 @@ def generate_country_db(
         stats=stats,
         enabled=enabled,
         root=root,
+        app_type=preset["app_type"],
     )
     item["quality"] = quality
     item["generated"] = {
@@ -903,6 +981,8 @@ def generate_country_db(
         "written": len(rows),
         "country": code,
         "seed": seed,
+        "app_type": preset["app_type"],
+        "api_id": preset["api_id"],
     }
     return item
 

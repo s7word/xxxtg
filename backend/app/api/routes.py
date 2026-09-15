@@ -401,6 +401,7 @@ async def generate_device_db(req: DeviceDbGenerateRequest):
                 enabled=req.enabled,
                 brand_weights=req.brand_weights,
                 seed=req.seed,
+                app_type=req.app_type or "telegram_android",
             )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

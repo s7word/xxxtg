@@ -34,7 +34,7 @@
             <span class="ce-badge">{{ deviceCatalogMeta.total_count }} 条样本</span>
           </div>
           <p class="ce-tiny" style="margin-top:4px">
-            指定国家生成 iOS 会写入官方 api_id=8、出口国 locale、iPhone 18.x。Android 旧包可整表清空，后面再按规则重生成。
+            指定国家生成 iOS 会写入官方 api_id=8。Android 按下方 AntiSafety 模板选 App ID（4 / 6 / 21724），custom 模式不再盖这些值。
           </p>
           <div v-if="deviceCatalogMeta.active_countries.length" class="row-wrap" style="margin-top:8px">
             <span v-for="code in deviceCatalogMeta.active_countries" :key="code" class="ce-badge is-info">
@@ -89,11 +89,11 @@
       <div class="ce-panel stack">
         <div class="ce-panel-head">
           <h3>🧬 指定国家合成</h3>
-          <span class="ce-badge is-info">{{ generateForm.platform === 'ios' ? '官方 iOS api_id=8' : 'Android 规则库' }}</span>
+          <span class="ce-badge is-info">{{ generateBadge }}</span>
         </div>
         <p class="ce-tiny">
           iOS：16/17 系机型、iOS 18.x、App 12.9.3、<code>lang_pack=ios</code>，语言/时区跟出口国 overlay。
-          Android：真机 SKU + SDK 区间 + 国别 locale，生成后会自检；现在默认先做 iOS。
+          Android：真机 SKU + 国别 locale，App ID 必须与 AntiSafety AID 模板对齐；custom 自建栏不再改设备参数。
         </p>
         <div class="grid-2">
           <div>
@@ -104,7 +104,7 @@
               @change="setGeneratePlatform($event.target.value)"
             >
               <option value="ios">iOS 官方（api_id=8）</option>
-              <option value="android">Android（稍后重做）</option>
+              <option value="android">Android（AntiSafety 模板）</option>
             </select>
           </div>
           <div>
@@ -116,6 +116,20 @@
                 </option>
               </optgroup>
             </select>
+          </div>
+          <div v-if="generateForm.platform === 'android'" style="grid-column:1 / -1">
+            <label class="ce-label">Android App ID / AntiSafety 模板</label>
+            <select v-model="generateForm.app_type" class="ce-select">
+              <option v-for="opt in ANDROID_GENERATE_OPTIONS" :key="opt.value" :value="opt.value">
+                {{ opt.label }} · {{ opt.version }}
+              </option>
+            </select>
+            <p class="ce-tiny" style="margin-top:6px">
+              写入官方 <code>api_id={{ selectedAndroidGenerate.apiId }}</code>，
+              版本 {{ selectedAndroidGenerate.version }}。
+              AntiSafety AID（{{ selectedAndroidGenerate.aidKey }}）：
+              <span class="mono">{{ selectedAndroidAid || '未配置' }}</span>
+            </p>
           </div>
           <div>
             <label class="ce-label">样本条数</label>
@@ -160,7 +174,7 @@
           <span :class="pack.enabled ? 'ce-badge is-success' : 'ce-badge is-warn'">
             {{ pack.enabled ? '调度中' : '已停用' }}
           </span>
-          <span class="ce-badge is-info">{{ pack.platform === 'ios' ? 'iOS' : 'Android' }}</span>
+          <span class="ce-badge is-info">{{ pack.platform === 'ios' ? 'iOS' : (pack.app_type || 'Android') }}</span>
         </div>
         <div class="ce-stat"><span>国家</span><span>{{ (pack.country || '—').toUpperCase() }} · {{ pack.country_name || '未标注' }}</span></div>
         <div class="ce-stat"><span>样本</span><span>{{ pack.sample_count }}</span></div>
@@ -289,8 +303,11 @@
 
 <script setup>
 import { computed } from 'vue'
-import { COUNTRY_CATALOG, COUNTRY_GROUP_META, formatCountryLabel } from '../../composables/useShared'
+import { ANDROID_GENERATE_OPTIONS, COUNTRY_CATALOG, COUNTRY_GROUP_META, formatCountryLabel } from '../../composables/useShared'
+import { useConfig } from '../../composables/useConfig'
 import { useDevices } from '../../composables/useDevices'
+
+const { config } = useConfig()
 
 const {
   deviceProfiles,
@@ -349,6 +366,17 @@ const sourceLabel = (source) => ({
   generated: '参数化合成',
   imported: '遗留导入'
 }[source] || source || '未知')
+
+const selectedAndroidGenerate = computed(() => (
+  ANDROID_GENERATE_OPTIONS.find((item) => item.value === generateForm.value.app_type) || ANDROID_GENERATE_OPTIONS[0]
+))
+const selectedAndroidAid = computed(() => (
+  config.antisafety_aids?.[selectedAndroidGenerate.value.aidKey] || ''
+))
+const generateBadge = computed(() => {
+  if (generateForm.value.platform === 'ios') return '官方 iOS api_id=8'
+  return `Android api_id=${selectedAndroidGenerate.value.apiId}`
+})
 
 const formatPackApiIds = (pack) => {
   const ids = pack?.stats?.api_ids || {}

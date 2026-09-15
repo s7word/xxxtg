@@ -28,7 +28,8 @@ const generateForm = ref({
   country: 'pt',
   count: 48,
   alias: '',
-  enabled: true
+  enabled: true,
+  app_type: 'telegram_android'
 })
 const packFilter = ref('ios')
 const purgeBusy = ref(false)
@@ -237,6 +238,7 @@ export const generateDevicePack = async () => {
       enabled: !!generateForm.value.enabled
     }
     if (generateForm.value.alias.trim()) payload.alias = generateForm.value.alias.trim()
+    if (platform === 'android') payload.app_type = generateForm.value.app_type || 'telegram_android'
     const res = await fetch('/api/device-dbs/generate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
