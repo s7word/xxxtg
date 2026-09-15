@@ -33,6 +33,7 @@ SLOT_PORT_RE = re.compile(r"res\.proxy-seller\.com:(\d+)")
 UNKNOWN_RE = re.compile(r"unknown=([是否])")
 FLASHCALL_RE = re.compile(r"flashcall=([是否])")
 MISSED_RE = re.compile(r"missed=([是否])")
+CURRENT_RE = re.compile(r"current=([是否])")
 
 # 控制台 /register/batch 的 count/concurrency 上限是 10。
 BATCH_CAP = 10
@@ -95,6 +96,8 @@ def enrich(row: Dict[str, Any], task: Dict[str, Any]) -> Dict[str, Any]:
     out["flashcall"] = flashcalls[-1] if flashcalls else None
     missed = MISSED_RE.findall(blob)
     out["missed_call"] = missed[-1] if missed else None
+    currents = CURRENT_RE.findall(blob)
+    out["current_number_flag"] = currents[-1] if currents else None
     ports = [int(x) for x in SLOT_PORT_RE.findall(blob)]
     out["proxy_ports"] = sorted(set(ports))
     return out

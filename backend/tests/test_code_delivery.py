@@ -113,9 +113,11 @@ class TestCodeDeliveryPlan(unittest.TestCase):
         self.assertFalse(android.unknown_number)
         self.assertTrue(android.allow_flashcall)
         self.assertTrue(android.allow_missed_call)
+        self.assertTrue(android.current_number)
         self.assertFalse(ios.unknown_number)
         self.assertTrue(ios.allow_flashcall)
         self.assertTrue(ios.allow_missed_call)
+        self.assertFalse(ios.current_number)
 
     def test_official_android_sim_present_enables_flashcall_and_missed(self):
         official = resolve_code_delivery_plan(
@@ -141,10 +143,13 @@ class TestCodeDeliveryPlan(unittest.TestCase):
         self.assertFalse(official.unknown_number)
         self.assertTrue(official.allow_flashcall)
         self.assertTrue(official.allow_missed_call)
+        self.assertTrue(official.current_number)
         self.assertIn("flashcall=是", " ".join(official.notes))
+        self.assertIn("current_number=是", " ".join(official.notes))
         self.assertFalse(custom.unknown_number)
         self.assertFalse(custom.allow_flashcall)
         self.assertFalse(custom.allow_missed_call)
+        self.assertFalse(custom.current_number)
         cs = RegistrationOrchestrator._build_code_settings_from_plan(
             "dGVzdA:APA91" + ("x" * 120),
             official,
@@ -153,7 +158,7 @@ class TestCodeDeliveryPlan(unittest.TestCase):
         self.assertTrue(cs.allow_flashcall)
         self.assertTrue(cs.allow_missed_call)
         self.assertFalse(cs.unknown_number)
-        self.assertFalse(cs.current_number)
+        self.assertTrue(cs.current_number)
         self.assertFalse(cs.token)
 
     def test_official_android_forces_unknown_number_false(self):

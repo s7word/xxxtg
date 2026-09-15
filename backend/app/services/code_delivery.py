@@ -88,6 +88,7 @@ class CodeDeliveryPlan:
     unknown_number: bool = False
     allow_flashcall: bool = False
     allow_missed_call: bool = False
+    current_number: bool = False
     app_sandbox: Optional[bool] = None
     notes: tuple[str, ...] = field(default_factory=tuple)
 
@@ -113,6 +114,8 @@ class CodeDeliveryPlan:
             parts.append("flashcall")
         if self.allow_missed_call:
             parts.append("missed_call")
+        if self.current_number:
+            parts.append("current_number")
         if self.app_sandbox is True:
             parts.append("app_sandbox=是(APNS沙盒证书)")
         elif self.app_sandbox is False:
@@ -313,6 +316,7 @@ def resolve_code_delivery_plan(
     unknown_number = bool(getattr(config, "code_settings_unknown_number", False))
     allow_flashcall = bool(getattr(config, "code_settings_allow_flashcall", False))
     allow_missed_call = bool(getattr(config, "code_settings_allow_missed_call", False))
+    current_number = False
 
     if effective == CODE_DELIVERY_SMS_FIRST:
         should_request = published and not forced_sms
@@ -366,16 +370,17 @@ def resolve_code_delivery_plan(
         or predicted_api_id in {4, 6, 21724}
         or template_api_id in {4, 6, 21724}
     ):
-        # 官方 Android LoginActivity：有 SIM + 通话/读通话记录权限时
-        # allow_flashcall/allow_missed_call=true；能读到本机号所以
-        # unknown_number=false；输入的接码号对不上 SIM → current_number
-        # 仍由 registrar 硬编码 false。配置开关只留给自建 api_id。
+        # 官方 Android LoginActivity 首次注册自己的号：
+        # 有 SIM + 通话权限 → flashcall/missed=true；
+        # 能读到本机号 → unknown=false；
+        # 正在输入的就是这张 SIM → current_number=true。
         unknown_number = False
         allow_flashcall = True
         allow_missed_call = True
+        current_number = True
         notes.append(
-            "Android: unknown_number=否 flashcall=是 missed=是"
-            "（有 SIM + 通话权限；输入号非本机卡，current_number=否）"
+            "Android: unknown_number=否 flashcall=是 missed=是 current_number=是"
+            "（有 SIM + 通话权限，正在注册的就是本机卡）"
         )
 
     return CodeDeliveryPlan(
@@ -394,6 +399,7 @@ def resolve_code_delivery_plan(
         unknown_number=unknown_number,
         allow_flashcall=allow_flashcall,
         allow_missed_call=allow_missed_call,
+        current_number=current_number,
         app_sandbox=app_sandbox,
         notes=tuple(notes),
     )
@@ -446,6 +452,7 @@ def reconcile_delivery_plan_after_credentials(
         unknown_number=fresh.unknown_number,
         allow_flashcall=fresh.allow_flashcall,
         allow_missed_call=fresh.allow_missed_call,
+        current_number=fresh.current_number,
         app_sandbox=fresh.app_sandbox,
         notes=fresh.notes + (extra,),
     )
@@ -472,6 +479,7 @@ def escalation_plan_after_published_flood(plan: CodeDeliveryPlan) -> CodeDeliver
         unknown_number=plan.unknown_number,
         allow_flashcall=plan.allow_flashcall,
         allow_missed_call=plan.allow_missed_call,
+        current_number=plan.current_number,
         app_sandbox=app_sandbox,
         notes=plan.notes + ("API_ID_PUBLISHED_FLOOD → escalate 至 push_required",),
     )
