@@ -1937,6 +1937,7 @@ class RegistrationOrchestrator:
             sandbox = None
         return types.CodeSettings(
             allow_flashcall=bool(allow_flashcall) or None,
+            # 官方有 SIM 但输入号不是本机卡：current_number 必须 false。
             current_number=False,
             allow_app_hash=allow_app_hash,
             allow_missed_call=bool(allow_missed_call) or None,

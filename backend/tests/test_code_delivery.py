@@ -111,11 +111,50 @@ class TestCodeDeliveryPlan(unittest.TestCase):
             {"api_id": 8, "api_hash": "x", "app_device": "iOS", "device_model": "iPhone 16"},
         )
         self.assertFalse(android.unknown_number)
-        self.assertFalse(android.allow_flashcall)
-        self.assertFalse(android.allow_missed_call)
+        self.assertTrue(android.allow_flashcall)
+        self.assertTrue(android.allow_missed_call)
         self.assertFalse(ios.unknown_number)
         self.assertTrue(ios.allow_flashcall)
         self.assertTrue(ios.allow_missed_call)
+
+    def test_official_android_sim_present_enables_flashcall_and_missed(self):
+        official = resolve_code_delivery_plan(
+            _config(
+                official_client_emulation=True,
+                code_settings_unknown_number=True,
+                code_settings_allow_flashcall=False,
+                code_settings_allow_missed_call=False,
+            ),
+            {"api_id": 4, "api_hash": "x", "app_device": "Android", "lang_pack": "android"},
+        )
+        custom = resolve_code_delivery_plan(
+            _config(
+                api_credential_mode="custom",
+                custom_api_id=35337905,
+                custom_api_hash="abc",
+                code_settings_unknown_number=False,
+                code_settings_allow_flashcall=False,
+                code_settings_allow_missed_call=False,
+            ),
+            {"api_id": 35337905, "api_hash": "x", "app_device": "Android", "lang_pack": "android"},
+        )
+        self.assertFalse(official.unknown_number)
+        self.assertTrue(official.allow_flashcall)
+        self.assertTrue(official.allow_missed_call)
+        self.assertIn("flashcall=是", " ".join(official.notes))
+        self.assertFalse(custom.unknown_number)
+        self.assertFalse(custom.allow_flashcall)
+        self.assertFalse(custom.allow_missed_call)
+        cs = RegistrationOrchestrator._build_code_settings_from_plan(
+            "dGVzdA:APA91" + ("x" * 120),
+            official,
+            {"api_id": 4, "app_device": "Android", "lang_pack": "android"},
+        )
+        self.assertTrue(cs.allow_flashcall)
+        self.assertTrue(cs.allow_missed_call)
+        self.assertFalse(cs.unknown_number)
+        self.assertFalse(cs.current_number)
+        self.assertFalse(cs.token)
 
     def test_official_android_forces_unknown_number_false(self):
         official = resolve_code_delivery_plan(
@@ -135,6 +174,8 @@ class TestCodeDeliveryPlan(unittest.TestCase):
             {"api_id": 35337905, "api_hash": "x", "app_device": "Android", "lang_pack": "android"},
         )
         self.assertFalse(official.unknown_number)
+        self.assertTrue(official.allow_flashcall)
+        self.assertTrue(official.allow_missed_call)
         self.assertIn("unknown_number=否", " ".join(official.notes))
         self.assertTrue(custom.unknown_number)
 
