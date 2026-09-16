@@ -279,6 +279,7 @@ class TestRegHelpRefundReasonMap(unittest.TestCase):
         self.assertEqual(RegHelpService.resolve_refund_status("FLOOD_WAIT"), "FLOOD")
         self.assertEqual(RegHelpService.resolve_refund_status("NO_CODE"), "NOSMS")
         self.assertEqual(RegHelpService.resolve_refund_status("SENT_CODE_TYPE_APP"), "NOSMS")
+        self.assertEqual(RegHelpService.resolve_refund_status("SENT_CODE_TYPE_CALL"), "NOSMS")
         self.assertEqual(RegHelpService.resolve_refund_status("API_ID_PUBLISHED_FLOOD"), "NOSMS")
         self.assertEqual(RegHelpService.resolve_refund_status("RECAPTCHA_CHECK"), "NOSMS")
         self.assertEqual(RegHelpService.resolve_refund_status("EXCEPTION"), "NOSMS")

@@ -29,6 +29,7 @@ from backend.app.services.reghelp import (  # noqa: E402
 )
 from backend.app.services.registrar import (  # noqa: E402
     DEFAULT_SMS_POLL_ATTEMPTS,
+    FAST_FAIL_SMS_POLL_ATTEMPTS,
     RegistrationOrchestrator,
     RegistrationTaskManager,
     SentCodeAppDeliveryError,
@@ -160,6 +161,7 @@ class TestSentCodeTypeHelpers(unittest.TestCase):
             "EMAIL_SETUP_FAILED",
             "EMAIL_CODE_UNAVAILABLE",
             "FIREBASE_SMS_FAILED",
+            "SENT_CODE_TYPE_CALL",
         ):
             self.assertEqual(PUSH_REFUND_REASON_MAP[reason], "NOSMS")
 
@@ -243,14 +245,18 @@ class TestResolveNewSentCodeTypes(unittest.IsolatedAsyncioTestCase):
         bypass.get_login_email.assert_awaited()
 
     async def test_call_type_is_not_app_fail_fast(self):
+        resent = make_sent_code("SentCodeTypeCall")
         sent = make_sent_code("SentCodeTypeCall")
         result, attempts = await RegistrationOrchestrator.resolve_sent_code_channel(
-            FakeClient(), "+56911112222", sent, self.task_id, self.manager,
+            FakeClient(result=resent), "+56911112222", sent, self.task_id, self.manager,
             emulation_label="official",
         )
-        self.assertIs(result, sent)
-        self.assertEqual(attempts, DEFAULT_SMS_POLL_ATTEMPTS)
-        self.assertIn("不按站内信快退", self._logs())
+        self.assertEqual(RegistrationOrchestrator._tl_type_name(result.type), "SentCodeTypeCall")
+        self.assertEqual(attempts, FAST_FAIL_SMS_POLL_ATTEMPTS)
+        logs = self._logs()
+        self.assertIn("立即 auth.resendCode 降级到短信", logs)
+        self.assertNotIn("SENT_CODE_TYPE_APP", logs)
+        self.assertNotIn("不按站内信快退", logs)
 
     async def test_firebase_without_gateway_still_sms(self):
         sent = make_firebase()

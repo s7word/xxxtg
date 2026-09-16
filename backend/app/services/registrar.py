@@ -303,6 +303,11 @@ SMS_DELIVERY_TYPE_NAMES = frozenset({
     "SentCodeTypeFragmentSms",
     "SentCodeTypeFirebaseSms",
 })
+VOICE_DELIVERY_TYPE_NAMES = frozenset({
+    "SentCodeTypeCall",
+    "SentCodeTypeFlashCall",
+    "SentCodeTypeMissedCall",
+})
 SMS_NEXT_TYPE_NAMES = frozenset({
     "CodeTypeSms",
     "SentCodeTypeSms",
@@ -331,6 +336,7 @@ FIREBASE_SMS_TYPE_NAMES = frozenset({
 APP_STREAK_REASONS = frozenset({"SENT_CODE_TYPE_APP"})
 CHANNEL_FAIL_NOTES = {
     "SENT_CODE_TYPE_APP": "auth.sendCode 仅下发站内 App 推送（未必已注册）",
+    "SENT_CODE_TYPE_CALL": "auth.sendCode 只给来电/漏接通道，resendCode 无法降级到短信",
     "PAYMENT_REQUIRED_OFFICIAL_ONLY": "需官方 App 内购，自动化不可完成",
     "EMAIL_SETUP_FAILED": "SetUpEmailRequired 流程失败",
     "EMAIL_CODE_UNAVAILABLE": "SentCodeTypeEmailCode 无法接收该邮箱验证码",
@@ -2128,6 +2134,13 @@ class RegistrationOrchestrator:
         return bool(name) and "Sms" in name and "App" not in name and "Firebase" not in name
 
     @classmethod
+    def _is_voice_delivery(cls, sent_code: Any) -> bool:
+        name = cls._sent_code_type_name(sent_code)
+        if name in VOICE_DELIVERY_TYPE_NAMES:
+            return True
+        return bool(name) and "Call" in name and "App" not in name
+
+    @classmethod
     def _next_type_is_sms(cls, sent_code: Any) -> bool:
         name = cls._tl_type_name(getattr(sent_code, "next_type", None))
         if not name:
@@ -2434,6 +2447,67 @@ class RegistrationOrchestrator:
             )
 
     @classmethod
+    async def _degrade_voice_to_sms(
+        cls,
+        client,
+        phone: str,
+        sent_code: Any,
+        task_id: str,
+        manager: RegistrationTaskManager,
+        wait_timeout: Optional[float] = None,
+        *,
+        bypass_svc=None,
+        profile: Optional[Dict[str, Any]] = None,
+        emulation_label: str = "balanced",
+        _email_depth: int = 0,
+    ) -> Tuple[Any, int]:
+        """来电/漏接/闪信无法被短信网关接收，立即 resendCode 争取 SMS。"""
+        delivery_name = cls._sent_code_type_name(sent_code)
+        await manager.append_log(
+            task_id,
+            f"[{emulation_label}] {delivery_name} 是来电/漏接/闪信通道，"
+            "本机没有语音收件箱，立即 auth.resendCode 降级到短信",
+        )
+        resent, resend_err = await cls._maybe_resend_to_sms(
+            client=client,
+            phone=phone,
+            sent_code=sent_code,
+            task_id=task_id,
+            manager=manager,
+            wait_timeout=wait_timeout,
+        )
+        if resent is None:
+            raise SentCodeAppDeliveryError(
+                f"{delivery_name} 且 auth.resendCode 不可用: {resend_err}",
+                reason="SENT_CODE_TYPE_CALL",
+            )
+        if cls._is_sms_delivery(resent):
+            await manager.append_log(
+                task_id,
+                "已成功将来电通道降级/切换为短信分发，继续轮询带外网关",
+            )
+            return resent, DEFAULT_SMS_POLL_ATTEMPTS
+        if cls._is_voice_delivery(resent):
+            await manager.append_log(
+                task_id,
+                f"⚠️ 重发后通道仍是来电 ({cls._tl_type_name(getattr(resent, 'type', None))})，"
+                f"仅做 {FAST_FAIL_SMS_POLL_ATTEMPTS} 次短轮询后若无码则退订",
+            )
+            return resent, FAST_FAIL_SMS_POLL_ATTEMPTS
+        return await cls.resolve_sent_code_channel(
+            client,
+            phone,
+            resent,
+            task_id,
+            manager,
+            wait_timeout=wait_timeout,
+            bypass_svc=bypass_svc,
+            profile=profile,
+            emulation_label=emulation_label,
+            _email_depth=_email_depth,
+        )
+
+    @classmethod
     async def resolve_sent_code_channel(
         cls,
         client,
@@ -2451,6 +2525,7 @@ class RegistrationOrchestrator:
         """解析 sendCode 分发通道。
 
         - SentCodeTypeApp：尝试 ResendCode 降级到短信，失败则快退
+        - SentCodeTypeCall / FlashCall / MissedCall：本机无语音收件箱，立即 resendCode 降级短信
         - SetUpEmailRequired：REGHelp Email + account.verifyEmail 后继续
         - EmailCode：无对应邮箱时快退，不空等 SMS
         - PaymentRequired：标记需官方 App 内购，快退
@@ -2572,12 +2647,25 @@ class RegistrationOrchestrator:
         if not cls._is_app_delivery(sent_code):
             if cls._is_sms_delivery(sent_code):
                 await manager.append_log(task_id, "分发通道为运营商短信，带外遥测网关可正常接收")
-            else:
-                await manager.append_log(
-                    task_id,
-                    f"[{emulation_label}] 非 App 通道 {delivery_name}，不按站内信快退，"
-                    "按默认窗口轮询（Call/其它类型可能收不到带外短信）",
+                return sent_code, DEFAULT_SMS_POLL_ATTEMPTS
+            if cls._is_voice_delivery(sent_code):
+                return await cls._degrade_voice_to_sms(
+                    client=client,
+                    phone=phone,
+                    sent_code=sent_code,
+                    task_id=task_id,
+                    manager=manager,
+                    wait_timeout=wait_timeout,
+                    bypass_svc=bypass_svc,
+                    profile=profile,
+                    emulation_label=emulation_label,
+                    _email_depth=_email_depth,
                 )
+            await manager.append_log(
+                task_id,
+                f"[{emulation_label}] 非 App 通道 {delivery_name}，不按站内信快退，"
+                "按默认窗口轮询（其它类型可能收不到带外短信）",
+            )
             return sent_code, DEFAULT_SMS_POLL_ATTEMPTS
 
         await manager.append_log(

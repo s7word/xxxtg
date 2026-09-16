@@ -42,6 +42,7 @@ PUSH_REFUND_REJECT_DETAILS = frozenset({
 #   FLOOD_WAIT (PhoneNumberFloodError/FloodWaitError) FLOOD
 #   NO_CODE (等待带外验证码超时)                       NOSMS
 #   SENT_CODE_TYPE_APP (验证码下发到已登录客户端)      NOSMS
+#   SENT_CODE_TYPE_CALL (来电通道且无法降级短信)       NOSMS
 #   API_ID_PUBLISHED_FLOOD (sendCode 因 Token 无效失败) NOSMS
 #   RECAPTCHA_CHECK (人机挑战未突破，未收到短信)         NOSMS
 #   EXCEPTION (引导异常且未完成短信验证)                 NOSMS
@@ -55,6 +56,7 @@ PUSH_REFUND_REASON_MAP: Dict[str, str] = {
     "FLOOD_WAIT": "FLOOD",
     "NO_CODE": "NOSMS",
     "SENT_CODE_TYPE_APP": "NOSMS",
+    "SENT_CODE_TYPE_CALL": "NOSMS",
     "PAYMENT_REQUIRED_OFFICIAL_ONLY": "NOSMS",
     "EMAIL_SETUP_FAILED": "NOSMS",
     "EMAIL_CODE_UNAVAILABLE": "NOSMS",
