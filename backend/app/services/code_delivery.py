@@ -136,13 +136,20 @@ def _has_usable_custom_credentials(config: Any) -> bool:
     return bool(custom_id and custom_hash)
 
 
-def is_official_client_emulation(config: Any) -> bool:
+def is_official_client_emulation(config: Any, profile: Optional[Dict[str, Any]] = None) -> bool:
+    """全局开关，或官方 iOS 身份。iOS 只有 api_id=8 一套，不跟 Android 自建栏走。"""
+    if profile is not None and _is_official_ios_profile(profile):
+        return True
     return bool(getattr(config, "official_client_emulation", False))
 
 
-def emulation_label_for(config: Any, base_mode: Optional[str] = None) -> str:
+def emulation_label_for(
+    config: Any,
+    base_mode: Optional[str] = None,
+    profile: Optional[Dict[str, Any]] = None,
+) -> str:
     """日志用模式标签：official 与 balanced 必须可从任务日志直接读出。"""
-    if is_official_client_emulation(config):
+    if is_official_client_emulation(config, profile):
         return "official"
     mode = _normalize_mode(base_mode if base_mode is not None else getattr(config, "code_delivery_mode", None))
     return mode
@@ -168,9 +175,24 @@ def _expect_push_token_before_credentials(
         return False
     # balanced：模板已是泄露官方 ID 时，默认走 Push，而不是先假定回退自建
     mode = getattr(config, "api_credential_mode", "auto") or "auto"
+    if int(template_api_id or 0) == 8:
+        # 官方 iOS 固定 api_id=8，不吃自建栏；8 在泄露黑名单里，必须按会申请 APNS 来规划
+        return True
     if mode == "custom":
         return False
     return int(template_api_id or 0) in PUBLISHED_API_ID_BLOCKLIST
+
+
+def _is_official_ios_profile(profile: Optional[Dict[str, Any]]) -> bool:
+    """与 resolve_effective_credentials 同一条：api_id=8 或 lang_pack=ios 不吃自建栏。"""
+    try:
+        if int((profile or {}).get("api_id") or 0) == 8:
+            return True
+    except (TypeError, ValueError):
+        pass
+    if str((profile or {}).get("lang_pack") or "").strip().lower() == "ios":
+        return True
+    return profile_looks_ios(profile)
 
 
 def _predict_effective_api_id(
@@ -180,9 +202,11 @@ def _predict_effective_api_id(
     expect_push_token: bool = False,
 ) -> int:
     """在尚未申请 Push Token 时预测 sendCode 将使用的 api_id。"""
+    template_id = int(profile.get("api_id") or 0)
+    if _is_official_ios_profile(profile):
+        return template_id or 8
     if is_strict_alignment(config):
         return VAULT_STRICT_API_ID
-    template_id = int(profile.get("api_id") or 0)
     if is_official_client_emulation(config):
         return template_id
     mode = getattr(config, "api_credential_mode", "auto") or "auto"
@@ -234,7 +258,7 @@ def resolve_code_delivery_plan(
     force_sms_after_app: bool = False,
 ) -> CodeDeliveryPlan:
     """根据全局配置、预测 api_id 与猎号状态生成本轮 sendCode 通道计划。"""
-    official_emu = is_official_client_emulation(config)
+    official_emu = is_official_client_emulation(config, profile)
     strict = is_strict_alignment(config)
     base_mode = _normalize_mode(getattr(config, "code_delivery_mode", None))
     # 严格对齐钉死 api_id=4（泄露 ID）：非 emu 必须 attach FCM 到 CodeSettings.token。
@@ -252,7 +276,7 @@ def resolve_code_delivery_plan(
         profile, config, expect_push_token=expect_push
     )
     published = is_published_api_id(predicted_api_id)
-    label = emulation_label_for(config, base_mode)
+    label = emulation_label_for(config, base_mode, profile)
 
     try:
         streak_threshold = int(

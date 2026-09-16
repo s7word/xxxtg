@@ -3692,7 +3692,7 @@ class RegistrationOrchestrator:
                         profile, config, has_push_token=bool(push_token)
                     )
                     credentials_resolved = True
-                    if bool(getattr(config, "official_client_emulation", False)):
+                    if bool(getattr(config, "official_client_emulation", False)) or is_ios_profile(profile):
                         await manager.append_log(
                             task_id,
                             f"[official] 官方客户端模拟生效：api_id={profile['api_id']} "
