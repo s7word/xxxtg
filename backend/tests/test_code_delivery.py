@@ -80,6 +80,41 @@ class TestCodeDeliveryPlan(unittest.TestCase):
         self.assertTrue(plan.attach_push_token)
         self.assertTrue(any("official api_id=8" in note or "api_id=8" in note for note in plan.notes))
         self.assertFalse(any("35337905" in note for note in plan.notes))
+        self.assertTrue(plan.official_client_emulation)
+
+    def test_ios_sniper_config_matches_pt_official_contract(self):
+        """狙击用的全局 custom/balanced 不得和葡萄牙 iOS 10/10 对照拆成第二套凭证。"""
+        from backend.app.services.device_profile import OFFICIAL_API_CREDENTIALS
+
+        ios = {
+            "api_id": 8,
+            "api_hash": OFFICIAL_API_CREDENTIALS[8],
+            "lang_pack": "ios",
+            "app_device": "iOS",
+            "device_model": "iPhone 16 Pro Max",
+            "system_version": "18.6.2",
+        }
+        sniper_cfg = _config(
+            api_credential_mode="custom",
+            code_delivery_mode=CODE_DELIVERY_BALANCED,
+            official_client_emulation=False,
+        )
+        pt_cfg = _config(
+            api_credential_mode="official",
+            code_delivery_mode=CODE_DELIVERY_PUSH_REQUIRED,
+            official_client_emulation=True,
+        )
+        sniper = resolve_code_delivery_plan(sniper_cfg, ios)
+        pt = resolve_code_delivery_plan(pt_cfg, ios)
+        self.assertEqual(sniper.effective_mode, pt.effective_mode)
+        self.assertEqual(sniper.should_request_push_token, pt.should_request_push_token)
+        self.assertEqual(sniper.attach_push_token, pt.attach_push_token)
+        self.assertTrue(sniper.official_client_emulation)
+        self.assertTrue(pt.official_client_emulation)
+        from backend.app.services.code_delivery import _predict_effective_api_id
+
+        self.assertEqual(_predict_effective_api_id(ios, sniper_cfg, expect_push_token=False), 8)
+        self.assertEqual(_predict_effective_api_id(ios, pt_cfg, expect_push_token=False), 8)
 
     def test_sms_first_never_attaches_without_escalate(self):
         plan = resolve_code_delivery_plan(

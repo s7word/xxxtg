@@ -136,13 +136,20 @@ def _has_usable_custom_credentials(config: Any) -> bool:
     return bool(custom_id and custom_hash)
 
 
-def is_official_client_emulation(config: Any) -> bool:
+def is_official_client_emulation(config: Any, profile: Optional[Dict[str, Any]] = None) -> bool:
+    """全局开关，或官方 iOS 身份。iOS 只有 api_id=8 一套，不跟 Android 自建栏走。"""
+    if profile is not None and _is_official_ios_profile(profile):
+        return True
     return bool(getattr(config, "official_client_emulation", False))
 
 
-def emulation_label_for(config: Any, base_mode: Optional[str] = None) -> str:
+def emulation_label_for(
+    config: Any,
+    base_mode: Optional[str] = None,
+    profile: Optional[Dict[str, Any]] = None,
+) -> str:
     """日志用模式标签：official 与 balanced 必须可从任务日志直接读出。"""
-    if is_official_client_emulation(config):
+    if is_official_client_emulation(config, profile):
         return "official"
     mode = _normalize_mode(base_mode if base_mode is not None else getattr(config, "code_delivery_mode", None))
     return mode
@@ -251,7 +258,7 @@ def resolve_code_delivery_plan(
     force_sms_after_app: bool = False,
 ) -> CodeDeliveryPlan:
     """根据全局配置、预测 api_id 与猎号状态生成本轮 sendCode 通道计划。"""
-    official_emu = is_official_client_emulation(config)
+    official_emu = is_official_client_emulation(config, profile)
     strict = is_strict_alignment(config)
     base_mode = _normalize_mode(getattr(config, "code_delivery_mode", None))
     # 严格对齐钉死 api_id=4（泄露 ID）：非 emu 必须 attach FCM 到 CodeSettings.token。
@@ -269,7 +276,7 @@ def resolve_code_delivery_plan(
         profile, config, expect_push_token=expect_push
     )
     published = is_published_api_id(predicted_api_id)
-    label = emulation_label_for(config, base_mode)
+    label = emulation_label_for(config, base_mode, profile)
 
     try:
         streak_threshold = int(
