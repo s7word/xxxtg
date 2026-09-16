@@ -63,11 +63,15 @@ class TestSentCodeHelpers(unittest.TestCase):
         app = make_sent_code("SentCodeTypeApp", "CodeTypeSms", 30)
         sms = make_sent_code("SentCodeTypeSms")
         firebase = make_sent_code("SentCodeTypeFirebaseSms")
+        call = make_sent_code("SentCodeTypeCall")
         self.assertTrue(RegistrationOrchestrator._is_app_delivery(app))
         self.assertFalse(RegistrationOrchestrator._is_sms_delivery(app))
         self.assertTrue(RegistrationOrchestrator._next_type_is_sms(app))
         self.assertTrue(RegistrationOrchestrator._is_sms_delivery(sms))
         self.assertTrue(RegistrationOrchestrator._is_sms_delivery(firebase))
+        self.assertTrue(RegistrationOrchestrator._is_voice_delivery(call))
+        self.assertFalse(RegistrationOrchestrator._is_sms_delivery(call))
+        self.assertFalse(RegistrationOrchestrator._is_app_delivery(call))
         self.assertIn("SentCodeTypeApp", RegistrationOrchestrator._describe_sent_code(app))
         self.assertIn("CodeTypeSms", RegistrationOrchestrator._describe_sent_code(app))
 
@@ -152,6 +156,44 @@ class TestResolveSentCodeChannel(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(attempts, FAST_FAIL_SMS_POLL_ATTEMPTS)
         self.assertEqual(RegistrationOrchestrator._tl_type_name(result.type), "SentCodeTypeCall")
+
+    async def test_call_resend_to_sms_succeeds(self):
+        resent = make_sent_code("SentCodeTypeSms", code_hash="hash-sms")
+        client = FakeClient(result=resent)
+        sent = make_sent_code("SentCodeTypeCall")
+        result, attempts = await RegistrationOrchestrator.resolve_sent_code_channel(
+            client, "+580414800000", sent, self.task_id, self.manager
+        )
+        self.assertEqual(result.phone_code_hash, "hash-sms")
+        self.assertEqual(attempts, DEFAULT_SMS_POLL_ATTEMPTS)
+        self.assertEqual(len(client.calls), 1)
+        self.assertEqual(type(client.calls[0]).__name__, "ResendCodeRequest")
+        logs = "\n".join(self.manager.get_task(self.task_id)["logs"])
+        self.assertIn("立即 auth.resendCode 降级到短信", logs)
+        self.assertIn("已成功将来电通道降级/切换为短信分发", logs)
+
+    async def test_call_resend_still_call_uses_short_poll(self):
+        resent = make_sent_code("SentCodeTypeCall")
+        client = FakeClient(result=resent)
+        sent = make_sent_code("SentCodeTypeCall")
+        result, attempts = await RegistrationOrchestrator.resolve_sent_code_channel(
+            client, "+580414800000", sent, self.task_id, self.manager
+        )
+        self.assertEqual(attempts, FAST_FAIL_SMS_POLL_ATTEMPTS)
+        self.assertEqual(RegistrationOrchestrator._tl_type_name(result.type), "SentCodeTypeCall")
+        logs = "\n".join(self.manager.get_task(self.task_id)["logs"])
+        self.assertIn("重发后通道仍是来电", logs)
+
+    async def test_call_resend_error_fails_fast(self):
+        client = FakeClient(error=RuntimeError("SEND_CODE_UNAVAILABLE"))
+        sent = make_sent_code("SentCodeTypeCall")
+        with self.assertRaises(SentCodeAppDeliveryError) as ctx:
+            await RegistrationOrchestrator.resolve_sent_code_channel(
+                client, "+580414800000", sent, self.task_id, self.manager
+            )
+        self.assertEqual(ctx.exception.reason, "SENT_CODE_TYPE_CALL")
+        logs = "\n".join(self.manager.get_task(self.task_id)["logs"])
+        self.assertIn("auth.resendCode 探测失败", logs)
 
     async def test_resend_wait_is_capped(self):
         resent = make_sent_code("SentCodeTypeSms")
