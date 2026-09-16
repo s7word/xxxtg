@@ -60,6 +60,27 @@ class TestCodeDeliveryPlan(unittest.TestCase):
         self.assertFalse(plan.attach_push_token)
         self.assertTrue(plan.allow_app_hash)
 
+    def test_ios_official_ignores_roommate_custom_api_id(self):
+        """通道预测必须跟凭证裁决一致：iOS 只走官方 api_id=8，日志不能写成自建 ID。"""
+        from backend.app.services.code_delivery import _predict_effective_api_id
+
+        ios = {
+            "api_id": 8,
+            "api_hash": "7245de8e747a0d6fbe11f7cc14fcc0bb",
+            "lang_pack": "ios",
+            "app_device": "iOS",
+            "device_model": "iPhone 16 Pro Max",
+            "system_version": "18.6.2",
+        }
+        cfg = _config(api_credential_mode="custom")
+        self.assertEqual(_predict_effective_api_id(ios, cfg, expect_push_token=False), 8)
+        plan = resolve_code_delivery_plan(cfg, ios)
+        self.assertEqual(plan.effective_mode, CODE_DELIVERY_PUSH_REQUIRED)
+        self.assertTrue(plan.should_request_push_token)
+        self.assertTrue(plan.attach_push_token)
+        self.assertTrue(any("official api_id=8" in note or "api_id=8" in note for note in plan.notes))
+        self.assertFalse(any("35337905" in note for note in plan.notes))
+
     def test_sms_first_never_attaches_without_escalate(self):
         plan = resolve_code_delivery_plan(
             _config(code_delivery_mode=CODE_DELIVERY_SMS_FIRST),

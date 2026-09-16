@@ -168,9 +168,24 @@ def _expect_push_token_before_credentials(
         return False
     # balanced：模板已是泄露官方 ID 时，默认走 Push，而不是先假定回退自建
     mode = getattr(config, "api_credential_mode", "auto") or "auto"
+    if int(template_api_id or 0) == 8:
+        # 官方 iOS 固定 api_id=8，不吃自建栏；8 在泄露黑名单里，必须按会申请 APNS 来规划
+        return True
     if mode == "custom":
         return False
     return int(template_api_id or 0) in PUBLISHED_API_ID_BLOCKLIST
+
+
+def _is_official_ios_profile(profile: Optional[Dict[str, Any]]) -> bool:
+    """与 resolve_effective_credentials 同一条：api_id=8 或 lang_pack=ios 不吃自建栏。"""
+    try:
+        if int((profile or {}).get("api_id") or 0) == 8:
+            return True
+    except (TypeError, ValueError):
+        pass
+    if str((profile or {}).get("lang_pack") or "").strip().lower() == "ios":
+        return True
+    return profile_looks_ios(profile)
 
 
 def _predict_effective_api_id(
@@ -180,9 +195,11 @@ def _predict_effective_api_id(
     expect_push_token: bool = False,
 ) -> int:
     """在尚未申请 Push Token 时预测 sendCode 将使用的 api_id。"""
+    template_id = int(profile.get("api_id") or 0)
+    if _is_official_ios_profile(profile):
+        return template_id or 8
     if is_strict_alignment(config):
         return VAULT_STRICT_API_ID
-    template_id = int(profile.get("api_id") or 0)
     if is_official_client_emulation(config):
         return template_id
     mode = getattr(config, "api_credential_mode", "auto") or "auto"
