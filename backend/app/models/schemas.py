@@ -165,7 +165,8 @@ class AppConfigModel(BaseModel):
         default="fivesim",
         description=(
             "当前接码提供源: fivesim (推荐, 5SIM) / grizzlysms (Grizzly SMS) / "
-            "smsbower (SMS Bower) / smscode (SMSCode.gg) / vaksms (Vak-SMS)"
+            "smsbower (SMS Bower) / smscode (SMSCode.gg) / vaksms (Vak-SMS) / "
+            "integral (Logistica Integral 阿根廷 Telegram)"
         )
     )
     fivesim_api_key: str = Field(
@@ -183,6 +184,14 @@ class AppConfigModel(BaseModel):
     smscode_api_key: str = Field(
         default="",
         description="SMSCode.gg API Token（Settings 填写；亦可环境变量 SMSCODE_API_KEY / SMSCODE_TOKEN）"
+    )
+    integral_sms_api_key: str = Field(
+        default="",
+        description="Logistica Integral 私人阿根廷 Telegram 接码 API Key（仅写 data/config.json，勿提交 Git）"
+    )
+    integral_webhook_secret: str = Field(
+        default="",
+        description="Logistica Integral webhook HMAC-SHA256 密钥；为空时仅接受本机已预约 activation_id"
     )
     sms_max_price: Optional[float] = Field(
         default=None,
@@ -719,7 +728,7 @@ class AppConfigModel(BaseModel):
     @field_validator("sms_provider", mode="before")
     @classmethod
     def _normalize_sms_provider(cls, value):
-        token = str(value or "fivesim").strip().lower().replace("-", "").replace("_", "")
+        token = str(value or "fivesim").strip().lower().replace("-", "").replace("_", "").replace(" ", "")
         aliases = {
             "fivesim": "fivesim",
             "5sim": "fivesim",
@@ -736,6 +745,11 @@ class AppConfigModel(BaseModel):
             "smscode.gg": "smscode",
             "vak": "vaksms",
             "vaksms": "vaksms",
+            "integral": "integral",
+            "integralsms": "integral",
+            "logistica": "integral",
+            "logisticaintegral": "integral",
+            "logisticaintegralsrl": "integral",
         }
         return aliases.get(token, "fivesim")
 
@@ -1014,7 +1028,7 @@ class RegisterTaskRequest(BaseModel):
     )
     sms_provider: Optional[str] = Field(
         default=None,
-        description="单次任务覆盖接码提供源: fivesim / grizzlysms / smsbower / smscode / vaksms；为空则使用全局配置",
+        description="单次任务覆盖接码提供源: fivesim / grizzlysms / smsbower / smscode / vaksms / integral；为空则使用全局配置",
     )
     max_price: Optional[float] = Field(
         default=None,
@@ -1069,7 +1083,7 @@ class RegisterTaskRequest(BaseModel):
     def _normalize_task_sms_provider(cls, value):
         if value is None or str(value).strip() == "":
             return None
-        token = str(value).strip().lower().replace("-", "").replace("_", "")
+        token = str(value).strip().lower().replace("-", "").replace("_", "").replace(" ", "")
         aliases = {
             "fivesim": "fivesim",
             "5sim": "fivesim",
@@ -1085,6 +1099,11 @@ class RegisterTaskRequest(BaseModel):
             "smscode.gg": "smscode",
             "vak": "vaksms",
             "vaksms": "vaksms",
+            "integral": "integral",
+            "integralsms": "integral",
+            "logistica": "integral",
+            "logisticaintegral": "integral",
+            "logisticaintegralsrl": "integral",
         }
         return aliases.get(token, token)
 

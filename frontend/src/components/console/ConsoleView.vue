@@ -100,11 +100,15 @@
             <option value="grizzlysms">Grizzly SMS · grizzlysms.com</option>
             <option value="smsbower">SMS Bower · smsbower.app</option>
             <option value="smscode">SMSCode · smscode.gg</option>
+            <option value="integral">Logistica Integral · 阿根廷 Telegram</option>
             <option value="vaksms">Vak-SMS · vak-sms.com</option>
           </select>
           <p class="ce-tiny">
             全局默认：{{ smsProviderLabel(config.sms_provider || 'fivesim') }}。
             本次任务将使用上方选择，失败自动退款。
+            <template v-if="form.sms_provider === 'integral'">
+              Integral 仅阿根廷、不允许提前取消，20 分钟无码才退回预扣。
+            </template>
           </p>
         </div>
 

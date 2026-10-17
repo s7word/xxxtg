@@ -222,3 +222,44 @@ async def receive_smsall_alert_slash(
         x_smsall_sniper,
         x_smsall_priority,
     )
+
+
+@hooks_router.post("/hooks/integral", summary="Logistica Integral 验证码 webhook")
+async def receive_integral_code(
+    request: Request,
+    x_signature: Optional[str] = Header(default=None),
+):
+    from backend.app.services.grizzlysms import GrizzlySmsError
+    from backend.app.services.integral_sms import ingest_webhook_payload
+
+    raw = await request.body()
+    config = ConfigManager.get_instance().config
+    secret = str(getattr(config, "integral_webhook_secret", "") or "").strip()
+    payload: Dict[str, Any] = {}
+    if raw:
+        import json as json_lib
+
+        try:
+            parsed = json_lib.loads(raw.decode("utf-8"))
+        except Exception:
+            return JSONResponse({"detail": "invalid json"}, status_code=400)
+        if isinstance(parsed, dict):
+            payload = parsed
+    try:
+        result = ingest_webhook_payload(
+            payload,
+            raw_body=raw or b"",
+            signature=x_signature or "",
+            secret=secret,
+        )
+    except GrizzlySmsError as exc:
+        return JSONResponse({"detail": str(exc)}, status_code=401)
+    return {"ok": True, **result}
+
+
+@hooks_router.post("/hooks/integral/", include_in_schema=False)
+async def receive_integral_code_slash(
+    request: Request,
+    x_signature: Optional[str] = Header(default=None),
+):
+    return await receive_integral_code(request, x_signature)

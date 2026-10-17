@@ -17,6 +17,8 @@ const config = reactive({
   grizzly_sms_api_key: '',
   smsbower_api_key: '',
   smscode_api_key: '',
+  integral_sms_api_key: '',
+  integral_webhook_secret: '',
   sms_max_price: null,
   smsall_webhook_secret: '',
   smsall_auto_register: false,
@@ -124,6 +126,9 @@ export const smsProviderLabel = (provider) => {
   if (token === 'grizzlysms') return 'Grizzly SMS'
   if (token === 'smsbower' || token === 'smsbowerapp' || token === 'bower') return 'SMS Bower'
   if (token === 'smscode' || token === 'smscodegg') return 'SMSCode'
+  if (token === 'integral' || token === 'integralsms' || token === 'logistica' || token === 'logisticaintegral') {
+    return 'Logistica Integral'
+  }
   return '5SIM'
 }
 

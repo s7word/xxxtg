@@ -401,6 +401,8 @@ def resolve_sniper_sms_provider(item: Dict[str, Any], config: Any = None) -> str
         preferred = "smsbower"
     elif "grizzly" in compact:
         preferred = "grizzlysms"
+    elif "integral" in compact or "logistica" in compact:
+        preferred = "integral"
     elif supplier_ids:
         # providerIds 是 SMS-Activate 系参数；有供应商 ID 时优先走 SMS Bower
         preferred = "smsbower"
