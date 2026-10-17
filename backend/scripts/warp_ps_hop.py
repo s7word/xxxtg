@@ -85,6 +85,35 @@ def iter_private_bridge_binds() -> List[str]:
     return sorted(found, key=lambda x: (x != "127.0.0.1", x))
 
 
+def _safe_bind_ips(candidates: Sequence[str]) -> List[str]:
+    safe: List[str] = []
+    for ip in candidates:
+        try:
+            addr = ipaddress.ip_address(ip)
+        except ValueError:
+            LOG.error("skipping invalid bind address %s", ip)
+            continue
+        if addr.is_loopback or addr.is_private:
+            if ip not in safe:
+                safe.append(ip)
+        else:
+            LOG.error("refusing to bind public address %s", ip)
+    return safe
+
+
+async def wait_for_docker_bridge_binds(timeout: float = 30.0, interval: float = 0.5) -> List[str]:
+    """Boot race: hop 常比 compose 网桥先起来，等 172.22.0.1 出现再绑。"""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + max(0.0, float(timeout))
+    last = iter_private_bridge_binds()
+    while loop.time() < deadline:
+        last = iter_private_bridge_binds()
+        if any(ip != "127.0.0.1" for ip in last):
+            return last
+        await asyncio.sleep(interval)
+    return last
+
+
 async def _read_exact(reader: asyncio.StreamReader, n: int) -> bytes:
     buf = await reader.readexactly(n)
     return buf
@@ -212,6 +241,35 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     return p.parse_args(argv)
 
 
+async def bind_missing(
+    *,
+    bound: set,
+    servers: List[asyncio.AbstractServer],
+    serve_tasks: set,
+    ips: Sequence[str],
+    ports: Sequence[int],
+    kwargs: dict,
+) -> List[Tuple[str, int]]:
+    added: List[Tuple[str, int]] = []
+    for bind in _safe_bind_ips(ips):
+        for port in ports:
+            key = (bind, int(port))
+            if key in bound:
+                continue
+            try:
+                srv = await serve_port(bind, int(port), **kwargs)
+            except OSError as exc:
+                LOG.warning("listen failed %s:%s: %s", bind, port, exc)
+                continue
+            servers.append(srv)
+            bound.add(key)
+            task = asyncio.create_task(srv.serve_forever())
+            serve_tasks.add(task)
+            task.add_done_callback(serve_tasks.discard)
+            added.append(key)
+    return added
+
+
 async def amain(argv: Sequence[str]) -> int:
     args = parse_args(argv)
     logging.basicConfig(
@@ -219,25 +277,24 @@ async def amain(argv: Sequence[str]) -> int:
         format="%(asctime)s %(levelname)s %(message)s",
     )
     binds = list(args.bind)
-    if args.auto_bind or not binds:
+    auto = bool(args.auto_bind or not binds)
+    if auto:
         for ip in iter_private_bridge_binds():
             if ip not in binds:
                 binds.append(ip)
-    # Never accidentally include a public address if auto-detected wrong.
-    safe: List[str] = []
-    for ip in binds:
-        addr = ipaddress.ip_address(ip)
-        if addr.is_loopback or addr.is_private:
-            safe.append(ip)
-        else:
-            LOG.error("refusing to bind public address %s", ip)
+        if all(ip == "127.0.0.1" for ip in binds):
+            LOG.info("docker bridge not up yet; waiting up to 30s for 172.22.0.1")
+            for ip in await wait_for_docker_bridge_binds(timeout=30.0):
+                if ip not in binds:
+                    binds.append(ip)
+    safe = _safe_bind_ips(binds)
     if not safe:
         LOG.error("no safe bind addresses")
         return 2
     warp_host, warp_port = parse_socks_host(args.warp)
     start = int(args.start_port)
     count = max(1, int(args.count))
-    ports = range(start, start + count)
+    ports = list(range(start, start + count))
     LOG.info(
         "starting hop binds=%s ports=%s-%s via %s:%s -> %s",
         ",".join(safe),
@@ -248,29 +305,51 @@ async def amain(argv: Sequence[str]) -> int:
         args.upstream,
     )
     servers: List[asyncio.AbstractServer] = []
-    try:
-        for bind in safe:
-            for port in ports:
-                servers.append(
-                    await serve_port(
-                        bind,
-                        port,
-                        upstream=args.upstream,
-                        warp_host=warp_host,
-                        warp_port=warp_port,
-                        timeout=float(args.timeout),
-                    )
-                )
-    except OSError as exc:
-        LOG.error("listen failed: %s", exc)
-        for srv in servers:
-            srv.close()
+    serve_tasks: set = set()
+    bound: set = set()
+    hop_kwargs = {
+        "upstream": args.upstream,
+        "warp_host": warp_host,
+        "warp_port": warp_port,
+        "timeout": float(args.timeout),
+    }
+    added = await bind_missing(
+        bound=bound,
+        servers=servers,
+        serve_tasks=serve_tasks,
+        ips=safe,
+        ports=ports,
+        kwargs=hop_kwargs,
+    )
+    if not added:
+        LOG.error("listen failed on every bind/port")
         return 1
+
+    async def rebind_loop() -> None:
+        while True:
+            await asyncio.sleep(15.0)
+            ips = iter_private_bridge_binds() if auto else list(args.bind)
+            extra = await bind_missing(
+                bound=bound,
+                servers=servers,
+                serve_tasks=serve_tasks,
+                ips=ips,
+                ports=ports,
+                kwargs=hop_kwargs,
+            )
+            if extra:
+                hosts = sorted({ip for ip, _ in extra})
+                LOG.info("rebind added %s ports on %s", len(extra), ",".join(hosts))
+
+    rebind_task = asyncio.create_task(rebind_loop())
     try:
-        await asyncio.gather(*(srv.serve_forever() for srv in servers))
+        await rebind_task
     except asyncio.CancelledError:
         pass
     finally:
+        rebind_task.cancel()
+        for task in list(serve_tasks):
+            task.cancel()
         for srv in servers:
             srv.close()
     return 0

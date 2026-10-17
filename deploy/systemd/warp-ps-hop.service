@@ -1,7 +1,8 @@
 [Unit]
 Description=Forward Proxy-Seller residential ports through WARP SOCKS
-After=warp-proxy-mode.service
+After=warp-proxy-mode.service docker.service
 Requires=warp-proxy-mode.service
+Wants=docker.service
 
 [Service]
 Type=simple
