@@ -408,6 +408,7 @@
             <option value="grizzlysms">Grizzly SMS</option>
             <option value="smsbower">SMS Bower</option>
             <option value="smscode">SMSCode.gg</option>
+            <option value="integral">Logistica Integral（阿根廷 TG）</option>
             <option value="vaksms">Vak-SMS</option>
           </select>
         </div>
@@ -507,6 +508,39 @@
             余额: {{ testResults.smsbower.data.balance }} {{ testResults.smsbower.data.currency || '账户结算币种' }}
             | 拓扑 {{ testResults.smsbower.data.country }} (id={{ testResults.smsbower.data.country_id }})
             | 库存: {{ testResults.smsbower.data.telegram_stock }}
+          </div>
+        </div>
+      </div>
+
+      <div class="ce-panel stack">
+        <div class="ce-panel-head">
+          <div class="row">
+            <h3>📩 Logistica Integral（阿根廷 Telegram）</h3>
+            <span class="ce-badge is-info">专线</span>
+          </div>
+          <button class="ce-btn-ghost" :disabled="probeTesting.integral" @click="testIntegralSms">
+            {{ probeTesting.integral ? '测试中...' : '余额/连通性探针' }}
+          </button>
+        </div>
+        <div>
+          <label class="ce-label">Integral API Key</label>
+          <input v-model="config.integral_sms_api_key" type="password" class="ce-input mono" placeholder="b2b_... 仅本地保存，勿提交 Git" />
+        </div>
+        <div>
+          <label class="ce-label">Webhook HMAC Secret（可选）</label>
+          <input v-model="config.integral_webhook_secret" type="password" class="ce-input mono" placeholder="对方另给的签名密钥，没有可留空" />
+        </div>
+        <div class="ce-tiny">
+          私人 SMS-Activate 子集，仅 <code>service=tg</code> / <code>country=39</code> 阿根廷。
+          将上方「当前接码提供源」切到 Logistica Integral 后生效。
+          取号预扣余额，收到验证码才扣费；20 分钟无码自动退回，<strong>不能提前取消</strong>。
+          探针只查余额，不会 getNumber。可选 webhook：<code>/hooks/integral</code>。
+        </div>
+        <div v-if="testResults.integral" class="ce-alert" :class="testResults.integral.success ? 'is-ok' : 'is-danger'">
+          <div>{{ testResults.integral.message }}</div>
+          <div v-if="testResults.integral.data" class="mono ce-tiny">
+            余额: {{ testResults.integral.data.balance }} {{ testResults.integral.data.currency || '账户结算币种' }}
+            | 拓扑 {{ testResults.integral.data.country }} (id={{ testResults.integral.data.country_id }})
           </div>
         </div>
       </div>
@@ -802,7 +836,7 @@ const {
   config, isSavingConfig, saveConfig, reghelpBaseUrlsText,
   antisafetyBaseUrlsText, antisafetyReportingBaseUrlsText, form
 } = useConfig()
-const { probeTesting, testResults, testRegHelp, testAntiSafety, testFiveSim, testGrizzlySms, testSmsBower, testSmsCode, testVakSms } = useProbes()
+const { probeTesting, testResults, testRegHelp, testAntiSafety, testFiveSim, testGrizzlySms, testSmsBower, testSmsCode, testIntegralSms, testVakSms } = useProbes()
 
 const onStrictAlignmentToggle = (checked) => {
   config.strict_vault_device_alignment = !!checked

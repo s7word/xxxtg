@@ -95,6 +95,10 @@ from backend.app.services.smsbower import (
     SmsBowerService,
     PROVIDER_LABEL as SMSBOWER_PROVIDER_LABEL,
 )
+from backend.app.services.integral_sms import (
+    IntegralSmsService,
+    PROVIDER_LABEL as INTEGRAL_PROVIDER_LABEL,
+)
 from backend.app.services.smscode import (
     SmsCodeService,
     PROVIDER_LABEL as SMSCODE_PROVIDER_LABEL,
@@ -433,7 +437,7 @@ async def purge_android_device_dbs():
 async def list_sms_available_countries(
     provider: Optional[str] = Query(
         default=None,
-        description="fivesim / grizzlysms / smsbower / smscode / vaksms；默认读取系统当前 config.sms_provider",
+        description="fivesim / grizzlysms / smsbower / smscode / vaksms / integral；默认读取系统当前 config.sms_provider",
     ),
     refresh: bool = Query(default=False, description="true 时绕过 90s 缓存强制刷新"),
 ):
@@ -678,6 +682,43 @@ async def test_smsbower(payload: Dict[str, Any] = None):
             success=False,
             service="SMS-Bower",
             message=f"SMS Bower 探针异常: {str(e)}",
+        )
+    finally:
+        await svc.close()
+
+
+@router.post("/test/integral", response_model=TestApiResponse, summary="Logistica Integral 阿根廷接码余额探针")
+async def test_integral(payload: Dict[str, Any] = None):
+    config = ConfigManager.get_instance().config
+    api_key = (payload or {}).get("api_key") or getattr(config, "integral_sms_api_key", "")
+
+    svc = IntegralSmsService(api_key)
+    try:
+        balance = await svc.get_balance()
+        return TestApiResponse(
+            success=True,
+            service="Integral-SMS",
+            message=(
+                f"{INTEGRAL_PROVIDER_LABEL} 鉴权与通信正常，余额 {balance}。"
+                "仅阿根廷 Telegram；探针只查余额，不取号。"
+            ),
+            data={
+                "balance": balance,
+                "currency": "账户结算币种",
+                "country": "ar",
+                "country_id": 39,
+                "telegram_stock": None,
+                "no_number": False,
+                "provider": "integral",
+                "endpoint": IntegralSmsService.BASE_URL,
+                "cancel_supported": False,
+            },
+        )
+    except Exception as e:
+        return TestApiResponse(
+            success=False,
+            service="Integral-SMS",
+            message=f"Logistica Integral 探针异常: {str(e)}",
         )
     finally:
         await svc.close()

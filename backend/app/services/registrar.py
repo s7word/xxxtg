@@ -60,6 +60,7 @@ from backend.app.services.vault_attestation import take_injected_device_secret
 from backend.app.services.vaksms import NoNumberAvailableError, VakSmsService, format_no_number_message
 from backend.app.services.grizzlysms import GrizzlySmsService, PROVIDER_LABEL as GRIZZLY_PROVIDER_LABEL
 from backend.app.services.smsbower import SmsBowerService, PROVIDER_LABEL as SMSBOWER_PROVIDER_LABEL
+from backend.app.services.integral_sms import IntegralSmsService, PROVIDER_LABEL as INTEGRAL_PROVIDER_LABEL
 from backend.app.services.smscode import (
     SmsCodeService,
     PROVIDER_LABEL as SMSCODE_PROVIDER_LABEL,
@@ -285,6 +286,15 @@ SMS_PROVIDER_ALIASES = {
     "vaksms": "vaksms",
     "vak_sms": "vaksms",
     "vak-sms": "vaksms",
+    "integral": "integral",
+    "integralsms": "integral",
+    "integral_sms": "integral",
+    "integral-sms": "integral",
+    "logistica": "integral",
+    "logisticaintegral": "integral",
+    "logistica-integral": "integral",
+    "logistica_integral": "integral",
+    "logisticaintegralsrl": "integral",
 }
 SMS_PROVIDER_LABELS = {
     "fivesim": FIVESIM_PROVIDER_LABEL,
@@ -292,6 +302,7 @@ SMS_PROVIDER_LABELS = {
     "smsbower": SMSBOWER_PROVIDER_LABEL,
     "smscode": SMSCODE_PROVIDER_LABEL,
     "vaksms": "Vak-SMS (vak-sms.com)",
+    "integral": INTEGRAL_PROVIDER_LABEL,
 }
 
 # Telegram auth.sendCode 分发通道：站内信无法被 Vak-SMS 蜂窝网关接收
@@ -795,7 +806,7 @@ class RegistrationOrchestrator:
         token = str(value or "").strip().lower()
         if not token:
             return "fivesim"
-        compact = token.replace("-", "").replace("_", "")
+        compact = token.replace("-", "").replace("_", "").replace(" ", "")
         return SMS_PROVIDER_ALIASES.get(token) or SMS_PROVIDER_ALIASES.get(compact) or "fivesim"
 
     @classmethod
@@ -817,6 +828,8 @@ class RegistrationOrchestrator:
             return SmsBowerService(getattr(config, "smsbower_api_key", "") or "")
         if provider == "smscode":
             return SmsCodeService(getattr(config, "smscode_api_key", "") or "")
+        if provider == "integral":
+            return IntegralSmsService(getattr(config, "integral_sms_api_key", "") or "")
         return FiveSimService(getattr(config, "fivesim_api_key", "") or "")
 
     @staticmethod
@@ -845,6 +858,8 @@ class RegistrationOrchestrator:
                 name = "smsbower"
             elif "smscode" in cls_name:
                 name = "smscode"
+            elif "integral" in cls_name or "logistica" in cls_name:
+                name = "integral"
             elif "grizzly" in cls_name:
                 name = "grizzlysms"
             elif "fivesim" in cls_name or "five" in cls_name:

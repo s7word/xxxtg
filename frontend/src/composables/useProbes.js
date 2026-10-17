@@ -11,6 +11,7 @@ const probeTesting = reactive({
   grizzlysms: false,
   smsbower: false,
   smscode: false,
+  integral: false,
   antisafety: false,
   reghelp: false
 })
@@ -21,6 +22,7 @@ const testResults = reactive({
   grizzlysms: null,
   smsbower: null,
   smscode: null,
+  integral: null,
   antisafety: null,
   reghelp: null,
   proxyseller: null,
@@ -105,6 +107,25 @@ export const testSmsCode = async () => {
     testResults.smscode = { success: false, message: e.message }
   } finally {
     probeTesting.smscode = false
+  }
+}
+
+export const testIntegralSms = async () => {
+  probeTesting.integral = true
+  testResults.integral = null
+  try {
+    const res = await fetch('/api/test/integral', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        api_key: config.integral_sms_api_key
+      })
+    })
+    testResults.integral = await res.json()
+  } catch (e) {
+    testResults.integral = { success: false, message: e.message }
+  } finally {
+    probeTesting.integral = false
   }
 }
 
@@ -239,6 +260,7 @@ export const useProbes = () => ({
   testGrizzlySms,
   testSmsBower,
   testSmsCode,
+  testIntegralSms,
   testVakSms,
   testAntiSafety,
   testRegHelp,

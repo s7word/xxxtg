@@ -27,10 +27,11 @@ PROVIDER_GRIZZLY = "grizzlysms"
 PROVIDER_SMSBOWER = "smsbower"
 PROVIDER_SMSCODE = "smscode"
 PROVIDER_VAK = "vaksms"
+PROVIDER_INTEGRAL = "integral"
 
 
 def normalize_sms_provider(value: Optional[str]) -> str:
-    token = str(value or "").strip().lower().replace("-", "").replace("_", "")
+    token = str(value or "").strip().lower().replace("-", "").replace("_", "").replace(" ", "")
     aliases = {
         "fivesim": PROVIDER_FIVESIM,
         "5sim": PROVIDER_FIVESIM,
@@ -47,6 +48,11 @@ def normalize_sms_provider(value: Optional[str]) -> str:
         "smscode.gg": PROVIDER_SMSCODE,
         "vak": PROVIDER_VAK,
         "vaksms": PROVIDER_VAK,
+        "integral": PROVIDER_INTEGRAL,
+        "integralsms": PROVIDER_INTEGRAL,
+        "logistica": PROVIDER_INTEGRAL,
+        "logisticaintegral": PROVIDER_INTEGRAL,
+        "logisticaintegralsrl": PROVIDER_INTEGRAL,
     }
     return aliases.get(token, PROVIDER_FIVESIM)
 
@@ -238,7 +244,7 @@ def _resolve_stock_iso2(provider: str, provider_country_id: Any) -> str:
         iso = fivesim_country_to_iso(token)
         if iso:
             return iso
-    if provider in {PROVIDER_GRIZZLY, PROVIDER_SMSBOWER}:
+    if provider in {PROVIDER_GRIZZLY, PROVIDER_SMSBOWER, PROVIDER_INTEGRAL}:
         from backend.app.services.grizzlysms import grizzly_country_id_to_iso
 
         iso = grizzly_country_id_to_iso(token)
@@ -385,6 +391,8 @@ class SmsStockService:
                 items = await cls._fetch_smsbower(service=service, api_key=api_key, config=config)
             elif resolved == PROVIDER_SMSCODE:
                 items = await cls._fetch_smscode(service=service, api_key=api_key, config=config)
+            elif resolved == PROVIDER_INTEGRAL:
+                items = await cls._fetch_integral(service=service, api_key=api_key, config=config)
             else:
                 items = await cls._fetch_grizzly(service=service, api_key=api_key, config=config)
         except Exception as exc:
@@ -515,6 +523,26 @@ class SmsStockService:
             else:
                 rows = parse_vak_count_payload(payload, service=service)
             return enrich_stock_rows(rows, PROVIDER_VAK)
+        finally:
+            await svc.close()
+
+    @classmethod
+    async def _fetch_integral(
+        cls,
+        service: str,
+        api_key: Optional[str],
+        config: Any,
+    ) -> List[Dict[str, Any]]:
+        from backend.app.services.integral_sms import IntegralSmsService
+
+        key = (api_key or "").strip()
+        if not key and config is not None:
+            key = str(getattr(config, "integral_sms_api_key", "") or "").strip()
+        svc = IntegralSmsService(key)
+        try:
+            payload = await svc.get_prices(country=None, service=service)
+            rows = parse_grizzly_price_payload(payload, service=service)
+            return enrich_stock_rows(rows, PROVIDER_INTEGRAL)
         finally:
             await svc.close()
 

@@ -93,6 +93,7 @@ class TestAuthCredentials(unittest.TestCase):
         self.assertFalse(path_requires_auth("/api/health"))
         self.assertFalse(path_requires_auth("/api/auth/login"))
         self.assertFalse(path_requires_auth("/hooks/smsall"))
+        self.assertFalse(path_requires_auth("/hooks/integral"))
         self.assertFalse(path_requires_auth("/"))
         self.assertFalse(path_requires_auth("/assets/app.js"))
         self.assertTrue(path_requires_auth("/api/config"))

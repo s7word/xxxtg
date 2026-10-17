@@ -131,7 +131,7 @@ def path_requires_auth(path: str) -> bool:
         raw = raw.rstrip("/")
     if raw == "/api/health" or raw == "/api/auth/login":
         return False
-    if raw == "/hooks/smsall":
+    if raw == "/hooks/smsall" or raw == "/hooks/integral":
         return False
     if raw.startswith("/api/"):
         return True
